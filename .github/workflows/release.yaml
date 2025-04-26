@@ -158,7 +158,7 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: linux-assets
+        name: linux-assets-${{ matrix.platform }}
         path: ${{ github.workspace }}/dist/carveracontroller-community-*.appimage
         retention-days: 2
 
