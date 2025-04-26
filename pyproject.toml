@@ -12,6 +12,8 @@ python = "<3.14,>=3.8"
 Kivy = "^2.3.0"
 pyserial = "^3.5"
 pyquicklz = "^1.4.1"
+SoloPy = "^4.1.0"
+kivy-garden-graph = "^0.4.0"
 
 [tool.poetry.group.dev.dependencies]
 pyinstaller = "^6.11.0"
