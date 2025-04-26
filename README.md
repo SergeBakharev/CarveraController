@@ -9,7 +9,8 @@ The Controller software works on the following systems:
 - Windows 7 x64 or newer
 - MacOS using Intel CPUs running Ventura (13) or above
 - MacOS using Apple Silicon CPUs running Sonoma (14) or above
-- Linux using x64 CPUs running a Linux distribution with Glibc 2.31 or above (eg. Ubuntu 20.04 or higher)
+- Linux using x64 CPUs running a Linux distribution with Glibc 2.35 or above (eg. Ubuntu 22.04 or higher)
+- Linux using ARM64 CPUs running a Linux distribution with Glibc 2.39 or above (eg. Ubuntu 24.04 or higher)
 - Apple iPad with iOS 17.6 or higher
 - Other systems might be work via the Python Package, see below for more details.
 
