@@ -157,7 +157,7 @@ The application is packaged using PyInstaller (except for iOS). This tool conver
 poetry run python scripts/build.py --os os --version version [--no-appimage]
 ```
 
-The options for `os` are windows, macos, linux or ios. If selecting `linux`, an appimage is built by default unless --no-appimage is specified.
+The options for `os` are windows, macos, linux, pypi or ios. If selecting `linux`, an appimage is built by default unless --no-appimage is specified.
 For iOS, the project will be open in XCode and needs to be built from there to simplify the signing process.
 
 The value of `version` should be in the format of X.Y.Z e.g., 1.2.3.
