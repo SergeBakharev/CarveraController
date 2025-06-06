@@ -1,0 +1,195 @@
+name: dev release
+on:
+  push:
+    branches:
+      - develop
+jobs:
+  build-windows-artifacts:
+    name: build-windows-${{ matrix.platform }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [win32]
+        include:
+          - platform: win32
+            arch: x64
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.12
+        architecture: ${{ matrix.arch }}
+
+    - name: Install poetry and dependencies
+      uses: ./.github/actions/bootstrap-poetry
+      with:
+        os: windows
+    
+    - uses: git-for-windows/setup-git-for-windows-sdk@v1
+      with:
+        flavor: minimal
+      # We install the SDK so as to have access to the msgfmt.exe binary
+      # from the GNU gettext package.
+
+    - name: "Install Windows-Mesa OpenGL DLL"
+      run: |
+        curl -L --output mesa.7z --url https://github.com/pal1000/mesa-dist-win/releases/download/24.2.5/mesa3d-24.2.5-release-msvc.7z
+        7z x mesa.7z -o*
+        powershell.exe mesa\\systemwidedeploy.cmd 1
+
+    - name: Build release
+      shell: pwsh
+      run: |
+        $date = Get-Date -Format "yyyy.MM.dd"
+        poetry run python scripts/build.py --os windows --version $date
+
+    - name: Rename artifact
+      run: poetry run bash ./scripts/rename-release-file.sh windows
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-assets-${{ matrix.platform }}
+        path: ${{ github.workspace }}/dist/carveracontroller-community-*-windows-x64.exe
+        retention-days: 2
+
+  build-macos-artifacts:
+    name: build-macos-${{ matrix.platform }}
+    runs-on: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ Intel, AppleSilicon ]
+        include:
+          - platform: Intel
+            image: macos-13
+          - platform: AppleSilicon
+            image: macos-14
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.12
+
+    - name: Install poetry and dependencies
+      uses: ./.github/actions/bootstrap-poetry
+      with:
+        os: macos
+
+    - name: Build release
+      run: |
+        DATE=$(date +'%Y.%m.%d')
+        poetry run python scripts/build.py --os macos --version "$DATE"
+
+    - name: Install create-dmg
+      run: brew install create-dmg
+
+    - name: Create dmg file
+      run: ./scripts/create-dmg.sh
+
+    - name: Rename artifact
+      run: poetry run bash ./scripts/rename-release-file.sh macos
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: macos-assets-${{ matrix.platform }}
+        path: ${{ github.workspace }}/dist/carveracontroller-community-*.dmg
+        retention-days: 2
+
+  build-linux-artifacts:
+    name: build-linux-${{ matrix.platform }}
+    runs-on: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ x64, aarch64 ]
+        include:
+          - platform: x64
+            image: ubuntu-22.04
+          - platform: aarch64
+            image: ubuntu-24.04-arm
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.12
+
+    - name: Install poetry and dependencies
+      uses: ./.github/actions/bootstrap-poetry
+      with:
+        os: linux
+    
+    - name: Install MTDev
+      run: sudo apt-get install -y mtdev-tools gettext
+
+    - name: Build release
+      run: |
+        DATE=$(date +'%Y.%m.%d')
+        xvfb-run poetry run python scripts/build.py --os linux --version "$DATE"
+
+    - name: Rename artifact
+      run: poetry run bash ./scripts/rename-release-file.sh linux
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-assets-${{ matrix.platform }}
+        path: ${{ github.workspace }}/dist/carveracontroller-community-*.appimage
+        retention-days: 2
+
+  publish-release:
+    needs: [ build-windows-artifacts, build-macos-artifacts, build-linux-artifacts ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get dev release info (JSON)
+        id: get_release
+        run: |
+          release=$(gh release view dev --json assets)
+          echo "$release"
+          echo "asset_names=$(echo "$release" | jq -r '[.assets[].name]')" >> $GITHUB_OUTPUT
+      
+      - name: Delete all assets from dev release
+        if: steps.get_release.outputs.asset_names != ''
+        run: |
+          # Convert JSON array (eg: ["1.txt","example.txt"]) to newline-separated list
+          echo "$asset_names" | jq -r '.[]' | while read name; do
+            echo "Deleting asset name: $name"
+            gh release delete-asset dev $name -y
+          done
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+      
+      - name: Force move 'dev' tag to latest commit on develop
+        run: |
+          git tag -f dev
+          git push origin dev --force
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            windows-assets-*/carveracontroller-community-*-windows-x64.exe
+            macos-assets-*/carveracontroller-community-*.dmg
+            linux-assets-*/carveracontroller-community-*.appimage
