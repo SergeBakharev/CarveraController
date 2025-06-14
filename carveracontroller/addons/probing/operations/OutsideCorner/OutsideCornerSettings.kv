@@ -144,19 +144,13 @@
                     on_text: root.setting_changed('ProbeDepth', self.text)
 
             ProbeSettingLabel:
-                label_text: 'S ZeroXY:'
-                hint_text: 'ZeroXY Position'
-                ToolTipSwitch:
-                    id: ZeroXYPosition
-                    tooltip_txt: tr._('This switch will set your current WCS to the corner that you are probing')
-                    canvas.before:
-                        Color:
-                            rgba: 50/255, 50/255, 50/255, 1
-                        Rectangle:
-                            pos: self.pos
-                            size: self.size
-                    active: root.get_setting('ZeroXYPosition') == "1"
-                    on_active: root.setting_changed('ZeroXYPosition', "1" if self.active else "0")
+                label_text: 'S Zero WCS Axis:'
+                hint_text: 'Zero X/Y/Z Position'
+                Button:
+                    text: tr._('Disabled')
+                    center: 0.5, 0.5
+                    height: '35dp'
+                    on_release: app.root.probe_xyz_drop_down.open(self)
 
             ProbeSettingLabel:
                 label_text: 'I Normally Closed:'
@@ -172,3 +166,14 @@
                             size: self.size
                     active: root.get_setting('UseProbeNormallyClosed') == "1"
                     on_active: root.setting_changed('UseProbeNormallyClosed', "1" if self.active else "0")
+
+<ProbeZeroXYZDropDown>:
+    Button:
+        text: tr._('X/Y')
+        size_hint_y: None
+        height: '40dp'
+
+    Button:
+        text: tr._('X/Y/Z')
+        size_hint_y: None
+        height: '40dp'
