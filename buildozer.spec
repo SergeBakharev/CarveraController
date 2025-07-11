@@ -38,7 +38,7 @@ version = 0.0.0
 
 # (list) Application requirements
 # comma separated e.g. requirements = sqlite3,kivy
-requirements = python3,kivy==2.3.1,pyserial==3.5,pyquicklz==1.4.1,filetype==1.2.0,android
+requirements = python3,kivy==2.3.1,pyserial==3.5,pyquicklz==1.4.1,filetype==1.2.0,hid==1.0.7,libusb,hidapi,android
 
 # (str) Custom source folders for requirements
 # Sets custom source for any requirements with recipes
@@ -102,7 +102,8 @@ fullscreen = true
 android.permissions = android.permission.INTERNET, android.permission.MANAGE_EXTERNAL_STORAGE, android.permission.WAKE_LOCK, android.permission.USB_PERMISSION
 
 # (list) features (adds uses-feature -tags to manifest)
-# Note: android.features is broken in current buildozer, using extra_manifest_xml instead
+# Note: android.features is broken in current buildozer, See https://github.com/kivy/buildozer/issues/1715
+# using extra_manifest_xml instead
 #android.features = android.hardware.usb.host
 
 # (int) Target Android API, should be as high as possible.
