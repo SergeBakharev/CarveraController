@@ -99,9 +99,10 @@ fullscreen = true
 
 # (list) Permissions
 # (See https://python-for-android.readthedocs.io/en/latest/buildoptions/#build-options-1 for all the supported syntaxes and properties)
-android.permissions = android.permission.INTERNET, android.permission.MANAGE_EXTERNAL_STORAGE, android.permission.WAKE_LOCK
+android.permissions = android.permission.INTERNET, android.permission.MANAGE_EXTERNAL_STORAGE, android.permission.WAKE_LOCK, android.permission.USB_PERMISSION
 
 # (list) features (adds uses-feature -tags to manifest)
+# Note: android.features is broken in current buildozer, using extra_manifest_xml instead
 #android.features = android.hardware.usb.host
 
 # (int) Target Android API, should be as high as possible.
@@ -151,7 +152,7 @@ android.api = 34
 
 # (str) Extra xml to write directly inside the <manifest> element of AndroidManifest.xml
 # use that parameter to provide a filename from where to load your custom XML code
-#android.extra_manifest_xml = ./src/android/extra_manifest.xml
+android.extra_manifest_xml = packaging_assets/android/extra_manifest.xml
 
 # (str) Extra xml to write directly inside the <manifest><application> tag of AndroidManifest.xml
 # use that parameter to provide a filename from where to load your custom XML arguments:
