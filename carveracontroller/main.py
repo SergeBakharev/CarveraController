@@ -16,6 +16,9 @@ CONFIG_FILES_TO_BACK_UP = [
 def is_android():
     return 'ANDROID_ARGUMENT' in os.environ or 'ANDROID_PRIVATE' in os.environ or 'ANDROID_APP_PATH' in os.environ
 
+def is_ios():
+    return os.environ.get('KIVY_BUILD') == 'ios'
+
 if is_android():
     try:
         from jnius import autoclass
@@ -34,6 +37,19 @@ if is_android():
 
     except ImportError:
         print("Pyjnius Import Fail.")
+
+if is_ios() and os.environ.get('CARVERA_UI_IDIOM') == 'phone':
+    # Screen dimensions are exported by main.m (UIScreen access from pyobjus
+    # is unreliable). iPad keeps default density; only iPhone is rescaled.
+    try:
+        w_px = int(os.environ['CARVERA_SCREEN_PX_W'])
+        h_px = int(os.environ['CARVERA_SCREEN_PX_H'])
+        screen_width_density  = int(w_px * 10 / 1000) / 10
+        screen_height_density = int(h_px * 10 / 550) / 10
+
+        os.environ["KIVY_METRICS_DENSITY"] = str(min(screen_width_density, screen_height_density))
+    except (KeyError, ValueError) as e:
+        print(f"iOS density setup skipped: {e}")
 
 from . import translation
 from .translation import tr
