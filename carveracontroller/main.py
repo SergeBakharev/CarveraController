@@ -16,6 +16,9 @@ CONFIG_FILES_TO_BACK_UP = [
 def is_android():
     return 'ANDROID_ARGUMENT' in os.environ or 'ANDROID_PRIVATE' in os.environ or 'ANDROID_APP_PATH' in os.environ
 
+def is_ios():
+    return os.environ.get('KIVY_BUILD') == 'ios'
+
 if is_android():
     try:
         from jnius import autoclass
@@ -34,6 +37,19 @@ if is_android():
 
     except ImportError:
         print("Pyjnius Import Fail.")
+
+if is_ios() and os.environ.get('CARVERA_UI_IDIOM') == 'phone':
+    # Screen dimensions are exported by main.m (UIScreen access from pyobjus
+    # is unreliable). iPad keeps default density; only iPhone is rescaled.
+    try:
+        w_px = int(os.environ['CARVERA_SCREEN_PX_W'])
+        h_px = int(os.environ['CARVERA_SCREEN_PX_H'])
+        screen_width_density  = int(w_px * 10 / 1000) / 10
+        screen_height_density = int(h_px * 10 / 550) / 10
+
+        os.environ["KIVY_METRICS_DENSITY"] = str(min(screen_width_density, screen_height_density))
+    except (KeyError, ValueError) as e:
+        print(f"iOS density setup skipped: {e}")
 
 from . import translation
 from .translation import tr
@@ -1135,8 +1151,18 @@ class DiagnosePopup(ModalView):
 # with no undo. This subclass overrides set_value to skip the Config write
 # while still notifying on_config_change, so changes only persist when the
 # user clicks Apply.
+#
+# ConfigPopup._apply_changes detects pending changes by comparing each
+# SettingItem's `value` ObjectProperty against a snapshot taken on open. That
+# only works if `widget.value` reflects user input. Standard Kivy widgets
+# assign `self.value` directly on input, but custom widgets that call
+# `panel.set_value(...)` without first updating `self.value` (e.g.
+# SettingPendantSelector) would otherwise be invisible to the Apply loop and
+# silently lose data. We sync `widget.value` here so the contract holds for
+# any caller of set_value.
 class DeferredSettingsPanel(SettingsPanel):
     _skip_sections = ('Backup', 'Restore')
+    _setting_widget_value = False
 
     def set_value(self, section, key, value):
         if section in self._skip_sections:
@@ -1151,9 +1177,22 @@ class DeferredSettingsPanel(SettingsPanel):
             if self.settings:
                 self.settings.dispatch('on_config_change', config, section, key, value)
             return
-        current = self.get_value(section, key)
-        if current == value:
+        # Re-entry guard: assigning child.value below fires SettingItem.on_value,
+        # which calls back into panel.set_value. Skip the inner call.
+        if self._setting_widget_value:
             return
+        current = self.get_value(section, key)
+        if str(current) == str(value):
+            return
+        for child in self.walk():
+            if isinstance(child, SettingItem) and child.section == section and child.key == key:
+                if str(child.value) != str(value):
+                    self._setting_widget_value = True
+                    try:
+                        child.value = value
+                    finally:
+                        self._setting_widget_value = False
+                break
         if self.settings:
             self.settings.dispatch('on_config_change', self.config, section, key, value)
 
@@ -6295,7 +6334,7 @@ class Makera(RelativeLayout):
         hl_colors = getattr(self, 'gcode_highlight_colors', None)
         line_no = (page_no - 1) * MAX_LOAD_LINES + 1
         for line in self.lines[(page_no - 1) * MAX_LOAD_LINES : MAX_LOAD_LINES * page_no]:
-            line_txt = line[:-1].replace("\x0d", "")
+            line_txt = line.rstrip("\r\n")
             plain = line_txt.strip()
             if hl_enabled:
                 hl = highlight_gcode_line(plain, hl_colors)
@@ -6575,6 +6614,9 @@ class MakeraApp(App):
     jog_keyboard_enable = StringProperty("normal")
     jog_pendant_enable = StringProperty("normal")
     jog_pendant_text = StringProperty(tr._('No Pendant'))
+    # [left, top, right, bottom] in pixels — populated on iOS from
+    # UIWindow.safeAreaInsets (see _update_safe_area_padding).
+    safe_area_padding = ListProperty([0, 0, 0, 0])
 
 
 
@@ -6604,15 +6646,37 @@ class MakeraApp(App):
         # Workaround for Android blank screen issue
         # https://github.com/kivy/python-for-android/issues/2720
         viewport_update_count = 0
-        
+
         def update_viewport_with_counter(dt):
             nonlocal viewport_update_count
             Window.update_viewport()
             viewport_update_count += 1
             if viewport_update_count >= 20:  # Stop after 5 seconds (5/0.25=20)
                 return False  # This will unschedule the event
-        
+
         Clock.schedule_interval(update_viewport_with_counter, 0.25)
+
+        if kivy_platform == 'ios':
+            # UIKit may not have laid out the key window yet on the first tick,
+            # so the early query returns zeros — re-query after a short delay
+            # and on resize (rotation, split-view, etc.) to stay accurate.
+            Clock.schedule_once(self._update_safe_area_padding, 0)
+            Clock.schedule_once(self._update_safe_area_padding, 0.5)
+            Window.bind(on_resize=lambda *a: self._update_safe_area_padding())
+
+    def _update_safe_area_padding(self, *args):
+        try:
+            import ctypes
+            lib = ctypes.CDLL(None)
+            fn = lib.get_safe_area_insets_px
+            fn.argtypes = [ctypes.POINTER(ctypes.c_double)] * 4
+            fn.restype = None
+            top, left, bottom, right = (ctypes.c_double(0) for _ in range(4))
+            fn(ctypes.byref(top), ctypes.byref(left),
+               ctypes.byref(bottom), ctypes.byref(right))
+            self.safe_area_padding = [left.value, top.value, right.value, bottom.value]
+        except (OSError, AttributeError) as e:
+            print(f"safe area query skipped: {e}")
 
 
     def on_pause(self):
@@ -6638,6 +6702,17 @@ def set_config_defaults(default_lang):
 
     if not kivy_platform in ['android', 'ios']:
         Config.set('input', 'mouse', "mouse,multitouch_on_demand") # disable multitouch simulation on non-mobile platforms
+
+    if kivy_platform == 'linux':
+        # Remove the default probesysfs entry that treats trackpads as touchscreens.
+        # Kivy's default adds '%(name)s = probesysfs,provider=hidinput' which picks up
+        # all HID devices including laptop trackpads.
+        if Config.has_option('input', '%(name)s'):
+            Config.remove_option('input', '%(name)s')
+        # Re-add probesysfs using mtdev, filtered to devices whose name contains
+        # "touchscreen" (case-insensitive). This preserves real touchscreen support
+        # while excluding trackpads, which never have "touchscreen" in their device name.
+        Config.set('input', 'touchscreen_%(name)s', 'probesysfs,provider=mtdev,match=(?i)touchscreen')
 
     # Only update config if running new version
     if not Config.has_option('carvera', 'version') or Config.get('carvera', 'version') != __version__:
