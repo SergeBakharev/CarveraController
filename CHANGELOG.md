@@ -4,6 +4,7 @@
 - Enhancement: Improvements to saving changes in settings menu
 - Enhancement: Add syntax highlighting to the file viewer
 - Enhancement: Only re-render the G-Code viewer scene if something has changed
+- Enhancement: Support gamepads as pendants
 - Enhancement: Added iPhone support
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
 - Fixed: Repeated firmware checks now happen just once
