@@ -53,3 +53,6 @@
 + (void)showDocumentPicker;
 @end
 
+__attribute__((visibility("default")))
+void get_safe_area_insets_px(double *top, double *left, double *bottom, double *right);
+

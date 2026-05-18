@@ -6572,6 +6572,9 @@ class MakeraApp(App):
     jog_keyboard_enable = StringProperty("normal")
     jog_pendant_enable = StringProperty("normal")
     jog_pendant_text = StringProperty(tr._('No Pendant'))
+    # [left, top, right, bottom] in pixels — populated on iOS from
+    # UIWindow.safeAreaInsets (see _update_safe_area_padding).
+    safe_area_padding = ListProperty([0, 0, 0, 0])
 
 
 
@@ -6601,15 +6604,37 @@ class MakeraApp(App):
         # Workaround for Android blank screen issue
         # https://github.com/kivy/python-for-android/issues/2720
         viewport_update_count = 0
-        
+
         def update_viewport_with_counter(dt):
             nonlocal viewport_update_count
             Window.update_viewport()
             viewport_update_count += 1
             if viewport_update_count >= 20:  # Stop after 5 seconds (5/0.25=20)
                 return False  # This will unschedule the event
-        
+
         Clock.schedule_interval(update_viewport_with_counter, 0.25)
+
+        if kivy_platform == 'ios':
+            # UIKit may not have laid out the key window yet on the first tick,
+            # so the early query returns zeros — re-query after a short delay
+            # and on resize (rotation, split-view, etc.) to stay accurate.
+            Clock.schedule_once(self._update_safe_area_padding, 0)
+            Clock.schedule_once(self._update_safe_area_padding, 0.5)
+            Window.bind(on_resize=lambda *a: self._update_safe_area_padding())
+
+    def _update_safe_area_padding(self, *args):
+        try:
+            import ctypes
+            lib = ctypes.CDLL(None)
+            fn = lib.get_safe_area_insets_px
+            fn.argtypes = [ctypes.POINTER(ctypes.c_double)] * 4
+            fn.restype = None
+            top, left, bottom, right = (ctypes.c_double(0) for _ in range(4))
+            fn(ctypes.byref(top), ctypes.byref(left),
+               ctypes.byref(bottom), ctypes.byref(right))
+            self.safe_area_padding = [left.value, top.value, right.value, bottom.value]
+        except (OSError, AttributeError) as e:
+            print(f"safe area query skipped: {e}")
 
 
     def on_pause(self):
