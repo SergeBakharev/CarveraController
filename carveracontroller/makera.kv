@@ -3498,7 +3498,7 @@
     gcode_play_slider: gcode_play_slider
 
     BoxLayout:
-        padding: dp(5)
+        padding: [app.safe_area_padding[0] + dp(5), app.safe_area_padding[1] + dp(5), app.safe_area_padding[2] + dp(5), app.safe_area_padding[3] + dp(5)]
         spacing: dp(5)
         orientation: 'vertical'
 
@@ -4483,7 +4483,7 @@
     Button:
         size_hint: None, None
         size: '40dp', '100dp'
-        pos: root.width - self.width, (root.height - self.height) / 2
+        pos: root.width - self.width - app.safe_area_padding[2], (root.height - self.height) / 2 + (app.safe_area_padding[3] - app.safe_area_padding[1]) / 2
         text: '<' if root.content.current == 'File' else '>'
         background_color: 80/255, 80/255, 80/255, 1
         on_release:
