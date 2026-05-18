@@ -45,6 +45,25 @@ int main(int argc, char *argv[]) {
     putenv("KIVY_NO_CONSOLELOG=1");
     #endif
 
+    // Export raw screen dimensions and device idiom for Python to consume.
+    // pyobjus can't reliably read UIScreen struct properties, so we query at
+    // the C level here. The density formula itself lives in main.py so it
+    // stays in sync with the Android version.
+    UIUserInterfaceIdiom idiom = [[UIDevice currentDevice] userInterfaceIdiom];
+    CGRect screenBounds = [[UIScreen mainScreen] bounds];
+    CGFloat screenScale = [[UIScreen mainScreen] scale];
+    CGFloat wPx = MAX(screenBounds.size.width, screenBounds.size.height) * screenScale;
+    CGFloat hPx = MIN(screenBounds.size.width, screenBounds.size.height) * screenScale;
+    NSString *idiomEnv = [NSString stringWithFormat:@"CARVERA_UI_IDIOM=%@",
+                          idiom == UIUserInterfaceIdiomPhone ? @"phone" :
+                          idiom == UIUserInterfaceIdiomPad   ? @"pad" : @"other"];
+    NSString *wEnv = [NSString stringWithFormat:@"CARVERA_SCREEN_PX_W=%.0f", wPx];
+    NSString *hEnv = [NSString stringWithFormat:@"CARVERA_SCREEN_PX_H=%.0f", hPx];
+    putenv((char *)[idiomEnv UTF8String]);
+    putenv((char *)[wEnv UTF8String]);
+    putenv((char *)[hEnv UTF8String]);
+    NSLog(@"iOS screen: idiom=%@ %.0fx%.0f px", idiomEnv, wPx, hPx);
+
     // Export orientation preferences for Kivy
     export_orientation();
 
