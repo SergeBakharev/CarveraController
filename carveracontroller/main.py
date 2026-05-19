@@ -5634,17 +5634,12 @@ class Makera(RelativeLayout):
     def load_machine_config(self):
         panels = self.config_popup.settings_panel.interface.content.panels
 
-        # Need to subtract the controller config panels from count to see if machine config panels already loaded
-        controller_config_panels = 0
-        for panel in panels.values():
-            if panel.title == 'Controller':
-                controller_config_panels += 1
-            if panel.title == 'Pendant':
-                controller_config_panels += 1
+        # Filter panels that are bound to the machine config
+        machine_panels = [panel for panel in panels.values() if panel.config is self.config]
 
-        if len(panels.values()) - controller_config_panels > 0:
+        if machine_panels:
             # already have panels, update data
-            for panel in panels.values():
+            for panel in machine_panels:
                 children = panel.children
                 for child in children:
                     if isinstance(child, SettingItem):
@@ -5662,8 +5657,12 @@ class Makera(RelativeLayout):
                             self.setting_change_list[child.key] = new_value
                             if new_value != child.value:
                                 child.value = new_value
-                            self.controller.log.put(
-                                (Controller.MSG_NORMAL, 'Can not load config, Key: {}'.format(child.key)))
+                            # This warning message doesn't make sense since settings values not in config.txt will just use the firmware default value.
+                            #
+                            # Until functionality is added to the firmware to output the complete settings values we should not display such messages
+                            #
+                            # self.controller.log.put(
+                            #     (Controller.MSG_NORMAL, 'Can not load config, Key: {}'.format(child.key)))
 
                         # restore/default are used for default config management
                         # carvera/graphics options are managed via Controller settings (not here)
