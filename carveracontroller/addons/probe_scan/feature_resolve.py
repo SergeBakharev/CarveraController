@@ -36,9 +36,9 @@ def referenced_feature_ids(feature: ProbeScanFeature) -> list[str]:
 
 def features_referencing_id(features: Iterable[ProbeScanFeature], target_id: str) -> list[str]:
     holders: list[str] = []
-    for f in features:
+    for i, f in enumerate(features):
         if target_id in referenced_feature_ids(f):
-            holders.append(f.id)
+            holders.append(f"{i + 1}. {f.label}")
     return holders
 
 
