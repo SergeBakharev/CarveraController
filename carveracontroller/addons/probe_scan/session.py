@@ -6,7 +6,7 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
@@ -202,19 +202,19 @@ class ProbeScanSession:
 
     version: int = SESSION_FORMAT_VERSION
     unit_mm: bool = True
-    wcs_note: str = "G54"
     features: list[ProbeScanFeature] = field(default_factory=list)
 
     def to_json_dict(self) -> dict:
         return {
             "version": self.version,
             "unit_mm": self.unit_mm,
-            "wcs_note": self.wcs_note,
             "features": [
                 {
-                    **asdict(f),
+                    "id": f.id,
                     "kind": f.kind.value,
-                    "coord_sys": f.coord_sys.value,
+                    "label": f.label,
+                    "payload": f.payload,
+                    "created_ts": f.created_ts,
                 }
                 for f in self.features
             ],
@@ -236,25 +236,18 @@ class ProbeScanSession:
                         k,
                     )
                     continue
-            cs_raw = row.get("coord_sys", CoordSys.WCS.value)
-            try:
-                coord = CoordSys(cs_raw)
-            except ValueError:
-                coord = CoordSys.WCS
             feat = ProbeScanFeature(
                 id=row.get("id", str(uuid.uuid4())),
                 kind=kind_enum,
                 label=row.get("label", ""),
-                coord_sys=coord,
+                coord_sys=CoordSys.WCS,
                 payload=dict(row.get("payload", {})),
                 created_ts=float(row.get("created_ts", time.time())),
             )
             feats.append(feat)
         return cls(
-            # Always create a session with the current format version.
             version=SESSION_FORMAT_VERSION,
             unit_mm=bool(data.get("unit_mm", True)),
-            wcs_note=str(data.get("wcs_note", "G54")),
             features=feats,
         )
 

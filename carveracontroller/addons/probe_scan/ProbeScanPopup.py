@@ -40,6 +40,7 @@ from .construction_geom import (
 )
 from .coordinate_transform import mcs_xyz_to_wcs_xyz
 from .export_format import export_csv, export_dxf, export_json
+from .import_format import load_session_from_path
 from .gcode_builders import (
     build_m461,
     build_m462,
@@ -67,6 +68,12 @@ if "ProbeScanPreviewSketch" not in Factory.classes:
 # Feature list row highlight (canvas.before Color on each row BoxLayout).
 _FEATURE_ROW_FOCUS_RGBA_ON = (0.18, 0.38, 0.58, 0.22)
 _FEATURE_ROW_FOCUS_RGBA_OFF = (0.18, 0.38, 0.58, 0.0)
+
+_SESSION_FILE_FILTERS = {
+    "JSON": ["*.json"],
+    "CSV": ["*.csv"],
+    "DXF": ["*.dxf"],
+}
 
 
 class ProbeScanIconToggle(ToggleButton):
@@ -1519,7 +1526,16 @@ class ProbeScanPopup(ModalView):
         else:
             write_fn(dest)
 
-    def _open_file_dialog(self, *, title, default_name, size_hint, on_confirm, btn_text=None):
+    def _open_file_dialog(
+        self,
+        *,
+        title,
+        default_name,
+        size_hint,
+        on_confirm,
+        btn_text=None,
+        filters=None,
+    ):
         root = App.get_running_app().root
         try:
             content = Factory.ProbeScanFileSheet()
@@ -1529,6 +1545,7 @@ class ProbeScanPopup(ModalView):
         fc = content.ids.fc
         ti = content.ids.ti_filename
         fc.path = self._home_dir_fc()
+        fc.filters = list(filters) if filters else []
         ti.text = default_name
 
         def sync_filename_from_selection(_inst, sel):
@@ -1567,13 +1584,23 @@ class ProbeScanPopup(ModalView):
 
         def on_confirm(popup, dest):
             try:
-                with open(dest, encoding="utf-8") as fp:
-                    self.session = ProbeScanSession.loads(fp.read())
+                self.session, report = load_session_from_path(dest)
                 self._selection_order.clear()
                 self._preview_focus_id = None
                 self._refresh_feature_ui()
                 popup.dismiss()
-                self._toast(tr._("Loaded:\n%s") % dest)
+                msg = tr._("Loaded %(n)d features:\n%(path)s") % {
+                    "n": report.imported,
+                    "path": dest,
+                }
+                if report.warnings:
+                    preview = "\n".join(report.warnings[:3])
+                    if len(report.warnings) > 3:
+                        preview += tr._("\n…and %(more)d more warnings") % {
+                            "more": len(report.warnings) - 3,
+                        }
+                    msg = f"{msg}\n{preview}"
+                self._toast(msg)
             except OSError as e:
                 root.show_message_popup(tr._("Could not read:\n%s") % e, False)
             except Exception as e:
@@ -1585,6 +1612,7 @@ class ProbeScanPopup(ModalView):
             size_hint=(0.82, 0.82),
             on_confirm=on_confirm,
             btn_text=tr._("Load"),
+            filters=[p for patterns in _SESSION_FILE_FILTERS.values() for p in patterns],
         )
 
     def _prompt_save_export_file(self, export_kind: str = "JSON"):
@@ -1621,4 +1649,5 @@ class ProbeScanPopup(ModalView):
             default_name=stems[kind],
             size_hint=(0.82, 0.85),
             on_confirm=on_confirm,
+            filters=_SESSION_FILE_FILTERS[kind],
         )

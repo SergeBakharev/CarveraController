@@ -12,7 +12,7 @@ import ezdxf
 from .feature_resolve import index_by_id, resolve_xy, segment_endpoints
 from .session import FeatureKind, ProbeScanSession
 
-_DXF_LAYERS = (
+DXF_LAYERS = (
     "PROBED_POINTS",
     "PROBED_CENTERS",
     "PROBED_CORNERS",
@@ -30,12 +30,13 @@ def export_json(session: ProbeScanSession) -> str:
 def export_csv(session: ProbeScanSession) -> str:
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["id", "kind", "label", "coord_sys", "x", "y", "z", "extra"])
+    w.writerow(["id", "kind", "label", "x", "y", "z", "r", "extra"])
     for f in session.features:
         p = f.payload
         x = p.get("x", p.get("cx", ""))
         y = p.get("y", p.get("cy", ""))
         z = p.get("z", "")
+        r = p.get("r", "") if f.kind == FeatureKind.DERIVED_CIRCLE else ""
         extra_keys = {
             "x",
             "y",
@@ -47,14 +48,14 @@ def export_csv(session: ProbeScanSession) -> str:
             "diameter_y",
         }
         extra = {k: v for k, v in p.items() if k not in extra_keys}
-        w.writerow([f.id, f.kind.value, f.label, f.coord_sys.value, x, y, z, str(extra)])
+        w.writerow([f.id, f.kind.value, f.label, x, y, z, r, str(extra)])
     return buf.getvalue()
 
 
 def export_dxf(session: ProbeScanSession) -> str:
     """Write a layered DXF (R2010) as a string for clipboard or disk."""
     doc = ezdxf.new("R2010", setup=True)
-    for lyr in _DXF_LAYERS:
+    for lyr in DXF_LAYERS:
         if lyr not in doc.layers:
             doc.layers.new(lyr)
 
