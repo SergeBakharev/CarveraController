@@ -6,13 +6,15 @@ import ast
 import csv
 import io
 import logging
+import math
 import os
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-import ezdxf
-from ezdxf.entities import DXFEntity
+if TYPE_CHECKING:
+    from ezdxf.entities import DXFEntity
 
 from .export_format import DXF_LAYERS
 from .feature_resolve import payload_referenced_feature_ids
@@ -149,13 +151,14 @@ def _merge_csv_geometry(
     col: Callable[[dict, str], str],
 ) -> None:
     x_s, y_s, z_s, r_s = col(row, "x"), col(row, "y"), col(row, "z"), col(row, "r")
+    dx_s, dy_s = col(row, "diameter_x"), col(row, "diameter_y")
 
     def _f(s: str) -> float | None:
         if not s:
             return None
         return float(s)
 
-    if kind in (FeatureKind.CIRCLE, FeatureKind.DERIVED_CIRCLE):
+    if kind in (FeatureKind.CIRCLE, FeatureKind.DERIVED_CIRCLE, FeatureKind.ELLIPSE):
         fx, fy, fz = _f(x_s), _f(y_s), _f(z_s)
         if fx is not None:
             payload["cx"] = fx
@@ -163,7 +166,17 @@ def _merge_csv_geometry(
             payload["cy"] = fy
         if fz is not None:
             payload["z"] = fz
-        if kind == FeatureKind.DERIVED_CIRCLE:
+        if kind == FeatureKind.CIRCLE:
+            fr = _f(r_s)
+            if fr is not None:
+                payload["r"] = fr
+        elif kind == FeatureKind.ELLIPSE:
+            fdx, fdy = _f(dx_s), _f(dy_s)
+            if fdx is not None:
+                payload["diameter_x"] = fdx
+            if fdy is not None:
+                payload["diameter_y"] = fdy
+        elif kind == FeatureKind.DERIVED_CIRCLE:
             fr = _f(r_s)
             if fr is not None:
                 payload["r"] = fr
@@ -179,6 +192,8 @@ def _merge_csv_geometry(
 
 
 def import_dxf(text: str) -> tuple[ProbeScanSession, ImportReport]:
+    import ezdxf
+
     report = ImportReport()
     if not text.strip():
         raise ValueError("Empty DXF file")
@@ -257,6 +272,8 @@ def import_dxf(text: str) -> tuple[ProbeScanSession, ImportReport]:
                 r,
                 prefix="C" if kind == FeatureKind.CIRCLE else "DC",
             )
+        elif dtype == "ELLIPSE":
+            _add_ellipse_from_dxf(ent, features, report, prefix="E")
         elif dtype == "LINE":
             _add_segment_from_line(ent, features, report, registry)
         elif dtype in ("LWPOLYLINE", "POLYLINE"):
@@ -386,11 +403,12 @@ def _import_dxf_probed_centers(
     consumed: set[DXFEntity],
 ) -> None:
     circles = [e for e in entities if e.dxftype() == "CIRCLE"]
+    ellipses = [e for e in entities if e.dxftype() == "ELLIPSE"]
     points = [e for e in entities if e.dxftype() == "POINT"]
     other = [
         e
         for e in entities
-        if e.dxftype() not in ("CIRCLE", "POINT")
+        if e.dxftype() not in ("CIRCLE", "ELLIPSE", "POINT")
     ]
     for ent in other:
         report.warnings.append(
@@ -398,19 +416,26 @@ def _import_dxf_probed_centers(
         )
         report.skipped += 1
 
-    circle_centers: list[tuple[float, float, float]] = []
+    curve_centers: list[tuple[float, float, float]] = []
     n = 0
     for ent in circles:
         consumed.add(ent)
         center = ent.dxf.center
         r = float(ent.dxf.radius)
         cx, cy = float(center.x), float(center.y)
-        circle_centers.append((cx, cy, 0.0))
+        curve_centers.append((cx, cy, 0.0))
         n += 1
-        d = 2.0 * r
-        features.append(
-            ProbeScanFeature.new_circle(f"C{n}", cx, cy, d, d)
-        )
+        features.append(ProbeScanFeature.new_circle(f"C{n}", cx, cy, r))
+
+    for ent in ellipses:
+        consumed.add(ent)
+        parsed = _parse_axis_aligned_dxf_ellipse(ent, report)
+        if parsed is None:
+            continue
+        cx, cy, dx, dy = parsed
+        curve_centers.append((cx, cy, 0.0))
+        n += 1
+        features.append(ProbeScanFeature.new_ellipse(f"E{n}", cx, cy, dx, dy))
 
     for ent in points:
         consumed.add(ent)
@@ -418,7 +443,7 @@ def _import_dxf_probed_centers(
         x, y, z = float(loc.x), float(loc.y), float(loc.z)
         if any(
             abs(x - cx) <= 1e-4 and abs(y - cy) <= 1e-4 and abs(z - cz) <= 1e-4
-            for cx, cy, cz in circle_centers
+            for cx, cy, cz in curve_centers
         ):
             continue
         registry.snap(x, y, z, kind=FeatureKind.POINT, prefix="P")
@@ -605,7 +630,6 @@ def _add_circle_feature(
         report.skipped += 1
         return
     n = sum(1 for f in features if f.kind == kind) + 1
-    d = 2.0 * r
     if kind == FeatureKind.DERIVED_CIRCLE:
         features.append(
             ProbeScanFeature(
@@ -617,7 +641,51 @@ def _add_circle_feature(
             )
         )
     else:
-        features.append(ProbeScanFeature.new_circle(f"{prefix}{n}", cx, cy, d, d))
+        features.append(ProbeScanFeature.new_circle(f"{prefix}{n}", cx, cy, r))
+
+
+def _parse_axis_aligned_dxf_ellipse(
+    ent: DXFEntity,
+    report: ImportReport,
+) -> tuple[float, float, float, float] | None:
+    """Return (cx, cy, diameter_x, diameter_y) for axis-aligned DXF ELLIPSE."""
+    center = ent.dxf.center
+    cx, cy = float(center.x), float(center.y)
+    major = ent.dxf.major_axis
+    mx, my = float(major.x), float(major.y)
+    major_len = math.hypot(mx, my)
+    if major_len < 1e-12:
+        report.warnings.append("Skipped ELLIPSE with zero major axis")
+        report.skipped += 1
+        return None
+    ratio = float(ent.dxf.ratio)
+    minor_len = major_len * ratio
+    if abs(my) <= 1e-9 and abs(mx) > 1e-9:
+        dx, dy = 2.0 * major_len, 2.0 * minor_len
+    elif abs(mx) <= 1e-9 and abs(my) > 1e-9:
+        dx, dy = 2.0 * minor_len, 2.0 * major_len
+    else:
+        report.warnings.append(
+            "Skipped rotated ELLIPSE (only axis-aligned ellipses are supported)"
+        )
+        report.skipped += 1
+        return None
+    return cx, cy, dx, dy
+
+
+def _add_ellipse_from_dxf(
+    ent: DXFEntity,
+    features: list[ProbeScanFeature],
+    report: ImportReport,
+    *,
+    prefix: str,
+) -> None:
+    parsed = _parse_axis_aligned_dxf_ellipse(ent, report)
+    if parsed is None:
+        return
+    cx, cy, dx, dy = parsed
+    n = sum(1 for f in features if f.kind == FeatureKind.ELLIPSE) + 1
+    features.append(ProbeScanFeature.new_ellipse(f"{prefix}{n}", cx, cy, dx, dy))
 
 
 def _validate_references(features: list[ProbeScanFeature], report: ImportReport) -> None:

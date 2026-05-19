@@ -101,7 +101,6 @@ def request_android_permissions():
 
 from carveracontroller.addons.probing.ProbingPopup import ProbingPopup
 from carveracontroller.addons.pendant import SettingPendantSelector, SUPPORTED_PENDANTS, OverrideController, SettingGamepadBindings
-from carveracontroller.addons.probe_scan.ProbeScanPopup import ProbeScanPopup
 from carveracontroller.serial_listeners import dispatch_serial_line
 
 import json
@@ -2929,7 +2928,7 @@ class Makera(RelativeLayout):
         self.manual_wifi_popup = ManualWifiPopup()
 
         self.probing_popup = ProbingPopup(self.controller)
-        self.probe_scan_popup = ProbeScanPopup(self.controller)
+        self.probe_scan_popup = None
         self.wcs_settings_popup = WCSSettingsPopup(self.controller, self.wcs_names)
         self.set_rotation_popup = SetRotationPopup(self.controller, self.cnc)
         self.comports_drop_down = DropDown(auto_width=False, width='250dp')
@@ -3221,6 +3220,15 @@ class Makera(RelativeLayout):
             self.select_probe_popup = SelectAndCalibrateProbePopup()
             self.select_probe_popup.open()
 
+    def _ensure_probe_scan_popup(self):
+        if self.probe_scan_popup is None:
+            from carveracontroller.addons.probe_scan.ProbeScanPopup import (
+                ProbeScanPopup,
+            )
+
+            self.probe_scan_popup = ProbeScanPopup(self.controller)
+        return self.probe_scan_popup
+
     def open_probe_scan_popup(self):
         app = App.get_running_app()
         if not app.is_community_firmware:
@@ -3232,7 +3240,7 @@ class Makera(RelativeLayout):
         if CNC.vars["tool"] == 0 or CNC.vars["tool"] >= 999990:
             self._pre_modal_keyboard_jog = self.keyboard_jog_control
             self.toggle_keyboard_jog_control(True)
-            self.probe_scan_popup.open()
+            self._ensure_probe_scan_popup().open()
         else:
             self.select_probe_popup = SelectAndCalibrateProbePopup()
             self.select_probe_popup.open()
@@ -5816,11 +5824,14 @@ class Makera(RelativeLayout):
 
     def is_jogging_enabled(self):
         app = App.get_running_app()
-        jog_popup = getattr(self.probe_scan_popup, "_jog_popup", None)
+        popup = self.probe_scan_popup
+        jog_popup = getattr(popup, "_jog_popup", None) if popup is not None else None
         probe_scan_jog_overlay = (
-            self.probe_scan_popup._is_open
+            popup is not None
+            and popup._is_open
             and jog_popup is not None
             and jog_popup._is_open
+            and not popup.is_probing
         )
         # Keyboard/pendant jogging is normally blocked whenever a modal popup is open,
         # except for probing and the probe-scan "Jog" overlay
@@ -6009,7 +6020,8 @@ class Makera(RelativeLayout):
                            self.confirm_popup._is_open, self.unlock_popup._is_open,
                            self.message_popup._is_open, self.progress_popup._is_open, self.input_popup._is_open,
                            self.config_popup._is_open, self.probing_popup._is_open,
-                           self.probe_scan_popup._is_open]
+                           (self.probe_scan_popup._is_open
+                            if self.probe_scan_popup is not None else False)]
 
         return any(popups_to_check)
     

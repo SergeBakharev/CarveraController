@@ -23,6 +23,24 @@ _SEL_ORDER_PALETTE: tuple[tuple[float, float, float, float], ...] = (
 )
 
 
+def _ellipse_polyline_px(
+    cx: float,
+    cy: float,
+    rx: float,
+    ry: float,
+    px: Callable[[float, float], tuple[float, float]],
+) -> list[float]:
+    """Closed ellipse/circle outline as Kivy Line ``points`` (widget-local px)."""
+    pts: list[float] = []
+    for i in range(33):
+        t = 2 * math.pi * i / 32
+        wx = cx + rx * math.cos(t)
+        wy = cy + ry * math.sin(t)
+        a, b = px(wx, wy)
+        pts.extend([a, b])
+    return pts
+
+
 class ProbeScanPreviewSketch(Widget):
     """Redraw when features or table/focus/selection state change via ``set_features``."""
 
@@ -84,6 +102,10 @@ class ProbeScanPreviewSketch(Widget):
         ):
             return max(dp(18), sc * 0.65)
         if f.kind == FeatureKind.CIRCLE:
+            r = float(p.get("r", 0))
+            ring_px = max(r * sc, dp(8))
+            return max(dp(26), dp(16) + ring_px * 0.42)
+        elif f.kind == FeatureKind.ELLIPSE:
             rdx = float(p.get("diameter_x", 0)) / 2.0
             rdy = float(p.get("diameter_y", 0)) / 2.0
             ring_px = max((rdx + rdy) / 2.0 * sc, dp(8))
@@ -141,6 +163,11 @@ class ProbeScanPreviewSketch(Widget):
         if f.kind in (FeatureKind.POINT, FeatureKind.CORNER, FeatureKind.DERIVED_POINT):
             return pt_dist(float(p.get("x", 0)), float(p.get("y", 0)))
         if f.kind == FeatureKind.CIRCLE:
+            cx_ = float(p.get("cx", 0))
+            cy_ = float(p.get("cy", 0))
+            r = float(p.get("r", 0))
+            return self._circle_hit_distance_px(cx_, cy_, r, r, tx, ty)
+        if f.kind == FeatureKind.ELLIPSE:
             cx_ = float(p.get("cx", 0))
             cy_ = float(p.get("cy", 0))
             rdx = float(p.get("diameter_x", 0)) / 2.0
@@ -236,31 +263,15 @@ class ProbeScanPreviewSketch(Widget):
                 ],
                 width=lw,
             )
-        elif kind == FeatureKind.CIRCLE:
+        elif kind in (FeatureKind.CIRCLE, FeatureKind.ELLIPSE, FeatureKind.DERIVED_CIRCLE):
             cx_ = float(p.get("cx", 0))
             cy_ = float(p.get("cy", 0))
-            rdx = float(p.get("diameter_x", 0)) / 2.0
-            rdy = float(p.get("diameter_y", 0)) / 2.0
-            pts_circ: list[float] = []
-            for i in range(33):
-                t = 2 * math.pi * i / 32
-                wx = cx_ + rdx * math.cos(t)
-                wy = cy_ + rdy * math.sin(t)
-                a, b = px(wx, wy)
-                pts_circ.extend([a, b])
-            Line(points=pts_circ, width=lw)
-        elif kind == FeatureKind.DERIVED_CIRCLE:
-            cx_ = float(p.get("cx", 0))
-            cy_ = float(p.get("cy", 0))
-            r = float(p.get("r", 0))
-            ovals: list[float] = []
-            for i in range(33):
-                t = 2 * math.pi * i / 32
-                wx = cx_ + r * math.cos(t)
-                wy = cy_ + r * math.sin(t)
-                u, vv = px(wx, wy)
-                ovals.extend([u, vv])
-            Line(points=ovals, width=lw)
+            if kind == FeatureKind.ELLIPSE:
+                rx = float(p.get("diameter_x", 0)) / 2.0
+                ry = float(p.get("diameter_y", 0)) / 2.0
+            else:
+                rx = ry = float(p.get("r", 0))
+            Line(points=_ellipse_polyline_px(cx_, cy_, rx, ry, px), width=lw)
         elif kind == FeatureKind.SEGMENT:
             ends = segment_endpoints(by_id, f)
             if not ends:
@@ -298,7 +309,7 @@ class ProbeScanPreviewSketch(Widget):
         p = f.payload
         if kind in (FeatureKind.POINT, FeatureKind.DERIVED_POINT, FeatureKind.CORNER):
             return px(float(p.get("x", 0)), float(p.get("y", 0)))
-        if kind in (FeatureKind.CIRCLE, FeatureKind.DERIVED_CIRCLE):
+        if kind in (FeatureKind.CIRCLE, FeatureKind.ELLIPSE, FeatureKind.DERIVED_CIRCLE):
             return px(float(p.get("cx", 0)), float(p.get("cy", 0)))
         if kind == FeatureKind.SEGMENT:
             ends = segment_endpoints(by_id, f)
@@ -372,8 +383,8 @@ class ProbeScanPreviewSketch(Widget):
             dy /= dist
         perp_x, perp_y = -dy, dx
 
-        if kind in (FeatureKind.CIRCLE, FeatureKind.DERIVED_CIRCLE):
-            if kind == FeatureKind.CIRCLE:
+        if kind in (FeatureKind.CIRCLE, FeatureKind.ELLIPSE, FeatureKind.DERIVED_CIRCLE):
+            if kind == FeatureKind.ELLIPSE:
                 rdx = float(p.get("diameter_x", 0)) / 2.0
                 rdy = float(p.get("diameter_y", 0)) / 2.0
                 rw = max(rdx, rdy, 1e-6)
@@ -482,6 +493,12 @@ class ProbeScanPreviewSketch(Widget):
             if f.kind == FeatureKind.POINT:
                 add_xy(float(p.get("x", 0)), float(p.get("y", 0)))
             elif f.kind == FeatureKind.CIRCLE:
+                cx = float(p.get("cx", 0))
+                cy = float(p.get("cy", 0))
+                r = float(p.get("r", 0))
+                xs.extend([cx - r, cx + r])
+                ys.extend([cy - r, cy + r])
+            elif f.kind == FeatureKind.ELLIPSE:
                 cx = float(p.get("cx", 0))
                 cy = float(p.get("cy", 0))
                 rdx = float(p.get("diameter_x", 0)) / 2.0
@@ -618,14 +635,10 @@ class ProbeScanPreviewSketch(Widget):
                     cy_ = float(p.get("cy", 0))
                     r = float(p.get("r", 0))
                     Color(0.9, 0.55, 0.35, 1)
-                    ovals: list[float] = []
-                    for i in range(33):
-                        t = 2 * math.pi * i / 32
-                        wx = cx_ + r * math.cos(t)
-                        wy = cy_ + r * math.sin(t)
-                        u, vv = px(wx, wy)
-                        ovals.extend([u, vv])
-                    Line(points=ovals, width=1.2)
+                    Line(
+                        points=_ellipse_polyline_px(cx_, cy_, r, r, px),
+                        width=1.2,
+                    )
 
                 elif f.kind == FeatureKind.DERIVED_POINT:
                     p = f.payload
@@ -646,20 +659,20 @@ class ProbeScanPreviewSketch(Widget):
                     Color(0.35, 0.85, 0.95, 1)
                     Line(points=[u - s, v, u + s, v], width=1.4)
                     Line(points=[u, v - s, u, v + s], width=1.4)
-                elif f.kind == FeatureKind.CIRCLE:
-                    cx_ = float(f.payload.get("cx", 0))
-                    cy_ = float(f.payload.get("cy", 0))
-                    rdx = float(f.payload.get("diameter_x", 0)) / 2.0
-                    rdy = float(f.payload.get("diameter_y", 0)) / 2.0
+                elif f.kind in (FeatureKind.CIRCLE, FeatureKind.ELLIPSE):
+                    p = f.payload
+                    cx_ = float(p.get("cx", 0))
+                    cy_ = float(p.get("cy", 0))
+                    if f.kind == FeatureKind.ELLIPSE:
+                        rx = float(p.get("diameter_x", 0)) / 2.0
+                        ry = float(p.get("diameter_y", 0)) / 2.0
+                    else:
+                        rx = ry = float(p.get("r", 0))
                     Color(0.55, 0.8, 0.45, 1)
-                    pts_circ: list[float] = []
-                    for i in range(33):
-                        t = 2 * math.pi * i / 32
-                        wx = cx_ + rdx * math.cos(t)
-                        wy = cy_ + rdy * math.sin(t)
-                        a, b = px(wx, wy)
-                        pts_circ.extend([a, b])
-                    Line(points=pts_circ, width=1.2)
+                    Line(
+                        points=_ellipse_polyline_px(cx_, cy_, rx, ry, px),
+                        width=1.2,
+                    )
                 elif f.kind == FeatureKind.CORNER:
                     x = float(f.payload.get("x", 0))
                     y = float(f.payload.get("y", 0))

@@ -20,9 +20,12 @@ class M118ProbeCapture:
     """Stateful parser for CMMProbe START/END blocks on the serial stream."""
 
     def __init__(
-        self, on_complete: Callable[[str, list[float], list[str]], None]
+        self,
+        on_complete: Callable[[str, list[float], list[str]], None],
+        on_abort: Callable[[str, list[float], list[str]], None] | None = None,
     ):
         self._on_complete = on_complete
+        self._on_abort = on_abort
         self._host_armed = False
         self._active = False
         self._op: str | None = None
@@ -69,6 +72,19 @@ class M118ProbeCapture:
             return
 
         if RE_CMM_END.search(s):
+            # Stale END from a prior run can arrive right after prime_upstream.
+            if self._host_armed and not self._buf:
+                return
+            if self._active and self._expected > 0:
+                if len(self._buf) < self._expected and self._on_abort is not None:
+                    try:
+                        self._on_abort(
+                            self._op or "",
+                            list(self._buf),
+                            list(self._var_keys),
+                        )
+                    except Exception:
+                        logger.exception("M118 probe capture abort callback")
             self.reset()
             return
 

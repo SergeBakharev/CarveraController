@@ -1,8 +1,38 @@
-"""Pure 2D construction math (no Kivy dependency)."""
+"""Pure 2D construction math (no Kivy dependency).
+
+Axis-aligned ellipses only. Ellipse–ellipse intersection and external tangents use
+numeric sampling; results are approximate near degenerate cases.
+"""
 
 from __future__ import annotations
 
 import math
+
+
+def _golden_minimize_1d(
+    lo: float,
+    hi: float,
+    fn,
+    *,
+    iters: int = 24,
+) -> tuple[float, float]:
+    """Minimize fn(t) for t in [lo, hi] via golden-section search."""
+    phi = (math.sqrt(5.0) - 1.0) / 2.0
+    t1 = hi - phi * (hi - lo)
+    t2 = lo + phi * (hi - lo)
+    f1, f2 = fn(t1), fn(t2)
+    for _ in range(iters):
+        if f1 < f2:
+            hi, t2, f2 = t2, t1, f1
+            t1 = hi - phi * (hi - lo)
+            f1 = fn(t1)
+        else:
+            lo, t1, f1 = t1, t2, f2
+            t2 = lo + phi * (hi - lo)
+            f2 = fn(t2)
+    if f1 < f2:
+        return t1, f1
+    return t2, f2
 
 
 def circumcircle_2d(ax: float, ay: float, bx: float, by: float, cx: float, cy: float) -> tuple[float, float, float]:
@@ -231,4 +261,275 @@ def tangent_circle_to_circle_external_2d(
         cross_ref = (tp1[0] - sx) * uy - (tp1[1] - sy) * ux
         tp2 = tp2_a if abs(cross_a - cross_ref) < abs(cross_b - cross_ref) else tp2_b
         lines.append((tp1, tp2))
+    return lines
+
+
+def ellipse_line_intersections_2d(
+    cx: float,
+    cy: float,
+    rx: float,
+    ry: float,
+    ax: float,
+    ay: float,
+    bx: float,
+    by: float,
+    *,
+    tol: float = 1e-9,
+) -> list[tuple[float, float]]:
+    """
+    Intersections of axis-aligned ellipse (cx, cy, rx, ry) with infinite line through A and B.
+  """
+    dx, dy = bx - ax, by - ay
+    length = math.hypot(dx, dy)
+    if length < tol or rx < tol or ry < tol:
+        return []
+    dx /= length
+    dy /= length
+    ux, vy = ax - cx, ay - cy
+    inv_rx2 = 1.0 / (rx * rx)
+    inv_ry2 = 1.0 / (ry * ry)
+    a_coef = dx * dx * inv_rx2 + dy * dy * inv_ry2
+    b_coef = 2.0 * (ux * dx * inv_rx2 + vy * dy * inv_ry2)
+    c_coef = ux * ux * inv_rx2 + vy * vy * inv_ry2 - 1.0
+    disc = b_coef * b_coef - 4.0 * a_coef * c_coef
+    if disc < 0:
+        return []
+    if disc < tol * tol:
+        t = -b_coef / (2.0 * a_coef)
+        return [(ax + t * dx, ay + t * dy)]
+    sq = math.sqrt(disc)
+    t1 = (-b_coef - sq) / (2.0 * a_coef)
+    t2 = (-b_coef + sq) / (2.0 * a_coef)
+    return [
+        (ax + t1 * dx, ay + t1 * dy),
+        (ax + t2 * dx, ay + t2 * dy),
+    ]
+
+
+def _point_on_ellipse_2d(
+    cx: float,
+    cy: float,
+    rx: float,
+    ry: float,
+    x: float,
+    y: float,
+    *,
+    tol: float = 1e-9,
+) -> bool:
+    if rx < tol or ry < tol:
+        return False
+    val = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2
+    return abs(val - 1.0) <= tol * 10.0
+
+
+def ellipse_ellipse_intersections_2d(
+    cx1: float,
+    cy1: float,
+    rx1: float,
+    ry1: float,
+    cx2: float,
+    cy2: float,
+    rx2: float,
+    ry2: float,
+    *,
+    tol: float = 1e-9,
+    samples: int = 720,
+) -> list[tuple[float, float]]:
+    """Intersections of two axis-aligned ellipses (0–4 points)."""
+    if min(rx1, ry1, rx2, ry2) < tol:
+        return []
+
+    def rho1(t: float) -> float:
+        x = cx1 + rx1 * math.cos(t)
+        y = cy1 + ry1 * math.sin(t)
+        return ((x - cx2) / rx2) ** 2 + ((y - cy2) / ry2) ** 2 - 1.0
+
+    roots: list[tuple[float, float]] = []
+    prev_t = 0.0
+    prev_r = rho1(0.0)
+    dt = 2.0 * math.pi / samples
+    for i in range(1, samples + 1):
+        t = i * dt
+        r = rho1(t)
+        if prev_r == 0.0 or r == 0.0 or prev_r * r < 0:
+            lo_t, hi_t = (i - 1) * dt, t
+            lo_r, hi_r = prev_r, r
+            for _ in range(50):
+                mid_t = (lo_t + hi_t) * 0.5
+                mid_r = rho1(mid_t)
+                if abs(mid_r) < tol:
+                    lo_t = hi_t = mid_t
+                    break
+                if lo_r * mid_r <= 0:
+                    hi_t, hi_r = mid_t, mid_r
+                else:
+                    lo_t, lo_r = mid_t, mid_r
+            t_hit = (lo_t + hi_t) * 0.5
+            x = cx1 + rx1 * math.cos(t_hit)
+            y = cy1 + ry1 * math.sin(t_hit)
+            if _point_on_ellipse_2d(cx1, cy1, rx1, ry1, x, y, tol=tol) and _point_on_ellipse_2d(
+                cx2, cy2, rx2, ry2, x, y, tol=tol
+            ):
+                merge = max(
+                    1e-4,
+                    1e-3 * max(rx1, ry1, rx2, ry2, 1.0),
+                )
+                dup = any(
+                    math.hypot(x - px, y - py) < merge for px, py in roots
+                )
+                if not dup:
+                    roots.append((x, y))
+        prev_t, prev_r = t, r
+    return roots
+
+
+def tangent_point_to_ellipse_2d(
+    px_: float,
+    py_: float,
+    cx: float,
+    cy: float,
+    rx: float,
+    ry: float,
+    *,
+    tol: float = 1e-9,
+) -> list[tuple[float, float]]:
+    """
+    Tangent touch-points on axis-aligned ellipse from external point (px_, py_).
+    Returns 0, 1, or 2 points.
+    """
+    if rx < tol or ry < tol:
+        return []
+    # Implicit: F(x,y) = ((x-cx)/rx)^2 + ((y-cy)/ry)^2 - 1; gradient at touch T is parallel to PT.
+    # Parametric search on angle for robustness with axis-aligned ellipses.
+    ux, vy = px_ - cx, py_ - cy
+    inside = (ux / rx) ** 2 + (vy / ry) ** 2
+    if inside <= 1.0 + tol:
+        return []
+
+    def dist_sq(t: float) -> float:
+        tx = cx + rx * math.cos(t)
+        ty = cy + ry * math.sin(t)
+        return (tx - px_) ** 2 + (ty - py_) ** 2
+
+    def ortho(t: float) -> float:
+        """Dot of (T-P) with normal at T; zero at tangency."""
+        tx = cx + rx * math.cos(t)
+        ty = cy + ry * math.sin(t)
+        nx = (tx - cx) / (rx * rx)
+        ny = (ty - cy) / (ry * ry)
+        return (tx - px_) * nx + (ty - py_) * ny
+
+    candidates: list[tuple[float, float, float]] = []
+    samples = 360
+    prev_t = 0.0
+    prev_o = ortho(0.0)
+    dt = 2.0 * math.pi / samples
+    merge = max(1e-4, 1e-3 * max(rx, ry, 1.0))
+    for i in range(1, samples + 1):
+        t = i * dt
+        o = ortho(t)
+        if prev_o == 0.0 or o == 0.0 or prev_o * o < 0:
+            lo_t, hi_t = (i - 1) * dt, t
+            lo_o, hi_o = prev_o, o
+            for _ in range(50):
+                mid_t = (lo_t + hi_t) * 0.5
+                mid_o = ortho(mid_t)
+                if abs(mid_o) < tol:
+                    lo_t = hi_t = mid_t
+                    break
+                if lo_o * mid_o <= 0:
+                    hi_t, hi_o = mid_t, mid_o
+                else:
+                    lo_t, lo_o = mid_t, mid_o
+            t_hit, d_hit = _golden_minimize_1d(lo_t, hi_t, dist_sq)
+            if d_hit > tol:
+                tx = cx + rx * math.cos(t_hit)
+                ty = cy + ry * math.sin(t_hit)
+                dup = any(
+                    math.hypot(tx - qx, ty - qy) < merge for qx, qy, _ in candidates
+                )
+                if not dup:
+                    candidates.append((tx, ty, d_hit))
+        prev_t, prev_o = t, o
+    if not candidates:
+        return []
+    candidates.sort(key=lambda c: c[2])
+    min_d = candidates[0][2]
+    threshold = min_d * 1.5 + tol
+    return [(tx, ty) for tx, ty, d in candidates if d <= threshold][:2]
+
+
+def tangent_ellipse_to_ellipse_external_2d(
+    cx1: float,
+    cy1: float,
+    rx1: float,
+    ry1: float,
+    cx2: float,
+    cy2: float,
+    rx2: float,
+    ry2: float,
+    *,
+    tol: float = 1e-9,
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    """
+    External tangent lines between two axis-aligned ellipses.
+    Returns up to 4 lines as pairs of touch-points (one on each ellipse).
+    """
+    if min(rx1, ry1, rx2, ry2) < tol:
+        return []
+
+    lines: list[tuple[tuple[float, float], tuple[float, float]]] = []
+    samples = 360
+    dt = 2.0 * math.pi / samples
+
+    def tangent_dir_at(t: float, cx: float, cy: float, rx: float, ry: float) -> tuple[float, float]:
+        sx = -rx * math.sin(t)
+        sy = ry * math.cos(t)
+        ln = math.hypot(sx, sy)
+        if ln < tol:
+            return 1.0, 0.0
+        return sx / ln, sy / ln
+
+    for i in range(samples):
+        t1 = i * dt
+        p1 = (cx1 + rx1 * math.cos(t1), cy1 + ry1 * math.sin(t1))
+        d1x, d1y = tangent_dir_at(t1, cx1, cy1, rx1, ry1)
+        for sign in (1.0, -1.0):
+            nx, ny = -d1y * sign, d1x * sign
+            # Line through p1 with normal (nx, ny): find p2 on ellipse 2 where normal aligns.
+            best: tuple[float, float] | None = None
+            best_score = float("inf")
+            for j in range(samples):
+                t2 = j * dt
+                p2 = (cx2 + rx2 * math.cos(t2), cy2 + ry2 * math.sin(t2))
+                d2x, d2y = tangent_dir_at(t2, cx2, cy2, rx2, ry2)
+                # External tangent: directions parallel, normals aligned along p1-p2.
+                cross = abs(d1x * d2y - d1y * d2x)
+                if cross > 0.05:
+                    continue
+                vx, vy = p2[0] - p1[0], p2[1] - p1[1]
+                vn = math.hypot(vx, vy)
+                if vn < tol:
+                    continue
+                vx /= vn
+                vy /= vn
+                align = abs(vx * nx + vy * ny)
+                if align < best_score:
+                    best_score = align
+                    best = p2
+            if best is not None and best_score < 0.02:
+                pair = (p1, best)
+                dup = False
+                for a, b in lines:
+                    if (
+                        math.hypot(a[0] - pair[0][0], a[1] - pair[0][1]) < tol * 50
+                        and math.hypot(b[0] - pair[1][0], b[1] - pair[1][1]) < tol * 50
+                    ):
+                        dup = True
+                        break
+                if not dup:
+                    lines.append(pair)
+    # Deduplicate and keep at most 4 distinct tangents
+    if len(lines) > 4:
+        lines = lines[:4]
     return lines

@@ -20,6 +20,7 @@ class CoordSys(str, Enum):
 class FeatureKind(str, Enum):
     POINT = "point"
     CIRCLE = "circle"
+    ELLIPSE = "ellipse"
     CORNER = "corner"
     ANGLE = "angle"
     SEGMENT = "segment"
@@ -67,8 +68,7 @@ class ProbeScanFeature:
         label: str,
         cx: float,
         cy: float,
-        d_x: float,
-        d_y: float,
+        r: float,
         *,
         coord_sys: CoordSys = CoordSys.WCS,
     ) -> ProbeScanFeature:
@@ -80,8 +80,30 @@ class ProbeScanFeature:
             payload={
                 "cx": cx,
                 "cy": cy,
-                "diameter_x": d_x,
-                "diameter_y": d_y,
+                "r": float(r),
+            },
+        )
+
+    @staticmethod
+    def new_ellipse(
+        label: str,
+        cx: float,
+        cy: float,
+        diameter_x: float,
+        diameter_y: float,
+        *,
+        coord_sys: CoordSys = CoordSys.WCS,
+    ) -> ProbeScanFeature:
+        return ProbeScanFeature(
+            id=str(uuid.uuid4()),
+            kind=FeatureKind.ELLIPSE,
+            label=label,
+            coord_sys=coord_sys,
+            payload={
+                "cx": cx,
+                "cy": cy,
+                "diameter_x": float(diameter_x),
+                "diameter_y": float(diameter_y),
             },
         )
 

@@ -30,17 +30,12 @@ from carveracontroller.serial_listeners import (
 from carveracontroller.translation import tr
 
 from .construction_geom import (
-    circle_circle_intersections_2d,
-    circle_line_intersections_2d,
     circumcircle_2d,
     line_intersection_2d,
     midpoint_2d,
-    tangent_circle_to_circle_external_2d,
-    tangent_point_to_circle_2d,
 )
 from .coordinate_transform import mcs_xyz_to_wcs_xyz
 from .export_format import export_csv, export_dxf, export_json
-from .import_format import load_session_from_path
 from .gcode_builders import (
     build_m461,
     build_m462,
@@ -51,14 +46,21 @@ from .gcode_builders import (
     split_execute_lines,
 )
 from .feature_resolve import (
+    curve_curve_external_tangents,
+    curve_curve_intersections,
+    curve_line_intersections,
+    feature_from_m461_m462,
     features_referencing_id,
     index_by_id,
+    point_curve_tangents,
     resolve_circle,
+    resolve_curve,
     resolve_xy,
     segment_endpoints,
 )
 from .gcode_m118 import extract_probe_start_meta
 from .m118_capture import M118ProbeCapture, map_values_to_dict
+from .probe_run_token import ProbeRunToken
 from .scan_preview_sketch import ProbeScanPreviewSketch
 from .session import CoordSys, FeatureKind, ProbeScanFeature, ProbeScanSession
 
@@ -186,7 +188,8 @@ def _corner_deltas_from_quadrant(quadrant: str, mx: float, my: float) -> tuple[f
 
 
 _PROBE_ANIM_FRAMES = ("◐", "◓", "◑", "◒")
-_PROBE_TIMEOUT_S = 60.0
+_PROBE_TIMEOUT_S = 30.0
+_DEFAULT_CIRCLE_CLASSIFY_TOLERANCE_MM = 0.02
 
 
 class ProbeScanPopup(ModalView):
@@ -223,6 +226,8 @@ class ProbeScanPopup(ModalView):
         self._probe_anim_event = None
         self._probe_timeout_event = None
         self._probe_anim_frame: int = 0
+        self._probe_token = ProbeRunToken()
+        self._active_probe_token: int | None = None
         super().__init__(**kwargs)
 
     def on_kv_post(self, base_widget):
@@ -308,6 +313,8 @@ class ProbeScanPopup(ModalView):
             logger.debug("Could not toggle row focus", exc_info=True)
 
     def open_jog_popup(self, *_args):
+        if not self._guard_session_mutation():
+            return
         jog = getattr(self, "_jog_popup", None)
         if jog is None:
             jog = Factory.JogProbeScanPopup()
@@ -335,16 +342,60 @@ class ProbeScanPopup(ModalView):
             jog.dismiss()
 
     def on_open(self):
-        self._capture = M118ProbeCapture(self._on_probe_values)
+        self._capture = M118ProbeCapture(
+            self._on_probe_values,
+            on_abort=self._on_probe_abort,
+        )
         self._listener_handle = register_serial_listener(self._capture.feed_line)
         Clock.schedule_interval(self._tick_wcs_live, 0.35)
         Clock.schedule_once(lambda _dt: self._tick_wcs_live(), 0.05)
         Clock.schedule_once(lambda _dt: self._sync_manual_wcs_fields_from_machine(), 0.08)
         Clock.schedule_once(lambda _dt: self._refresh_feature_ui(), 0)
 
+    def dismiss(self, *args, **kwargs):
+        if self.is_probing:
+            self._confirm_dismiss_while_probing()
+            return
+        super().dismiss(*args, **kwargs)
+
+    def _confirm_dismiss_while_probing(self) -> None:
+        root = App.get_running_app().root
+        cp = root.confirm_popup
+        cp.lb_title.text = tr._("Probing in progress")
+        cp.lb_content.text = tr._(
+            "A probe operation is still running. Close anyway and discard any result?"
+        )
+
+        def on_confirm(*_args):
+            self._discard_active_probe()
+            super(ProbeScanPopup, self).dismiss()
+
+        cp.confirm = on_confirm
+        cp.cancel = None
+        cp.open(root)
+
+    def _cancel_probe_run(
+        self,
+        *,
+        toast: str | None = None,
+        abort_machine: bool = False,
+    ) -> None:
+        self._active_probe_token = None
+        self._probe_token.invalidate()
+        if self._capture is not None:
+            self._capture.reset()
+        self._end_probe_ui()
+        if abort_machine and not self._idle_ok():
+            self.controller.abortCommand()
+        if toast:
+            self._toast(toast)
+
+    def _discard_active_probe(self) -> None:
+        self._cancel_probe_run(abort_machine=True)
+
     def on_dismiss(self):
         self._dismiss_jog_popup()
-        self._stop_probing()
+        self._end_probe_ui()
         Clock.unschedule(self._tick_wcs_live)
         if self._listener_handle is not None:
             unregister_serial_listener(self._listener_handle)
@@ -353,6 +404,8 @@ class ProbeScanPopup(ModalView):
         App.get_running_app().root.restore_keyboard_jog_control()
 
     def _start_probing(self) -> None:
+        self._dismiss_jog_popup()
+        self._active_probe_token = self._probe_token.start()
         self._probe_anim_frame = 0
         self.is_probing = True
         self._update_probing_text()
@@ -361,11 +414,24 @@ class ProbeScanPopup(ModalView):
         self._probe_anim_event = Clock.schedule_interval(self._tick_probe_anim, 0.18)
         if self._probe_timeout_event is not None:
             self._probe_timeout_event.cancel()
+        run_token = self._active_probe_token
         self._probe_timeout_event = Clock.schedule_once(
-            lambda _dt: self._stop_probing(), _PROBE_TIMEOUT_S
+            lambda _dt, t=run_token: self._on_probe_timeout(_dt, t),
+            _PROBE_TIMEOUT_S,
+        )
+        self._recompute_construct_buttons()
+        self._refresh_feature_ui()
+
+    def _on_probe_timeout(self, _dt=None, run_token: int | None = None) -> None:
+        if not self.is_probing:
+            return
+        if run_token is None or run_token != self._active_probe_token:
+            return
+        self._cancel_probe_run(
+            toast=tr._("Probe timed out."), abort_machine=True
         )
 
-    def _stop_probing(self) -> None:
+    def _end_probe_ui(self) -> None:
         self.is_probing = False
         self.probing_status_text = ""
         if self._probe_anim_event is not None:
@@ -374,6 +440,8 @@ class ProbeScanPopup(ModalView):
         if self._probe_timeout_event is not None:
             self._probe_timeout_event.cancel()
             self._probe_timeout_event = None
+        self._recompute_construct_buttons()
+        self._refresh_feature_ui()
 
     def _tick_probe_anim(self, _dt=None) -> None:
         self._probe_anim_frame = (self._probe_anim_frame + 1) % len(_PROBE_ANIM_FRAMES)
@@ -429,6 +497,12 @@ class ProbeScanPopup(ModalView):
         if hasattr(root, "show_message_popup"):
             root.show_message_popup(msg, False)
 
+    def _guard_session_mutation(self) -> bool:
+        if self.is_probing:
+            self._toast(tr._("Wait for probing to finish."))
+            return False
+        return True
+
     def _toast_need_probing_option(self) -> None:
         self._toast(tr._("Select a probing option before running."))
 
@@ -437,6 +511,9 @@ class ProbeScanPopup(ModalView):
         return app.state == "Idle"
 
     def _run_gcode_program(self, program: str):
+        if self.is_probing:
+            self._toast(tr._("Probe already in progress."))
+            return
         if not self._idle_ok():
             self._toast(tr._("Machine must be Idle to probe."))
             return
@@ -456,14 +533,68 @@ class ProbeScanPopup(ModalView):
             self.controller.executeCommand(ln + "\n")
 
     def _on_probe_values(self, op: str, values: list[float], var_keys: list[str]):
+        if self._probe_timeout_event is not None:
+            self._probe_timeout_event.cancel()
+            self._probe_timeout_event = None
+        run_token = self._active_probe_token
+
         def _ui(_dt):
-            self._stop_probing()
+            if run_token is None or run_token != self._active_probe_token:
+                return
+            self._active_probe_token = None
+            self._probe_token.invalidate()
+            self._end_probe_ui()
             vd = map_values_to_dict(op, values, var_keys)
-            self._append_probe_result(op, vd)
+            self._append_probe_result(op, vd, var_keys)
 
         Clock.schedule_once(_ui, 0)
 
-    def _append_probe_result(self, op: str, vd: dict[str, float]):
+    def _on_probe_abort(
+        self, op: str, values: list[float], var_keys: list[str]
+    ) -> None:
+        if self._probe_timeout_event is not None:
+            self._probe_timeout_event.cancel()
+            self._probe_timeout_event = None
+        run_token = self._active_probe_token
+
+        def _ui(_dt):
+            if run_token is None or run_token != self._active_probe_token:
+                return
+            self._cancel_probe_run()
+            if values:
+                self._toast(
+                    tr._("Probe ended with incomplete data ({got}/{exp}).").format(
+                        got=len(values), exp=len(var_keys)
+                    )
+                )
+            else:
+                self._toast(tr._("Probe failed or was cancelled."))
+
+        Clock.schedule_once(_ui, 0)
+
+    def _read_circle_classify_tolerance_mm(self, op: str) -> float | None:
+        """Absolute mm tolerance for full bore/boss circle vs ellipse classification."""
+        raw = ""
+        try:
+            field_id = "t462_circle_tol" if op == "M462" else "t461_circle_tol"
+            raw = getattr(self.ids, field_id).text.strip().replace(",", ".")
+        except Exception:
+            logger.debug("Could not read circle classify tolerance", exc_info=True)
+        if not raw:
+            return _DEFAULT_CIRCLE_CLASSIFY_TOLERANCE_MM
+        try:
+            tol = float(raw)
+        except ValueError:
+            self._toast(tr._("Invalid circle tolerance."))
+            return None
+        if tol < 0:
+            self._toast(tr._("Circle tolerance must be zero or positive."))
+            return None
+        return tol
+
+    def _append_probe_result(
+        self, op: str, vd: dict[str, float], var_keys: list[str] | None = None
+    ):
         if op == "M466":
             mx = float(CNC.vars.get("mx", 0.0))
             my = float(CNC.vars.get("my", 0.0))
@@ -482,20 +613,28 @@ class ProbeScanPopup(ModalView):
             )
             self.session.features.append(f)
         elif op in ("M461", "M462"):
-            cx_m = float(vd.get("154", 0.0))
-            cy_m = float(vd.get("155", 0.0))
-            wx, wy, _ = mcs_xyz_to_wcs_xyz(cx_m, cy_m, 0.0)
-            f = ProbeScanFeature.new_circle(
+            label = (
                 tr._("Bore center (M461)")
                 if op == "M461"
-                else tr._("Boss center (M462)"),
-                wx,
-                wy,
-                float(vd.get("151", 0.0)),
-                float(vd.get("152", 0.0)),
-                coord_sys=CoordSys.WCS,
+                else tr._("Boss center (M462)")
             )
-            self.session.features.append(f)
+            mx = float(CNC.vars.get("mx", 0.0))
+            my = float(CNC.vars.get("my", 0.0))
+            tol = self._read_circle_classify_tolerance_mm(op)
+            if tol is None:
+                return
+            f, err = feature_from_m461_m462(
+                label,
+                vd,
+                var_keys or [],
+                mx=mx,
+                my=my,
+                tolerance_mm=tol,
+            )
+            if err is not None:
+                self._toast(tr._(err))
+            elif f is not None:
+                self.session.features.append(f)
         elif op in ("M463", "M464"):
             xm = float(vd.get("154", 0.0))
             ym = float(vd.get("155", 0.0))
@@ -523,6 +662,7 @@ class ProbeScanPopup(ModalView):
             FeatureKind.POINT,
             FeatureKind.CORNER,
             FeatureKind.CIRCLE,
+            FeatureKind.ELLIPSE,
             FeatureKind.DERIVED_POINT,
         )
 
@@ -534,7 +674,11 @@ class ProbeScanPopup(ModalView):
         try:
             if k in (FeatureKind.POINT, FeatureKind.CORNER, FeatureKind.DERIVED_POINT):
                 return float(p["x"]), float(p["y"]), float(p.get("z", 0.0))
-            if k in (FeatureKind.CIRCLE, FeatureKind.DERIVED_CIRCLE):
+            if k in (
+                FeatureKind.CIRCLE,
+                FeatureKind.ELLIPSE,
+                FeatureKind.DERIVED_CIRCLE,
+            ):
                 return float(p["cx"]), float(p["cy"]), 0.0
         except (KeyError, TypeError, ValueError):
             return None
@@ -579,6 +723,13 @@ class ProbeScanPopup(ModalView):
             x_, y_, z_ = xyz
             line = self._fmt_wcs_xy_detail(x_, y_, feat=feat, z_fallback=z_)
             if k == FeatureKind.CIRCLE:
+                try:
+                    d = 2.0 * float(p.get("r", 0.0))
+                except (TypeError, ValueError):
+                    d = 0.0
+                dim = tr._("Ø %(d).3f") % {"d": d}
+                return f"{line} · {dim}"
+            if k == FeatureKind.ELLIPSE:
                 try:
                     dx = float(p.get("diameter_x", 0.0))
                     dy = float(p.get("diameter_y", 0.0))
@@ -667,6 +818,16 @@ class ProbeScanPopup(ModalView):
 
     def _recompute_construct_buttons(self) -> None:
         """Update can_* properties based on current selection and feature types."""
+        if self.is_probing:
+            self.has_construct_selection = False
+            self.can_make_segment = False
+            self.can_make_polyline_open = False
+            self.can_make_polyline_closed = False
+            self.can_make_circumcircle = False
+            self.can_make_intersection = False
+            self.can_make_midpoint = False
+            self.can_make_tangent = False
+            return
         by_id = index_by_id(self.session.features)
         ids = list(self._selection_order)
         n = len(ids)
@@ -681,9 +842,9 @@ class ProbeScanPopup(ModalView):
             f = by_id.get(fid)
             return f is not None and f.kind == FeatureKind.SEGMENT
 
-        def is_circle_like(fid: str) -> bool:
+        def is_curve_like(fid: str) -> bool:
             f = by_id.get(fid)
-            return f is not None and f.kind in (FeatureKind.CIRCLE, FeatureKind.DERIVED_CIRCLE)
+            return f is not None and resolve_curve(f) is not None
 
         # Segment: exactly 2 point-like features
         self.can_make_segment = (
@@ -705,9 +866,9 @@ class ProbeScanPopup(ModalView):
         self.can_make_intersection = (
             n == 2 and (
                 all(is_segment(fid) for fid in ids)
-                or all(is_circle_like(fid) for fid in ids)
-                or (is_circle_like(ids[0]) and is_segment(ids[1]))
-                or (is_segment(ids[0]) and is_circle_like(ids[1]))
+                or all(is_curve_like(fid) for fid in ids)
+                or (is_curve_like(ids[0]) and is_segment(ids[1]))
+                or (is_segment(ids[0]) and is_curve_like(ids[1]))
             )
         )
         # Midpoint: exactly 2 point-like features
@@ -716,9 +877,9 @@ class ProbeScanPopup(ModalView):
         )
         # Tangent: 1 point + 1 circle, or 2 circles
         self.can_make_tangent = n == 2 and (
-            (is_point_like(ids[0]) and is_circle_like(ids[1]))
-            or (is_circle_like(ids[0]) and is_point_like(ids[1]))
-            or all(is_circle_like(fid) for fid in ids)
+            (is_point_like(ids[0]) and is_curve_like(ids[1]))
+            or (is_curve_like(ids[0]) and is_point_like(ids[1]))
+            or all(is_curve_like(fid) for fid in ids)
         )
 
     def _on_feature_row_label_touch(self, feat_id: str, instance: Label, touch):
@@ -779,6 +940,7 @@ class ProbeScanPopup(ModalView):
                 )
                 cb = CheckBox(size_hint=(1, 1))
                 cb.active = feat.id in self._selection_order
+                cb.disabled = self.is_probing
                 cb.bind(active=partial(self._on_row_checkbox, feat.id))
                 cb_col.add_widget(cb)
 
@@ -809,22 +971,22 @@ class ProbeScanPopup(ModalView):
 
                 row.add_widget(cb_col)
                 row.add_widget(lbl)
-                row.add_widget(
-                    Button(
-                        text=tr._("Rename"),
-                        size_hint_x=None,
-                        width=dp(78),
-                        on_release=partial(self._on_rename_feature, feat.id),
-                    )
+                rename_btn = Button(
+                    text=tr._("Rename"),
+                    size_hint_x=None,
+                    width=dp(78),
+                    disabled=self.is_probing,
+                    on_release=partial(self._on_rename_feature, feat.id),
                 )
-                row.add_widget(
-                    Button(
-                        text=tr._("Delete"),
-                        size_hint_x=None,
-                        width=dp(78),
-                        on_release=partial(self._on_delete_feature, feat.id),
-                    )
+                row.add_widget(rename_btn)
+                delete_btn = Button(
+                    text=tr._("Delete"),
+                    size_hint_x=None,
+                    width=dp(78),
+                    disabled=self.is_probing,
+                    on_release=partial(self._on_delete_feature, feat.id),
                 )
+                row.add_widget(delete_btn)
                 Clock.schedule_once(lambda dt, lw=lbl: _sync_feat_label_textsize(lw), 0)
                 fl.add_widget(row)
             self._sync_sketch_preview()
@@ -836,6 +998,9 @@ class ProbeScanPopup(ModalView):
             logger.debug("Could not refresh feature UI", exc_info=True)
 
     def _on_row_checkbox(self, fid: str, _widget, active: bool):
+        if not self._guard_session_mutation():
+            _widget.active = not active
+            return
         if active:
             if fid not in self._selection_order:
                 self._selection_order.append(fid)
@@ -847,10 +1012,14 @@ class ProbeScanPopup(ModalView):
         self._sync_sketch_preview()
 
     def on_clear_construct_selection(self):
+        if not self._guard_session_mutation():
+            return
         self._selection_order.clear()
         self._refresh_feature_ui()
 
     def on_construct_segment(self):
+        if not self._guard_session_mutation():
+            return
         ids = list(self._selection_order)
         if len(ids) != 2:
             self._toast(tr._("Select exactly two point features."))
@@ -862,7 +1031,7 @@ class ProbeScanPopup(ModalView):
             self._toast(tr._("Missing features for segment."))
             return
         if not self._kind_has_vertex_xy(a) or not self._kind_has_vertex_xy(b):
-            self._toast(tr._("Segments need point-like features (corner, circle center, probe point…)."))
+            self._toast(tr._("Segments need point-like features (corner, center point, probe point…)."))
             return
         if resolve_xy(a) is None or resolve_xy(b) is None:
             self._toast(tr._("Could not resolve XY for selected features."))
@@ -874,6 +1043,8 @@ class ProbeScanPopup(ModalView):
         self._refresh_feature_ui()
 
     def on_construct_polyline(self, closed: bool):
+        if not self._guard_session_mutation():
+            return
         ids = list(self._selection_order)
         min_n = 3 if closed else 2
         if len(ids) < min_n:
@@ -910,6 +1081,8 @@ class ProbeScanPopup(ModalView):
         self.on_construct_polyline(True)
 
     def on_construct_derived_circle(self):
+        if not self._guard_session_mutation():
+            return
         ids = list(self._selection_order)
         if len(ids) != 3:
             self._toast(tr._("Select exactly three point features."))
@@ -945,6 +1118,8 @@ class ProbeScanPopup(ModalView):
         self._refresh_feature_ui()
 
     def on_construct_intersection(self):
+        if not self._guard_session_mutation():
+            return
         ids = list(self._selection_order)
         if len(ids) != 2:
             self._toast(tr._("Select exactly two features."))
@@ -955,16 +1130,12 @@ class ProbeScanPopup(ModalView):
             self._toast(tr._("Missing features for intersection."))
             return
 
-        def _is_seg(f):
+        def _is_seg(f: ProbeScanFeature) -> bool:
             return f.kind == FeatureKind.SEGMENT
-
-        def _is_circ(f):
-            return f.kind in (FeatureKind.CIRCLE, FeatureKind.DERIVED_CIRCLE)
 
         new_pts: list[tuple[float, float]] = []
 
         if _is_seg(f1) and _is_seg(f2):
-            # Line × Line → 0 or 1 point
             e1 = segment_endpoints(by_id, f1)
             e2 = segment_endpoints(by_id, f2)
             if not e1 or not e2:
@@ -978,34 +1149,33 @@ class ProbeScanPopup(ModalView):
                 return
             new_pts = [hit]
 
-        elif (_is_circ(f1) and _is_seg(f2)) or (_is_seg(f1) and _is_circ(f2)):
-            # Circle × Line → 0, 1, or 2 points
-            fc, fl = (f1, f2) if _is_circ(f1) else (f2, f1)
-            circ = resolve_circle(fc)
+        elif (resolve_curve(f1) and _is_seg(f2)) or (_is_seg(f1) and resolve_curve(f2)):
+            fc, fl = (f1, f2) if resolve_curve(f1) else (f2, f1)
+            curve = resolve_curve(fc)
             ends = segment_endpoints(by_id, fl)
-            if circ is None or ends is None:
-                self._toast(tr._("Could not resolve circle/segment geometry."))
+            if curve is None or ends is None:
+                self._toast(tr._("Could not resolve curve/segment geometry."))
                 return
-            cx_, cy_, r = circ
             (ax, ay), (bx, by_) = ends
-            new_pts = circle_line_intersections_2d(cx_, cy_, r, ax, ay, bx, by_)
+            new_pts = curve_line_intersections(curve, ax, ay, bx, by_)
             if not new_pts:
-                self._toast(tr._("Circle and line do not intersect."))
+                self._toast(tr._("Curve and line do not intersect."))
                 return
 
-        elif _is_circ(f1) and _is_circ(f2):
-            # Circle × Circle → 0, 1, or 2 points
-            c1 = resolve_circle(f1)
-            c2 = resolve_circle(f2)
+        elif resolve_curve(f1) and resolve_curve(f2):
+            c1 = resolve_curve(f1)
+            c2 = resolve_curve(f2)
             if c1 is None or c2 is None:
-                self._toast(tr._("Could not resolve circle geometry."))
+                self._toast(tr._("Could not resolve curve geometry."))
                 return
-            new_pts = circle_circle_intersections_2d(*c1, *c2)
+            new_pts = curve_curve_intersections(c1, c2)
             if not new_pts:
-                self._toast(tr._("Circles do not intersect."))
+                self._toast(tr._("Curves do not intersect."))
                 return
         else:
-            self._toast(tr._("Select two segments, two circles, or a circle and a segment."))
+            self._toast(
+                tr._("Select two segments, two curves, or a curve and a segment.")
+            )
             return
 
         label_base = tr._("Intersection")
@@ -1018,6 +1188,8 @@ class ProbeScanPopup(ModalView):
         self._refresh_feature_ui()
 
     def on_construct_midpoint(self):
+        if not self._guard_session_mutation():
+            return
         ids = list(self._selection_order)
         if len(ids) != 2:
             self._toast(tr._("Select exactly two point features."))
@@ -1039,9 +1211,11 @@ class ProbeScanPopup(ModalView):
         self._refresh_feature_ui()
 
     def on_construct_tangent(self):
+        if not self._guard_session_mutation():
+            return
         ids = list(self._selection_order)
         if len(ids) != 2:
-            self._toast(tr._("Select a point + circle, or two circles."))
+            self._toast(tr._("Select a point + curve, or two curves."))
             return
         by_id = index_by_id(self.session.features)
         f1, f2 = by_id.get(ids[0]), by_id.get(ids[1])
@@ -1049,56 +1223,66 @@ class ProbeScanPopup(ModalView):
             self._toast(tr._("Missing features for tangent."))
             return
 
-        def _is_circ(f):
-            return f.kind in (FeatureKind.CIRCLE, FeatureKind.DERIVED_CIRCLE)
+        def _is_pt(f: ProbeScanFeature) -> bool:
+            return (
+                f.kind in (FeatureKind.POINT, FeatureKind.CORNER, FeatureKind.DERIVED_POINT)
+                and resolve_xy(f) is not None
+            )
 
-        def _is_pt(f):
-            return self._kind_has_vertex_xy(f) and resolve_xy(f) is not None
+        c1 = resolve_curve(f1)
+        c2 = resolve_curve(f2)
 
-        if _is_pt(f1) and _is_circ(f2):
-            pt_feat, circ_feat = f1, f2
-        elif _is_circ(f1) and _is_pt(f2):
-            pt_feat, circ_feat = f2, f1
-        elif _is_circ(f1) and _is_circ(f2):
-            pt_feat, circ_feat = None, None
+        if _is_pt(f1) and c2 is not None:
+            pt_feat, curve_feat = f1, f2
+            curve = c2
+        elif c1 is not None and _is_pt(f2):
+            pt_feat, curve_feat = f2, f1
+            curve = c1
+        elif c1 is not None and c2 is not None:
+            pt_feat, curve_feat = None, None
         else:
-            self._toast(tr._("Select a point + circle, or two circles."))
+            self._toast(tr._("Select a point + curve, or two curves."))
             return
 
-        if pt_feat is not None:
-            # Point → Circle tangents: produce 2 touch-point derived-points.
+        if pt_feat is not None and curve is not None:
             pxy = resolve_xy(pt_feat)
-            circ = resolve_circle(circ_feat)
-            if pxy is None or circ is None:
+            if pxy is None:
                 self._toast(tr._("Could not resolve geometry."))
                 return
-            touch_pts = tangent_point_to_circle_2d(pxy[0], pxy[1], circ[0], circ[1], circ[2])
+            px, py = pxy
+            touch_pts = point_curve_tangents(px, py, curve)
+            if curve[0] == "circle":
+                inside_msg = tr._("Point is inside the circle — no tangent exists.")
+            else:
+                inside_msg = tr._("Point is inside the ellipse — no tangent exists.")
             if not touch_pts:
-                self._toast(tr._("Point is inside the circle — no tangent exists."))
+                self._toast(inside_msg)
                 return
             for i, (tx, ty) in enumerate(touch_pts):
                 label = tr._("Tangent point %(n)d") % {"n": i + 1}
                 self.session.features.append(
                     ProbeScanFeature.new_derived_point(
-                        label, pt_feat.id, circ_feat.id, tx, ty
+                        label, pt_feat.id, curve_feat.id, tx, ty
                     )
                 )
-        else:
-            # Circle → Circle external tangents: produce pairs of touch-points + segments.
-            c1 = resolve_circle(f1)
-            c2 = resolve_circle(f2)
-            if c1 is None or c2 is None:
-                self._toast(tr._("Could not resolve circle geometry."))
-                return
-            tangent_lines = tangent_circle_to_circle_external_2d(*c1, *c2)
+        elif c1 is not None and c2 is not None:
+            tangent_lines = curve_curve_external_tangents(c1, c2)
+            if c1[0] == "circle" and c2[0] == "circle":
+                fail_msg = tr._("Circles are concentric — no external tangent exists.")
+            else:
+                fail_msg = tr._("Ellipses have no external tangent.")
             if not tangent_lines:
-                self._toast(tr._("Circles are concentric — no external tangent exists."))
+                self._toast(fail_msg)
                 return
             for i, (tp1, tp2) in enumerate(tangent_lines):
                 lbl1 = tr._("Tangent %(n)d·A") % {"n": i + 1}
                 lbl2 = tr._("Tangent %(n)d·B") % {"n": i + 1}
-                dp1 = ProbeScanFeature.new_derived_point(lbl1, f1.id, f2.id, tp1[0], tp1[1])
-                dp2 = ProbeScanFeature.new_derived_point(lbl2, f1.id, f2.id, tp2[0], tp2[1])
+                dp1 = ProbeScanFeature.new_derived_point(
+                    lbl1, f1.id, f2.id, tp1[0], tp1[1]
+                )
+                dp2 = ProbeScanFeature.new_derived_point(
+                    lbl2, f1.id, f2.id, tp2[0], tp2[1]
+                )
                 self.session.features.append(dp1)
                 self.session.features.append(dp2)
                 self.session.features.append(
@@ -1110,6 +1294,8 @@ class ProbeScanPopup(ModalView):
         self._refresh_feature_ui()
 
     def _on_delete_feature(self, fid: str, *args):
+        if not self._guard_session_mutation():
+            return
         blockers = features_referencing_id(self.session.features, fid)
         if blockers:
             preview = ", ".join(blockers[:5])
@@ -1126,6 +1312,8 @@ class ProbeScanPopup(ModalView):
         self._refresh_feature_ui()
 
     def _on_rename_feature(self, fid: str, *_args):
+        if not self._guard_session_mutation():
+            return
         feat = next((f for f in self.session.features if f.id == fid), None)
         if feat is None:
             return
@@ -1151,6 +1339,8 @@ class ProbeScanPopup(ModalView):
         )
 
         def on_ok(*_):
+            if not self._guard_session_mutation():
+                return
             name = ti.text.strip()
             if not name:
                 self._toast(tr._("Enter a name."))
@@ -1208,13 +1398,11 @@ class ProbeScanPopup(ModalView):
         if r <= 0:
             self._toast(tr._("Radius must be greater than zero."))
             return
-        d = 2.0 * r
         f = ProbeScanFeature.new_circle(
             tr._("Manual circle"),
             wx,
             wy,
-            d,
-            d,
+            r,
             coord_sys=CoordSys.WCS,
         )
         self.session.features.append(f)
@@ -1468,6 +1656,11 @@ class ProbeScanPopup(ModalView):
         dd.width = max(int(anchor_widget.width), int(dp(160)))
         dd.max_height = dp(240)
 
+        _format_labels = {
+            "JSON": tr._("JSON (full session)"),
+            "CSV": tr._("CSV (feature table)"),
+            "DXF": tr._("DXF (geometry only)"),
+        }
         for kind in ("JSON", "CSV", "DXF"):
 
             def _choose(*_a, k=kind):
@@ -1475,7 +1668,7 @@ class ProbeScanPopup(ModalView):
                 Clock.schedule_once(lambda dt, kk=k: on_pick(kk), 0)
 
             btn = Button(
-                text=tr._(kind),
+                text=_format_labels[kind],
                 size_hint_y=None,
                 height=dp(44),
                 font_size=dp(14),
@@ -1494,6 +1687,8 @@ class ProbeScanPopup(ModalView):
         )
 
         def on_confirm():
+            if not self._guard_session_mutation():
+                return
             self.session.features.clear()
             self._selection_order.clear()
             self._preview_focus_id = None
@@ -1583,7 +1778,11 @@ class ProbeScanPopup(ModalView):
         root = App.get_running_app().root
 
         def on_confirm(popup, dest):
+            if not self._guard_session_mutation():
+                return
             try:
+                from .import_format import load_session_from_path
+
                 self.session, report = load_session_from_path(dest)
                 self._selection_order.clear()
                 self._preview_focus_id = None
@@ -1628,6 +1827,8 @@ class ProbeScanPopup(ModalView):
 
         def on_confirm(popup, dest):
             def write(path: str):
+                if not self._guard_session_mutation():
+                    return
                 try:
                     if kind == "JSON":
                         blob = export_json(self.session)

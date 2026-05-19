@@ -81,11 +81,18 @@ def build_m461(
     l_repeat: str = "",
     r_retract: str = "",
 ) -> str:
+    xw, yw = _word("X", x), _word("Y", y)
+    result_vars: list[str] = []
+    if xw:
+        result_vars.extend(["151", "154"])
+    if yw:
+        result_vars.extend(["152", "155"])
     return _build_probe_cmd(
         "M461",
-        [_word("X", x), _word("Y", y), _word("E", e), _word("H", h), _word("C", c)],
+        [xw, yw, _word("E", e), _word("H", h), _word("C", c)],
         f_probe=f_probe, k_rapid=k_rapid,
         l_repeat=l_repeat, r_retract=r_retract,
+        result_vars=result_vars or list(VAR_SETS["M461"]),
     )
 
 
@@ -102,12 +109,19 @@ def build_m462(
     l_repeat: str = "",
     r_retract: str = "",
 ) -> str:
+    xw, yw = _word("X", x), _word("Y", y)
+    result_vars: list[str] = []
+    if xw:
+        result_vars.extend(["151", "154"])
+    if yw:
+        result_vars.extend(["152", "155"])
     return _build_probe_cmd(
         "M462",
-        [_word("X", x), _word("Y", y), _word("J", j_clearance),
+        [xw, yw, _word("J", j_clearance),
          _word("E", e_depth), _word("H", h), _word("C", c)],
         f_probe=f_probe, k_rapid=k_rapid,
         l_repeat=l_repeat, r_retract=r_retract,
+        result_vars=result_vars or list(VAR_SETS["M462"]),
     )
 
 
