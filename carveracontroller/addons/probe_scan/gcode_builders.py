@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from .gcode_m118 import VAR_SETS, merge_probe_program
+from .gcode_m118 import (
+    PROBE_VAR_CENTER_X,
+    PROBE_VAR_CENTER_Y,
+    PROBE_VAR_DIA_X,
+    PROBE_VAR_DIA_Y,
+    VAR_SETS,
+    merge_probe_program,
+)
 
 
 def _fmt(v: float | int | str) -> str:
@@ -57,9 +64,9 @@ def build_m466(
     xw, yw = _word("X", x), _word("Y", y)
     result_vars: list[str] = []
     if xw:
-        result_vars.append("154")
+        result_vars.append(PROBE_VAR_CENTER_X)
     if yw:
-        result_vars.append("155")
+        result_vars.append(PROBE_VAR_CENTER_Y)
     return _build_probe_cmd(
         "M466",
         [xw, yw, _word("E", e), _word("H", h), _word("C", c)],
@@ -84,9 +91,9 @@ def build_m461(
     xw, yw = _word("X", x), _word("Y", y)
     result_vars: list[str] = []
     if xw:
-        result_vars.extend(["151", "154"])
+        result_vars.extend([PROBE_VAR_DIA_X, PROBE_VAR_CENTER_X])
     if yw:
-        result_vars.extend(["152", "155"])
+        result_vars.extend([PROBE_VAR_DIA_Y, PROBE_VAR_CENTER_Y])
     return _build_probe_cmd(
         "M461",
         [xw, yw, _word("E", e), _word("H", h), _word("C", c)],
@@ -112,9 +119,9 @@ def build_m462(
     xw, yw = _word("X", x), _word("Y", y)
     result_vars: list[str] = []
     if xw:
-        result_vars.extend(["151", "154"])
+        result_vars.extend([PROBE_VAR_DIA_X, PROBE_VAR_CENTER_X])
     if yw:
-        result_vars.extend(["152", "155"])
+        result_vars.extend([PROBE_VAR_DIA_Y, PROBE_VAR_CENTER_Y])
     return _build_probe_cmd(
         "M462",
         [xw, yw, _word("J", j_clearance),

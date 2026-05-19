@@ -130,7 +130,7 @@ class ProbeScanFeature:
         *,
         probe_variant: str = "",
     ) -> ProbeScanFeature:
-        """``degrees`` mirrors firmware ``#153`` for M465 (documented as degrees)."""
+        """``degrees`` from M465 probe result (``PROBE_VAR_ANGLE``, firmware #153)."""
         payload: dict[str, Any] = {"degrees": float(degrees)}
         if probe_variant:
             payload["probe_variant"] = str(probe_variant)

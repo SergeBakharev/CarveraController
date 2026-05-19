@@ -6,14 +6,22 @@ import math
 import re
 from collections.abc import Sequence
 
-# Variable indices per operation (firmware probe result registers)
+# Firmware probe result variables
+# See https://carvera-community.gitbook.io/docs/firmware/features/variables
+PROBE_VAR_DIA_X = "151"
+PROBE_VAR_DIA_Y = "152"
+PROBE_VAR_ANGLE = "153"
+PROBE_VAR_CENTER_X = "154"
+PROBE_VAR_CENTER_Y = "155"
+PROBE_VAR_CENTER_Z = "156"
+
 VAR_SETS: dict[str, list[str]] = {
-    "M466": ["154", "155", "156"],
-    "M461": ["151", "152", "154", "155"],
-    "M462": ["151", "152", "154", "155"],
-    "M463": ["154", "155"],
-    "M464": ["154", "155"],
-    "M465": ["153"],
+    "M466": [PROBE_VAR_CENTER_X, PROBE_VAR_CENTER_Y, PROBE_VAR_CENTER_Z],
+    "M461": [PROBE_VAR_DIA_X, PROBE_VAR_DIA_Y, PROBE_VAR_CENTER_X, PROBE_VAR_CENTER_Y],
+    "M462": [PROBE_VAR_DIA_X, PROBE_VAR_DIA_Y, PROBE_VAR_CENTER_X, PROBE_VAR_CENTER_Y],
+    "M463": [PROBE_VAR_CENTER_X, PROBE_VAR_CENTER_Y],
+    "M464": [PROBE_VAR_CENTER_X, PROBE_VAR_CENTER_Y],
+    "M465": [PROBE_VAR_ANGLE],
 }
 
 

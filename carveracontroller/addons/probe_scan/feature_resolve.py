@@ -16,14 +16,11 @@ from .construction_geom import (
     tangent_point_to_ellipse_2d,
 )
 from .coordinate_transform import mcs_xyz_to_wcs_xyz
+from .gcode_m118 import PROBE_VAR_CENTER_X, PROBE_VAR_CENTER_Y, PROBE_VAR_DIA_X, PROBE_VAR_DIA_Y
 from .session import CoordSys, FeatureKind, ProbeScanFeature
 
-_M461_M462_FULL = frozenset({"151", "152", "154", "155"})
-_M461_M462_CENTER_X = frozenset({"151", "154"})
-_M461_M462_CENTER_Y = frozenset({"152", "155"})
-
-_ERR_INCOMPLETE = "Probe returned incomplete bore/boss data."
-_ERR_DIAMETER = "Invalid or missing bore diameter."
+_ERROR_INCOMPLETE_DATA = "Probe returned incomplete bore/boss data."
+_ERROR_INVALID_MISSING_DIAMETER = "Invalid or missing bore diameter."
 
 XY = tuple[float, float]
 CurveKind = Literal["circle", "ellipse"]
@@ -109,18 +106,13 @@ def segment_endpoints(
 def resolve_circle(feature: ProbeScanFeature) -> tuple[float, float, float] | None:
     """Return (cx, cy, r) for CIRCLE or DERIVED_CIRCLE features, else None."""
     p = feature.payload
-    if feature.kind == FeatureKind.CIRCLE:
+    if feature.kind in (FeatureKind.CIRCLE, FeatureKind.DERIVED_CIRCLE):
         return (
             float(p.get("cx", 0.0)),
             float(p.get("cy", 0.0)),
             float(p.get("r", 0.0)),
         )
-    if feature.kind == FeatureKind.DERIVED_CIRCLE:
-        return (
-            float(p.get("cx", 0.0)),
-            float(p.get("cy", 0.0)),
-            float(p.get("r", 0.0)),
-        )
+
     return None
 
 
@@ -215,16 +207,16 @@ def feature_from_m461_m462(
     Returns (feature, error_message). Exactly one of the tuple elements is non-None.
     Branches on captured var_keys (not UI preset).
     """
-    keys = frozenset(str(k).strip() for k in var_keys if str(k).strip())
+    keys = {str(k).strip() for k in var_keys if str(k).strip()}
 
-    if keys == _M461_M462_CENTER_X:
-        if "151" not in vd or "154" not in vd:
-            return None, _ERR_INCOMPLETE
-        d_x = float(vd["151"])
+    if keys == {PROBE_VAR_DIA_X, PROBE_VAR_CENTER_X}:
+        if PROBE_VAR_DIA_X not in vd or PROBE_VAR_CENTER_X not in vd:
+            return None, _ERROR_INCOMPLETE_DATA
+        d_x = float(vd[PROBE_VAR_DIA_X])
         if d_x <= 0:
-            return None, _ERR_DIAMETER
-        cx_m = float(vd["154"])
-        cy_m = float(vd["155"]) if "155" in vd else float(my)
+            return None, _ERROR_INVALID_MISSING_DIAMETER
+        cx_m = float(vd[PROBE_VAR_CENTER_X])
+        cy_m = float(vd[PROBE_VAR_CENTER_Y]) if PROBE_VAR_CENTER_Y in vd else float(my)
         wx, wy, _ = mcs_xyz_to_wcs_xyz(cx_m, cy_m, 0.0)
         return (
             ProbeScanFeature.new_circle(
@@ -233,14 +225,14 @@ def feature_from_m461_m462(
             None,
         )
 
-    if keys == _M461_M462_CENTER_Y:
-        if "152" not in vd or "155" not in vd:
-            return None, _ERR_INCOMPLETE
-        d_y = float(vd["152"])
+    if keys == {PROBE_VAR_DIA_Y, PROBE_VAR_CENTER_Y}:
+        if PROBE_VAR_DIA_Y not in vd or PROBE_VAR_CENTER_Y not in vd:
+            return None, _ERROR_INCOMPLETE_DATA
+        d_y = float(vd[PROBE_VAR_DIA_Y])
         if d_y <= 0:
-            return None, _ERR_DIAMETER
-        cy_m = float(vd["155"])
-        cx_m = float(vd["154"]) if "154" in vd else float(mx)
+            return None, _ERROR_INVALID_MISSING_DIAMETER
+        cy_m = float(vd[PROBE_VAR_CENTER_Y])
+        cx_m = float(vd[PROBE_VAR_CENTER_X]) if PROBE_VAR_CENTER_X in vd else float(mx)
         wx, wy, _ = mcs_xyz_to_wcs_xyz(cx_m, cy_m, 0.0)
         return (
             ProbeScanFeature.new_circle(
@@ -249,26 +241,29 @@ def feature_from_m461_m462(
             None,
         )
 
-    if keys == _M461_M462_FULL:
-        if not all(k in vd for k in ("151", "152", "154", "155")):
-            return None, _ERR_INCOMPLETE
-        d_x = float(vd["151"])
-        d_y = float(vd["152"])
+    if keys == {PROBE_VAR_DIA_X, PROBE_VAR_DIA_Y, PROBE_VAR_CENTER_X, PROBE_VAR_CENTER_Y}:
+        if not all(
+            k in vd
+            for k in (PROBE_VAR_DIA_X, PROBE_VAR_DIA_Y, PROBE_VAR_CENTER_X, PROBE_VAR_CENTER_Y)
+        ):
+            return None, _ERROR_INCOMPLETE_DATA
+        d_x = float(vd[PROBE_VAR_DIA_X])
+        d_y = float(vd[PROBE_VAR_DIA_Y])
         if d_x <= 0 and d_y <= 0:
-            return None, _ERR_DIAMETER
-        cx_m = float(vd["154"])
-        cy_m = float(vd["155"])
+            return None, _ERROR_INVALID_MISSING_DIAMETER
+        cx_m = float(vd[PROBE_VAR_CENTER_X])
+        cy_m = float(vd[PROBE_VAR_CENTER_Y])
         wx, wy, _ = mcs_xyz_to_wcs_xyz(cx_m, cy_m, 0.0)
         if diameters_equal(d_x, d_y, tolerance_mm=tolerance_mm):
             r = d_x / 2.0
             if r <= 0:
-                return None, _ERR_DIAMETER
+                return None, _ERROR_INVALID_MISSING_DIAMETER
             return (
                 ProbeScanFeature.new_circle(label, wx, wy, r, coord_sys=CoordSys.WCS),
                 None,
             )
         if d_x <= 0 or d_y <= 0:
-            return None, _ERR_DIAMETER
+            return None, _ERROR_INVALID_MISSING_DIAMETER
         return (
             ProbeScanFeature.new_ellipse(
                 label, wx, wy, d_x, d_y, coord_sys=CoordSys.WCS
@@ -276,4 +271,4 @@ def feature_from_m461_m462(
             None,
         )
 
-    return None, _ERR_INCOMPLETE
+    return None, _ERROR_INCOMPLETE_DATA

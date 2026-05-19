@@ -58,7 +58,13 @@ from .feature_resolve import (
     resolve_xy,
     segment_endpoints,
 )
-from .gcode_m118 import extract_probe_start_meta
+from .gcode_m118 import (
+    PROBE_VAR_ANGLE,
+    PROBE_VAR_CENTER_X,
+    PROBE_VAR_CENTER_Y,
+    PROBE_VAR_CENTER_Z,
+    extract_probe_start_meta,
+)
 from .m118_capture import M118ProbeCapture, map_values_to_dict
 from .probe_run_token import ProbeRunToken
 from .scan_preview_sketch import ProbeScanPreviewSketch
@@ -599,9 +605,9 @@ class ProbeScanPopup(ModalView):
             mx = float(CNC.vars.get("mx", 0.0))
             my = float(CNC.vars.get("my", 0.0))
             mz = float(CNC.vars.get("mz", 0.0))
-            x_m = vd["154"] if "154" in vd else mx
-            y_m = vd["155"] if "155" in vd else my
-            z_m = vd["156"] if "156" in vd else mz
+            x_m = vd[PROBE_VAR_CENTER_X] if PROBE_VAR_CENTER_X in vd else mx
+            y_m = vd[PROBE_VAR_CENTER_Y] if PROBE_VAR_CENTER_Y in vd else my
+            z_m = vd[PROBE_VAR_CENTER_Z] if PROBE_VAR_CENTER_Z in vd else mz
             wx, wy, wz = mcs_xyz_to_wcs_xyz(x_m, y_m, z_m)
             f = ProbeScanFeature.new_point(
                 tr._("Touch probe (M466)"),
@@ -636,8 +642,8 @@ class ProbeScanPopup(ModalView):
             elif f is not None:
                 self.session.features.append(f)
         elif op in ("M463", "M464"):
-            xm = float(vd.get("154", 0.0))
-            ym = float(vd.get("155", 0.0))
+            xm = float(vd.get(PROBE_VAR_CENTER_X, 0.0))
+            ym = float(vd.get(PROBE_VAR_CENTER_Y, 0.0))
             wx, wy, _ = mcs_xyz_to_wcs_xyz(xm, ym, 0.0)
             f = ProbeScanFeature.new_corner(
                 tr._("Inside corner (M463)")
@@ -651,7 +657,7 @@ class ProbeScanPopup(ModalView):
         elif op == "M465":
             f = ProbeScanFeature.new_angle(
                 tr._("Angle (M465)"),
-                float(vd.get("153", 0.0)),
+                float(vd.get(PROBE_VAR_ANGLE, 0.0)),
                 probe_variant=str(self._angle_variant or ""),
             )
             self.session.features.append(f)
