@@ -7,6 +7,7 @@
 - Enhancement: Support gamepads as pendants
 - Enhancement: Added iPhone support
 - Enhancement: Improve Gcode viewer toolbar buttons layout
+- Enhancement: Show current config probe tip diameter in probing panels
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
 - Fixed: Repeated firmware checks now happen just once
 - Fixed: UI widget updates from the SerialMonitor() now dispatched via the main thread. This should reduce the number of RecycleView related crashes
@@ -14,6 +15,7 @@
 - Fixed: Fit the gcode viewer to the path's bounding box instead of its max X/Y/Z
 - Fixed: Last character of the current file was sometimes missing in the file viewer
 - Fixed: Disable trackpad being treated as touchscreen on Linux
+- Change: Remove remaining "Can not load config, Key:" messages from the MDI
 
 [2.1.0]
 - Enhancement: Add right-click menu option to clear resume-at-line setting

@@ -1,6 +1,8 @@
 import json
 import os
 import logging
+from typing import Optional
+
 logger = logging.getLogger(__name__)
 
 class ConfigUtils:
@@ -27,3 +29,28 @@ class ConfigUtils:
             except Exception as e:
                 logger.error(f"Error loading configuration: {e}")
         return {}  # Return an empty dictionary if loading fails or file doesn't exist
+
+
+def _format_hint_value(val) -> str:
+    try:
+        f = float(val)
+        if f == int(f):
+            return str(int(f))
+        return ('%g' % f)
+    except (ValueError, TypeError):
+        return str(val).strip()
+
+
+def _get_setting_list() -> dict:
+    from kivy.app import App
+    return App.get_running_app().root.setting_list
+
+
+def get_machine_config_hint(config_key: str) -> Optional[str]:
+    try:
+        val = _get_setting_list().get(config_key)
+        if val is not None and str(val).strip():
+            return _format_hint_value(val)
+    except Exception:
+        pass
+    return None
