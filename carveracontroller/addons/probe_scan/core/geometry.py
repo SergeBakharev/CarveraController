@@ -333,47 +333,108 @@ def ellipse_ellipse_intersections_2d(
     if min(rx1, ry1, rx2, ry2) < tol:
         return []
 
+    scale = max(rx1, ry1, rx2, ry2, math.hypot(cx1 - cx2, cy1 - cy2), 1.0)
+    param_tol = max(tol, 1e-6 * scale)
+    if (
+        abs(cx1 - cx2) <= param_tol
+        and abs(cy1 - cy2) <= param_tol
+        and abs(rx1 - rx2) <= param_tol
+        and abs(ry1 - ry2) <= param_tol
+    ):
+        return []
+
     def rho1(t: float) -> float:
         x = cx1 + rx1 * math.cos(t)
         y = cy1 + ry1 * math.sin(t)
         return ((x - cx2) / rx2) ** 2 + ((y - cy2) / ry2) ** 2 - 1.0
 
+    tangency_tol = max(tol * 100.0, 1e-6 * scale)
+    merge = max(1e-4, 1e-3 * scale)
     roots: list[tuple[float, float]] = []
-    prev_t = 0.0
-    prev_r = rho1(0.0)
+
+    def add_hit(t_hit: float) -> None:
+        x = cx1 + rx1 * math.cos(t_hit)
+        y = cy1 + ry1 * math.sin(t_hit)
+        if not (
+            _point_on_ellipse_2d(cx1, cy1, rx1, ry1, x, y, tol=tol)
+            and _point_on_ellipse_2d(cx2, cy2, rx2, ry2, x, y, tol=tol)
+        ):
+            return
+        if any(math.hypot(x - px, y - py) < merge for px, py in roots):
+            return
+        roots.append((x, y))
+
+    def refine_root(lo_t: float, hi_t: float, lo_r: float, hi_r: float) -> None:
+        for _ in range(50):
+            mid_t = (lo_t + hi_t) * 0.5
+            mid_r = rho1(mid_t)
+            if abs(mid_r) < tol:
+                add_hit(mid_t)
+                return
+            if lo_r * mid_r <= 0:
+                hi_t, hi_r = mid_t, mid_r
+            else:
+                lo_t, lo_r = mid_t, mid_r
+        add_hit((lo_t + hi_t) * 0.5)
+
+    def refine_tangency(lo_t: float, hi_t: float) -> None:
+        t_hit, r_hit = _golden_minimize_1d(lo_t, hi_t, lambda t: abs(rho1(t)))
+        if r_hit <= tangency_tol:
+            add_hit(t_hit)
+
     dt = 2.0 * math.pi / samples
+    prev2_t = 0.0
+    prev2_r = rho1(0.0)
+    prev_t = 0.0
+    prev_r = prev2_r
+
     for i in range(1, samples + 1):
         t = i * dt
         r = rho1(t)
-        if prev_r == 0.0 or r == 0.0 or prev_r * r < 0:
-            lo_t, hi_t = (i - 1) * dt, t
-            lo_r, hi_r = prev_r, r
-            for _ in range(50):
-                mid_t = (lo_t + hi_t) * 0.5
-                mid_r = rho1(mid_t)
-                if abs(mid_r) < tol:
-                    lo_t = hi_t = mid_t
-                    break
-                if lo_r * mid_r <= 0:
-                    hi_t, hi_r = mid_t, mid_r
-                else:
-                    lo_t, lo_r = mid_t, mid_r
-            t_hit = (lo_t + hi_t) * 0.5
-            x = cx1 + rx1 * math.cos(t_hit)
-            y = cy1 + ry1 * math.sin(t_hit)
-            if _point_on_ellipse_2d(cx1, cy1, rx1, ry1, x, y, tol=tol) and _point_on_ellipse_2d(
-                cx2, cy2, rx2, ry2, x, y, tol=tol
-            ):
-                merge = max(
-                    1e-4,
-                    1e-3 * max(rx1, ry1, rx2, ry2, 1.0),
-                )
-                dup = any(
-                    math.hypot(x - px, y - py) < merge for px, py in roots
-                )
-                if not dup:
-                    roots.append((x, y))
+
+        if abs(r) < tol:
+            add_hit(t)
+        elif abs(prev_r) < tol or prev_r * r < 0:
+            refine_root(prev_t, t, prev_r, r)
+        elif prev2_r > prev_r and prev_r > r and prev_r < tangency_tol:
+            refine_tangency(prev2_t, t)
+        elif prev_r > 0 and r > 0 and min(prev_r, r) < tangency_tol:
+            refine_tangency(prev_t, t)
+
+        prev2_t, prev2_r = prev_t, prev_r
         prev_t, prev_r = t, r
+
+    # Close the 0/2π seam: the loop ends at t=2π (=0); compare the last interior
+    # sample to the first sample after 0.
+    seam_lo_t = (samples - 1) * dt
+    seam_hi_t = dt
+    seam_lo_r = rho1(seam_lo_t)
+    seam_hi_r = rho1(seam_hi_t)
+    seam_prev2_r = rho1((samples - 2) * dt) if samples >= 3 else seam_lo_r
+    rho_end = rho1(2.0 * math.pi)
+
+    if abs(seam_hi_r) < tol:
+        add_hit(seam_hi_t)
+    elif abs(seam_lo_r) < tol:
+        add_hit(seam_lo_t)
+    elif seam_lo_r * seam_hi_r < 0:
+        if seam_lo_r * rho_end <= 0:
+            refine_root(seam_lo_t, 2.0 * math.pi, seam_lo_r, rho_end)
+        else:
+            refine_root(0.0, seam_hi_t, rho_end, seam_hi_r)
+    elif (
+        samples >= 3
+        and seam_prev2_r > seam_lo_r
+        and seam_lo_r > seam_hi_r
+        and seam_lo_r < tangency_tol
+    ):
+        refine_tangency((samples - 2) * dt, seam_lo_t)
+    elif seam_lo_r > 0 and seam_hi_r > 0 and min(seam_lo_r, seam_hi_r) < tangency_tol:
+        if seam_lo_r <= seam_hi_r:
+            refine_tangency(seam_lo_t, 2.0 * math.pi)
+        else:
+            refine_tangency(0.0, seam_hi_t)
+
     return roots
 
 
