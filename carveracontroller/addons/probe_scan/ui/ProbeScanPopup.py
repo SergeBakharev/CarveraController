@@ -219,7 +219,7 @@ class ProbeScanPopup(ModalView):
         self._runner = ProbeRunner(
             set_is_probing=lambda v: setattr(self, "is_probing", v),
             set_status_text=lambda v: setattr(self, "probing_status_text", v),
-            on_state_changed=self._on_probe_runner_state_changed,
+            on_is_probing_changed=self._on_probe_is_probing_changed,
             controller_abort=self.controller.abortCommand,
             idle_ok=self._idle_ok,
         )
@@ -374,10 +374,25 @@ class ProbeScanPopup(ModalView):
         self._capture = None
         App.get_running_app().root.restore_keyboard_jog_control()
 
-    def _on_probe_runner_state_changed(self) -> None:
-        """Called by ProbeRunner whenever is_probing or probing_status_text changes."""
+    def _on_probe_is_probing_changed(self) -> None:
+        """Called when ``is_probing`` toggles (not on status animation ticks)."""
+        self._apply_probing_ui_lock()
+
+    def _apply_probing_ui_lock(self) -> None:
+        """Sync construct buttons and row disabled state without rebuilding the feature list."""
         self._recompute_construct_buttons()
-        self._refresh_feature_ui()
+        probing = self.is_probing
+        try:
+            for row in self.ids.feature_rows.children:
+                for w in row.children:
+                    if isinstance(w, BoxLayout):
+                        for inner in w.children:
+                            if isinstance(inner, CheckBox):
+                                inner.disabled = probing
+                    elif isinstance(w, Button):
+                        w.disabled = probing
+        except Exception:
+            logger.debug("Could not apply probing lock to feature rows", exc_info=True)
 
     def _on_probe_timeout_toast(self) -> None:
         self._toast(tr._("Probe timed out."))

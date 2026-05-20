@@ -20,13 +20,13 @@ class ProbeRunner:
         *,
         set_is_probing: Callable[[bool], None],
         set_status_text: Callable[[str], None],
-        on_state_changed: Callable[[], None],
+        on_is_probing_changed: Callable[[], None],
         controller_abort: Callable[[], None],
         idle_ok: Callable[[], bool],
     ) -> None:
         self._set_is_probing = set_is_probing
         self._set_status_text = set_status_text
-        self._on_state_changed = on_state_changed
+        self._on_is_probing_changed = on_is_probing_changed
         self._controller_abort = controller_abort
         self._idle_ok = idle_ok
 
@@ -55,7 +55,7 @@ class ProbeRunner:
             lambda _dt, t=saved_token: self._on_timeout(_dt, t),
             _PROBE_TIMEOUT_S,
         )
-        self._on_state_changed()
+        self._on_is_probing_changed()
         return self._active_token
 
     def pre_complete(self) -> None:
@@ -74,7 +74,7 @@ class ProbeRunner:
         self._clear_events()
         self._set_is_probing(False)
         self._set_status_text("")
-        self._on_state_changed()
+        self._on_is_probing_changed()
 
     def cancel(self, *, abort_machine: bool = False) -> None:
         """Cancel the current probe run and optionally abort the machine."""
@@ -84,7 +84,7 @@ class ProbeRunner:
             self._controller_abort()
         self._set_is_probing(False)
         self._set_status_text("")
-        self._on_state_changed()
+        self._on_is_probing_changed()
 
     def shutdown(self) -> None:
         """Silently cancel all events without firing callbacks (use on popup dismiss)."""
