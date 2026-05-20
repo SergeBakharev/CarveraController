@@ -244,6 +244,7 @@ class ProbeScanPopup(ModalView):
             self._preview_focus_id = None
         else:
             self._preview_focus_id = feat_id
+        self._recompute_construct_buttons()
         self._sync_sketch_preview()
         self._apply_feature_row_focus_visual()
         Clock.schedule_once(lambda _dt: self._scroll_to_feature(feat_id), 0.05)
@@ -278,13 +279,21 @@ class ProbeScanPopup(ModalView):
         except Exception:
             logger.debug("Could not scroll feature list", exc_info=True)
 
+    def _effective_construct_selection(self) -> list[str]:
+        """Checkbox selection, or the highlighted feature when no box is checked."""
+        if self._selection_order:
+            return list(self._selection_order)
+        if self._preview_focus_id:
+            return [self._preview_focus_id]
+        return []
+
     def _sync_sketch_preview(self) -> None:
         """Push session/focus/selection into the XY preview sketch."""
         try:
             self.ids.sketch.set_features(
                 self.session.features,
                 focus_id=self._preview_focus_id,
-                selection_ids=list(self._selection_order),
+                selection_ids=self._effective_construct_selection(),
             )
         except Exception:
             logger.debug("Could not update sketch preview", exc_info=True)
@@ -700,7 +709,9 @@ class ProbeScanPopup(ModalView):
 
     def _recompute_construct_buttons(self) -> None:
         states: ConstructButtonStates = compute_construct_button_states(
-            self.session.features, self._selection_order, self.is_probing
+            self.session.features,
+            self._effective_construct_selection(),
+            self.is_probing,
         )
         self.has_construct_selection = states.has_selection
         self.can_make_segment = states.can_segment
@@ -718,6 +729,7 @@ class ProbeScanPopup(ModalView):
             self._preview_focus_id = None
         else:
             self._preview_focus_id = feat_id
+        self._recompute_construct_buttons()
         self._sync_sketch_preview()
         self._apply_feature_row_focus_visual()
         return True
@@ -840,10 +852,14 @@ class ProbeScanPopup(ModalView):
         self._recompute_construct_buttons()
         self._sync_sketch_preview()
 
+    def _clear_construct_selection(self) -> None:
+        self._selection_order.clear()
+        self._preview_focus_id = None
+
     def on_clear_construct_selection(self):
         if not self._guard_session_mutation():
             return
-        self._selection_order.clear()
+        self._clear_construct_selection()
         self._refresh_feature_ui()
 
     def on_construct_segment(self):
@@ -851,14 +867,14 @@ class ProbeScanPopup(ModalView):
             return
         new_feats, err = construct_segment(
             self.session.features,
-            list(self._selection_order),
+            self._effective_construct_selection(),
             label=tr._("Segment"),
         )
         if err:
             self._toast(tr._(err))
             return
         self.session.features.extend(new_feats)
-        self._selection_order.clear()
+        self._clear_construct_selection()
         self._refresh_feature_ui()
 
     def on_construct_polyline(self, closed: bool):
@@ -868,7 +884,7 @@ class ProbeScanPopup(ModalView):
         min_err = tr._("Select at least %(n)d vertices in checkbox order.") % {"n": min_n}
         new_feats, err = construct_polyline(
             self.session.features,
-            list(self._selection_order),
+            self._effective_construct_selection(),
             label=tr._("Closed polyline") if closed else tr._("Open polyline"),
             closed=closed,
             min_verts_error=min_err,
@@ -877,7 +893,7 @@ class ProbeScanPopup(ModalView):
             self._toast(err)
             return
         self.session.features.extend(new_feats)
-        self._selection_order.clear()
+        self._clear_construct_selection()
         self._refresh_feature_ui()
 
     def on_construct_polyline_open(self):
@@ -891,14 +907,14 @@ class ProbeScanPopup(ModalView):
             return
         new_feats, err = construct_circumcircle(
             self.session.features,
-            list(self._selection_order),
+            self._effective_construct_selection(),
             label=tr._("Circumcircle"),
         )
         if err:
             self._toast(tr._(err))
             return
         self.session.features.extend(new_feats)
-        self._selection_order.clear()
+        self._clear_construct_selection()
         self._refresh_feature_ui()
 
     def on_construct_intersection(self):
@@ -906,14 +922,14 @@ class ProbeScanPopup(ModalView):
             return
         new_feats, err = construct_intersection(
             self.session.features,
-            list(self._selection_order),
+            self._effective_construct_selection(),
             intersection_base_label=tr._("Intersection"),
         )
         if err:
             self._toast(tr._(err))
             return
         self.session.features.extend(new_feats)
-        self._selection_order.clear()
+        self._clear_construct_selection()
         self._refresh_feature_ui()
 
     def on_construct_midpoint(self):
@@ -921,14 +937,14 @@ class ProbeScanPopup(ModalView):
             return
         new_feats, err = construct_midpoint(
             self.session.features,
-            list(self._selection_order),
+            self._effective_construct_selection(),
             label=tr._("Midpoint"),
         )
         if err:
             self._toast(tr._(err))
             return
         self.session.features.extend(new_feats)
-        self._selection_order.clear()
+        self._clear_construct_selection()
         self._refresh_feature_ui()
 
     def on_construct_tangent(self):
@@ -936,7 +952,7 @@ class ProbeScanPopup(ModalView):
             return
         new_feats, err = construct_tangent(
             self.session.features,
-            list(self._selection_order),
+            self._effective_construct_selection(),
             tangent_point_label=lambda n: tr._("Tangent point %(n)d") % {"n": n},
             tangent_line_label=lambda n: tr._("Tangent %(n)d") % {"n": n},
             tangent_a_label=lambda n: tr._("Tangent %(n)d\u00b7A") % {"n": n},
@@ -946,7 +962,7 @@ class ProbeScanPopup(ModalView):
             self._toast(tr._(err))
             return
         self.session.features.extend(new_feats)
-        self._selection_order.clear()
+        self._clear_construct_selection()
         self._refresh_feature_ui()
 
     def _on_delete_feature(self, fid: str, *args):
@@ -1344,8 +1360,7 @@ class ProbeScanPopup(ModalView):
             if not self._guard_session_mutation():
                 return
             self.session.features.clear()
-            self._selection_order.clear()
-            self._preview_focus_id = None
+            self._clear_construct_selection()
             self._refresh_feature_ui()
             self._toast(tr._("Probe scan cleared."))
 
@@ -1366,8 +1381,7 @@ class ProbeScanPopup(ModalView):
                 from ..core.io_import import load_session_from_path
 
                 self.session, report = load_session_from_path(dest)
-                self._selection_order.clear()
-                self._preview_focus_id = None
+                self._clear_construct_selection()
                 self._refresh_feature_ui()
                 popup.dismiss()
                 msg = tr._("Loaded %(n)d features:\n%(path)s") % {
