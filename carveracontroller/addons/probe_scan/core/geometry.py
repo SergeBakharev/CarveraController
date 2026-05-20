@@ -215,8 +215,11 @@ def tangent_circle_to_circle_external_2d(
 
     lines: list[tuple[tuple[float, float], tuple[float, float]]] = []
 
-    # Equal radii: parallel external tangents.
-    if abs(r1 - r2) < tol:
+    # Equal (or nearly equal) radii: parallel external tangents.
+    # When |r1-r2| is tiny the external centre of similitude is far away and
+    # the general formula becomes numerically unstable.
+    r_ref = max(r1, r2, tol)
+    if abs(r1 - r2) < tol or abs(r1 - r2) / r_ref < 1e-3:
         ux, uy = (cx2 - cx1) / d, (cy2 - cy1) / d
         perpx, perpy = -uy, ux
         for sign in (1.0, -1.0):
