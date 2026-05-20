@@ -10,6 +10,7 @@ from .construction_geom import (
     circle_line_intersections_2d,
     ellipse_ellipse_intersections_2d,
     ellipse_line_intersections_2d,
+    midpoint_2d,
     tangent_circle_to_circle_external_2d,
     tangent_ellipse_to_ellipse_external_2d,
     tangent_point_to_circle_2d,
@@ -19,8 +20,11 @@ from .coordinate_transform import mcs_xyz_to_wcs_xyz
 from .gcode_m118 import PROBE_VAR_CENTER_X, PROBE_VAR_CENTER_Y, PROBE_VAR_DIA_X, PROBE_VAR_DIA_Y
 from .session import CoordSys, FeatureKind, ProbeScanFeature
 
-_ERROR_INCOMPLETE_DATA = "Probe returned incomplete bore/boss data."
-_ERROR_INVALID_MISSING_DIAMETER = "Invalid or missing bore diameter."
+_ERROR_INCOMPLETE_DATA = "Probe returned incomplete data."
+_ERROR_INVALID_MISSING_DIAMETER = "Invalid or missing diameter in probe result."
+_ERROR_PRESET_MISMATCH = "Probe result does not match selected probing option."
+
+DEFAULT_CIRCLE_CLASSIFY_TOLERANCE_MM = 0.02
 
 XY = tuple[float, float]
 CurveKind = Literal["circle", "ellipse"]
@@ -192,83 +196,264 @@ def curve_curve_external_tangents(c1: Curve, c2: Curve) -> list[TangentLine]:
     return tangent_ellipse_to_ellipse_external_2d(*e1, *e2)
 
 
-def feature_from_m461_m462(
+def _normalized_var_keys(var_keys: list[str]) -> set[str]:
+    return {str(k).strip() for k in var_keys if str(k).strip()}
+
+
+def _probe_axis_segment_bundle(
+    segment_label: str,
+    endpoint_a_label: str,
+    endpoint_b_label: str,
+    center_label: str,
+    cx_m: float,
+    cy_m: float,
+    diameter: float,
+    axis: Literal["x", "y"],
+    *,
+    include_center: bool = True,
+    source: str,
+) -> list[ProbeScanFeature]:
+    """Horizontal (axis x) or vertical (axis y) chord: endpoints, segment, optional center."""
+    half = float(diameter) / 2.0
+    if axis == "x":
+        x1_m, y1_m = cx_m - half, cy_m
+        x2_m, y2_m = cx_m + half, cy_m
+    else:
+        x1_m, y1_m = cx_m, cy_m - half
+        x2_m, y2_m = cx_m, cy_m + half
+    wx1, wy1, _ = mcs_xyz_to_wcs_xyz(x1_m, y1_m, 0.0)
+    wx2, wy2, _ = mcs_xyz_to_wcs_xyz(x2_m, y2_m, 0.0)
+    pa = ProbeScanFeature.new_point(
+        endpoint_a_label,
+        wx1,
+        wy1,
+        0.0,
+        source=source,
+        coord_sys=CoordSys.WCS,
+    )
+    pb = ProbeScanFeature.new_point(
+        endpoint_b_label,
+        wx2,
+        wy2,
+        0.0,
+        source=source,
+        coord_sys=CoordSys.WCS,
+    )
+    seg = ProbeScanFeature.new_segment(segment_label, pa.id, pb.id)
+    out: list[ProbeScanFeature] = [pa, pb, seg]
+    if include_center:
+        mx_w, my_w = midpoint_2d(wx1, wy1, wx2, wy2)
+        out.append(
+            ProbeScanFeature.new_derived_point(center_label, pa.id, pb.id, mx_w, my_w)
+        )
+    return out
+
+
+def _probe_rect_cross_features(
+    h_segment_label: str,
+    h_endpoint_a_label: str,
+    h_endpoint_b_label: str,
+    v_segment_label: str,
+    v_endpoint_a_label: str,
+    v_endpoint_b_label: str,
+    center_label: str,
+    cx_m: float,
+    cy_m: float,
+    diameter_x: float,
+    diameter_y: float,
+    *,
+    source: str,
+) -> list[ProbeScanFeature]:
+    """Two orthogonal chords (horizontal + vertical) and one shared center point."""
+    h_bundle = _probe_axis_segment_bundle(
+        h_segment_label,
+        h_endpoint_a_label,
+        h_endpoint_b_label,
+        center_label,
+        cx_m,
+        cy_m,
+        diameter_x,
+        "x",
+        include_center=False,
+        source=source,
+    )
+    v_bundle = _probe_axis_segment_bundle(
+        v_segment_label,
+        v_endpoint_a_label,
+        v_endpoint_b_label,
+        center_label,
+        cx_m,
+        cy_m,
+        diameter_y,
+        "y",
+        include_center=False,
+        source=source,
+    )
+    pa, pb = h_bundle[0], h_bundle[1]
+    wx, wy, _ = mcs_xyz_to_wcs_xyz(cx_m, cy_m, 0.0)
+    center = ProbeScanFeature.new_derived_point(center_label, pa.id, pb.id, wx, wy)
+    return h_bundle + v_bundle + [center]
+
+
+def _features_circle_or_ellipse(
     label: str,
+    cx_m: float,
+    cy_m: float,
+    diameter_x: float,
+    diameter_y: float,
+    *,
+    tolerance_mm: float,
+) -> tuple[list[ProbeScanFeature], str | None]:
+    wx, wy, _ = mcs_xyz_to_wcs_xyz(cx_m, cy_m, 0.0)
+    if diameters_equal(diameter_x, diameter_y, tolerance_mm=tolerance_mm):
+        r = diameter_x / 2.0
+        if r <= 0:
+            return [], _ERROR_INVALID_MISSING_DIAMETER
+        return (
+            [ProbeScanFeature.new_circle(label, wx, wy, r, coord_sys=CoordSys.WCS)],
+            None,
+        )
+    if diameter_x <= 0 or diameter_y <= 0:
+        return [], _ERROR_INVALID_MISSING_DIAMETER
+    return (
+        [
+            ProbeScanFeature.new_ellipse(
+                label, wx, wy, diameter_x, diameter_y, coord_sys=CoordSys.WCS
+            )
+        ],
+        None,
+    )
+
+
+def features_from_m461_m462(
     vd: dict[str, float],
     var_keys: list[str],
     *,
+    preset: str,
     mx: float,
     my: float,
-    tolerance_mm: float = 0.01,
-) -> tuple[ProbeScanFeature | None, str | None]:
+    segment_label: str,
+    endpoint_a_label: str,
+    endpoint_b_label: str,
+    center_label: str,
+    h_segment_label: str,
+    h_endpoint_a_label: str,
+    h_endpoint_b_label: str,
+    v_segment_label: str,
+    v_endpoint_a_label: str,
+    v_endpoint_b_label: str,
+    curve_label: str,
+    source: str,
+    tolerance_mm: float | None = None,
+) -> tuple[list[ProbeScanFeature], str | None]:
     """
-    Build a CIRCLE or ELLIPSE feature from M461/M462 probe variables.
+    Build probe-scan features from M461/M462 variables and UI preset.
 
-    Returns (feature, error_message). Exactly one of the tuple elements is non-None.
-    Branches on captured var_keys (not UI preset).
+    Returns (features, error_message). On success error_message is None.
     """
-    keys = {str(k).strip() for k in var_keys if str(k).strip()}
+    keys = _normalized_var_keys(var_keys)
 
-    if keys == {PROBE_VAR_DIA_X, PROBE_VAR_CENTER_X}:
+    if preset == "CenterX":
+        if keys != {PROBE_VAR_DIA_X, PROBE_VAR_CENTER_X}:
+            return [], _ERROR_PRESET_MISMATCH
         if PROBE_VAR_DIA_X not in vd or PROBE_VAR_CENTER_X not in vd:
-            return None, _ERROR_INCOMPLETE_DATA
+            return [], _ERROR_INCOMPLETE_DATA
         d_x = float(vd[PROBE_VAR_DIA_X])
         if d_x <= 0:
-            return None, _ERROR_INVALID_MISSING_DIAMETER
+            return [], _ERROR_INVALID_MISSING_DIAMETER
         cx_m = float(vd[PROBE_VAR_CENTER_X])
         cy_m = float(vd[PROBE_VAR_CENTER_Y]) if PROBE_VAR_CENTER_Y in vd else float(my)
-        wx, wy, _ = mcs_xyz_to_wcs_xyz(cx_m, cy_m, 0.0)
         return (
-            ProbeScanFeature.new_circle(
-                label, wx, wy, d_x / 2.0, coord_sys=CoordSys.WCS
+            _probe_axis_segment_bundle(
+                segment_label,
+                endpoint_a_label,
+                endpoint_b_label,
+                center_label,
+                cx_m,
+                cy_m,
+                d_x,
+                "x",
+                source=source,
             ),
             None,
         )
 
-    if keys == {PROBE_VAR_DIA_Y, PROBE_VAR_CENTER_Y}:
+    if preset == "CenterY":
+        if keys != {PROBE_VAR_DIA_Y, PROBE_VAR_CENTER_Y}:
+            return [], _ERROR_PRESET_MISMATCH
         if PROBE_VAR_DIA_Y not in vd or PROBE_VAR_CENTER_Y not in vd:
-            return None, _ERROR_INCOMPLETE_DATA
+            return [], _ERROR_INCOMPLETE_DATA
         d_y = float(vd[PROBE_VAR_DIA_Y])
         if d_y <= 0:
-            return None, _ERROR_INVALID_MISSING_DIAMETER
+            return [], _ERROR_INVALID_MISSING_DIAMETER
         cy_m = float(vd[PROBE_VAR_CENTER_Y])
         cx_m = float(vd[PROBE_VAR_CENTER_X]) if PROBE_VAR_CENTER_X in vd else float(mx)
-        wx, wy, _ = mcs_xyz_to_wcs_xyz(cx_m, cy_m, 0.0)
         return (
-            ProbeScanFeature.new_circle(
-                label, wx, wy, d_y / 2.0, coord_sys=CoordSys.WCS
+            _probe_axis_segment_bundle(
+                segment_label,
+                endpoint_a_label,
+                endpoint_b_label,
+                center_label,
+                cx_m,
+                cy_m,
+                d_y,
+                "y",
+                source=source,
             ),
             None,
         )
 
-    if keys == {PROBE_VAR_DIA_X, PROBE_VAR_DIA_Y, PROBE_VAR_CENTER_X, PROBE_VAR_CENTER_Y}:
-        if not all(
-            k in vd
-            for k in (PROBE_VAR_DIA_X, PROBE_VAR_DIA_Y, PROBE_VAR_CENTER_X, PROBE_VAR_CENTER_Y)
-        ):
-            return None, _ERROR_INCOMPLETE_DATA
+    if preset in ("CenterBore", "CenterBoss", "CenterPocket", "CenterBlock"):
+        required_keys = {
+            PROBE_VAR_DIA_X,
+            PROBE_VAR_DIA_Y,
+            PROBE_VAR_CENTER_X,
+            PROBE_VAR_CENTER_Y,
+        }
+        if keys != required_keys:
+            return [], _ERROR_PRESET_MISMATCH
+        if not all(k in vd for k in required_keys):
+            return [], _ERROR_INCOMPLETE_DATA
         d_x = float(vd[PROBE_VAR_DIA_X])
         d_y = float(vd[PROBE_VAR_DIA_Y])
         if d_x <= 0 and d_y <= 0:
-            return None, _ERROR_INVALID_MISSING_DIAMETER
+            return [], _ERROR_INVALID_MISSING_DIAMETER
         cx_m = float(vd[PROBE_VAR_CENTER_X])
         cy_m = float(vd[PROBE_VAR_CENTER_Y])
-        wx, wy, _ = mcs_xyz_to_wcs_xyz(cx_m, cy_m, 0.0)
-        if diameters_equal(d_x, d_y, tolerance_mm=tolerance_mm):
-            r = d_x / 2.0
-            if r <= 0:
-                return None, _ERROR_INVALID_MISSING_DIAMETER
+
+        if preset in ("CenterPocket", "CenterBlock"):
+            if d_x <= 0 or d_y <= 0:
+                return [], _ERROR_INVALID_MISSING_DIAMETER
             return (
-                ProbeScanFeature.new_circle(label, wx, wy, r, coord_sys=CoordSys.WCS),
+                _probe_rect_cross_features(
+                    h_segment_label,
+                    h_endpoint_a_label,
+                    h_endpoint_b_label,
+                    v_segment_label,
+                    v_endpoint_a_label,
+                    v_endpoint_b_label,
+                    center_label,
+                    cx_m,
+                    cy_m,
+                    d_x,
+                    d_y,
+                    source=source,
+                ),
                 None,
             )
-        if d_x <= 0 or d_y <= 0:
-            return None, _ERROR_INVALID_MISSING_DIAMETER
-        return (
-            ProbeScanFeature.new_ellipse(
-                label, wx, wy, d_x, d_y, coord_sys=CoordSys.WCS
-            ),
-            None,
+
+        classify_tol = (
+            tolerance_mm
+            if tolerance_mm is not None
+            else DEFAULT_CIRCLE_CLASSIFY_TOLERANCE_MM
+        )
+        return _features_circle_or_ellipse(
+            curve_label,
+            cx_m,
+            cy_m,
+            d_x,
+            d_y,
+            tolerance_mm=classify_tol,
         )
 
-    return None, _ERROR_INCOMPLETE_DATA
+    return [], _ERROR_PRESET_MISMATCH

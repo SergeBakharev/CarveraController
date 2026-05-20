@@ -46,10 +46,11 @@ from .gcode_builders import (
     split_execute_lines,
 )
 from .feature_resolve import (
+    DEFAULT_CIRCLE_CLASSIFY_TOLERANCE_MM,
     curve_curve_external_tangents,
     curve_curve_intersections,
     curve_line_intersections,
-    feature_from_m461_m462,
+    features_from_m461_m462,
     features_referencing_id,
     index_by_id,
     point_curve_tangents,
@@ -195,7 +196,6 @@ def _corner_deltas_from_quadrant(quadrant: str, mx: float, my: float) -> tuple[f
 
 _PROBE_ANIM_FRAMES = ("◐", "◓", "◑", "◒")
 _PROBE_TIMEOUT_S = 30.0
-_DEFAULT_CIRCLE_CLASSIFY_TOLERANCE_MM = 0.02
 
 
 class ProbeScanPopup(ModalView):
@@ -587,7 +587,7 @@ class ProbeScanPopup(ModalView):
         except Exception:
             logger.debug("Could not read circle classify tolerance", exc_info=True)
         if not raw:
-            return _DEFAULT_CIRCLE_CLASSIFY_TOLERANCE_MM
+            return DEFAULT_CIRCLE_CLASSIFY_TOLERANCE_MM
         try:
             tol = float(raw)
         except ValueError:
@@ -597,6 +597,57 @@ class ProbeScanPopup(ModalView):
             self._toast(tr._("Circle tolerance must be zero or positive."))
             return None
         return tol
+
+    def _m461_m462_probe_labels(
+        self, op: str, preset: str
+    ) -> dict[str, str] | None:
+        """Labels for M461/M462 feature construction."""
+        bore = op == "M461"
+        labels = {
+            "segment_label": "",
+            "endpoint_a_label": "",
+            "endpoint_b_label": "",
+            "center_label": tr._("Center"),
+            "h_segment_label": "",
+            "h_endpoint_a_label": "",
+            "h_endpoint_b_label": "",
+            "v_segment_label": "",
+            "v_endpoint_a_label": "",
+            "v_endpoint_b_label": "",
+            "curve_label": "",
+        }
+
+        if preset == "CenterX":
+            seg = tr._("Bore X (M461)") if bore else tr._("Boss X (M462)")
+        elif preset == "CenterY":
+            seg = tr._("Bore Y (M461)") if bore else tr._("Boss Y (M462)")
+        elif preset in ("CenterBore", "CenterBoss"):
+            labels["curve_label"] = (
+                tr._("Bore center (M461)") if bore else tr._("Boss center (M462)")
+            )
+            return labels
+        elif preset == "CenterPocket":
+            h_seg = tr._("Pocket X (M461)")
+            v_seg = tr._("Pocket Y (M461)")
+        elif preset == "CenterBlock":
+            h_seg = tr._("Block X (M462)")
+            v_seg = tr._("Block Y (M462)")
+        else:
+            return None
+
+        if preset in ("CenterX", "CenterY"):
+            labels["segment_label"] = seg
+            labels["endpoint_a_label"] = f"{seg} · A"
+            labels["endpoint_b_label"] = f"{seg} · B"
+            return labels
+
+        labels["h_segment_label"] = h_seg
+        labels["h_endpoint_a_label"] = f"{h_seg} · A"
+        labels["h_endpoint_b_label"] = f"{h_seg} · B"
+        labels["v_segment_label"] = v_seg
+        labels["v_endpoint_a_label"] = f"{v_seg} · A"
+        labels["v_endpoint_b_label"] = f"{v_seg} · B"
+        return labels
 
     def _append_probe_result(
         self, op: str, vd: dict[str, float], var_keys: list[str] | None = None
@@ -619,28 +670,37 @@ class ProbeScanPopup(ModalView):
             )
             self.session.features.append(f)
         elif op in ("M461", "M462"):
-            label = (
-                tr._("Bore center (M461)")
-                if op == "M461"
-                else tr._("Boss center (M462)")
-            )
+            preset = self._m461_preset if op == "M461" else self._m462_preset
+            if not preset:
+                self._toast_need_probing_option()
+                return
+            labels = self._m461_m462_probe_labels(op, preset)
+            if labels is None:
+                self._toast_need_probing_option()
+                return
             mx = float(CNC.vars.get("mx", 0.0))
             my = float(CNC.vars.get("my", 0.0))
-            tol = self._read_circle_classify_tolerance_mm(op)
-            if tol is None:
-                return
-            f, err = feature_from_m461_m462(
-                label,
+            feat_kwargs: dict[str, object] = {
+                "preset": preset,
+                "mx": mx,
+                "my": my,
+                "source": op,
+                **labels,
+            }
+            if preset in ("CenterBore", "CenterBoss"):
+                tol = self._read_circle_classify_tolerance_mm(op)
+                if tol is None:
+                    return
+                feat_kwargs["tolerance_mm"] = tol
+            feats, err = features_from_m461_m462(
                 vd,
                 var_keys or [],
-                mx=mx,
-                my=my,
-                tolerance_mm=tol,
+                **feat_kwargs,
             )
             if err is not None:
                 self._toast(tr._(err))
-            elif f is not None:
-                self.session.features.append(f)
+            elif feats:
+                self.session.features.extend(feats)
         elif op in ("M463", "M464"):
             xm = float(vd.get(PROBE_VAR_CENTER_X, 0.0))
             ym = float(vd.get(PROBE_VAR_CENTER_Y, 0.0))
