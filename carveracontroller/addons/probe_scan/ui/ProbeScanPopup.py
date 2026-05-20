@@ -359,7 +359,7 @@ class ProbeScanPopup(ModalView):
         )
 
         def on_confirm(*_args):
-            self._discard_active_probe()
+            self._cancel_probe_run()
             super(ProbeScanPopup, self).dismiss()
 
         cp.confirm = on_confirm
@@ -403,20 +403,10 @@ class ProbeScanPopup(ModalView):
             self._capture.reset()
         self._toast(tr._("Probe timed out."))
 
-    def _cancel_probe_run(
-        self,
-        *,
-        toast: str | None = None,
-        abort_machine: bool = False,
-    ) -> None:
+    def _cancel_probe_run(self) -> None:
         if self._capture is not None:
             self._capture.reset()
-        self._runner.cancel(abort_machine=abort_machine)
-        if toast:
-            self._toast(toast)
-
-    def _discard_active_probe(self) -> None:
-        self._cancel_probe_run(abort_machine=True)
+        self._runner.cancel(abort_machine=True)
 
     def _start_probing(self) -> None:
         self._dismiss_jog_popup()
