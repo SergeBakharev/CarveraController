@@ -166,23 +166,22 @@ def tangent_point_to_circle_2d(
 ) -> list[tuple[float, float]]:
     """
     Tangent touch-points on circle (cx, cy, r) from external point (px_, py_).
-    Returns 0 (point inside circle) or 2 touch-points.
+    Returns 0 (point inside circle) to 2 touch-points.
     """
     d = math.hypot(px_ - cx, py_ - cy)
     if d < r - tol:
         return []
     if d < tol:
         return []
-    # Distance along line P→C to the chord midpoint.
-    a = r * r / d
-    h2 = r * r - a * a
+    ux, uy = (cx - px_) / d, (cy - py_) / d
+    # Chord midpoint on P->C at distance (d²−r²)/d from P (r²/d from C toward P).
+    cm = r * r / d
+    h2 = r * r - cm * cm
     if h2 < 0:
         h2 = 0.0
     h = math.sqrt(h2)
-    ux, uy = (cx - px_) / d, (cy - py_) / d
-    # Chord midpoint.
-    mx = px_ + a * ux
-    my = py_ + a * uy
+    mx = cx - cm * ux
+    my = cy - cm * uy
     perpx, perpy = -uy, ux
     if h < tol:
         return [(mx, my)]
