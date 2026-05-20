@@ -399,6 +399,8 @@ class ProbeScanPopup(ModalView):
             logger.debug("Could not apply probing lock to feature rows", exc_info=True)
 
     def _on_probe_timeout_toast(self) -> None:
+        if self._capture is not None:
+            self._capture.reset()
         self._toast(tr._("Probe timed out."))
 
     def _cancel_probe_run(

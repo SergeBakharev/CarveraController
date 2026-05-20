@@ -91,9 +91,9 @@ class ProbeRunner:
         self._invalidate_token()
         self._clear_events()
 
-    def is_token_valid(self, token: int) -> bool:
+    def is_token_valid(self, token: int | None) -> bool:
         """Return True if *token* matches the currently active run."""
-        return token == self._active_token
+        return token is not None and token == self._active_token
 
     def get_active_token(self) -> int | None:
         """Return the current run token, or None if not probing."""

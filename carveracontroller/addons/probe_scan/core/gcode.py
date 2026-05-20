@@ -7,6 +7,8 @@ import math
 import re
 from collections.abc import Callable, Sequence
 
+from carveracontroller.Controller import Controller
+
 _logger = logging.getLogger(__name__)
 
 # Firmware probe result variables
@@ -156,7 +158,9 @@ class M118ProbeCapture:
         self._var_keys.clear()
         self._buf.clear()
 
-    def feed_line(self, _msg_kind: int, line: str) -> None:
+    def feed_line(self, msg_kind: int, line: str) -> None:
+        if msg_kind == Controller.MSG_ERROR:
+            return
         s = line.rstrip("\r\n")
 
         m_start = RE_CMM_START.search(s)
