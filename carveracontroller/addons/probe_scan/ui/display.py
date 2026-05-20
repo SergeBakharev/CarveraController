@@ -23,7 +23,14 @@ def payload_wcs_xyz_for_display(
     p = feat.payload
     k = feat.kind
     try:
-        if k in (FeatureKind.POINT, FeatureKind.CORNER, FeatureKind.DERIVED_POINT):
+        if k in (
+            FeatureKind.POINT,
+            FeatureKind.CORNER,
+            FeatureKind.DERIVED_POINT,
+            FeatureKind.ANGLE,
+        ):
+            if "x" not in p or "y" not in p:
+                return None
             return float(p["x"]), float(p["y"]), float(p.get("z", 0.0))
         if k in (FeatureKind.CIRCLE, FeatureKind.ELLIPSE, FeatureKind.DERIVED_CIRCLE):
             return float(p["cx"]), float(p["cy"]), 0.0
@@ -63,9 +70,16 @@ def feature_secondary_line(
 
     if k == FeatureKind.ANGLE:
         deg = float(p.get("degrees", 0.0))
-        line = tr._("Measured %(deg).5f °") % {"deg": deg}
+        line = tr._("Measured %(deg).3f °") % {"deg": deg}
         pv = str(p.get("probe_variant") or "").strip()
-        return f"{line} · {pv}" if pv else line
+        if pv:
+            line = f"{line} · {pv}"
+        xyz = payload_wcs_xyz_for_display(feat)
+        if xyz is not None:
+            x_, y_, z_ = xyz
+            pos = fmt_wcs_xy_detail(x_, y_, feat=feat, z_fallback=z_)
+            return f"{line} · {pos}"
+        return line
 
     xyz = payload_wcs_xyz_for_display(feat)
     if xyz is not None:

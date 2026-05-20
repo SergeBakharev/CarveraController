@@ -8,6 +8,7 @@ import io
 import logging
 import math
 import os
+import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -219,6 +220,7 @@ def import_dxf(text: str) -> tuple[ProbeScanSession, ImportReport]:
     # Probe scan layers (/!\ order matters)
     _import_dxf_probed_points(by_layer.get("PROBED_POINTS", []), features, report, consumed)
     _import_dxf_probed_corners(by_layer.get("PROBED_CORNERS", []), features, report, consumed)
+    _import_dxf_probed_angles(by_layer.get("PROBED_ANGLES", []), features, report, consumed)
     _import_dxf_probed_centers(
         by_layer.get("PROBED_CENTERS", []), features, report, registry, consumed
     )
@@ -368,6 +370,52 @@ def _import_dxf_probed_points(
                 float(loc.x),
                 float(loc.y),
                 float(loc.z),
+            )
+        )
+
+
+_RE_ANGLE_DXF_TEXT = re.compile(
+    r"(-?\d+(?:\.\d+)?)\s*(?:°|\u00b0|deg)\b",
+    re.IGNORECASE,
+)
+
+
+def _import_dxf_probed_angles(
+    entities: list[DXFEntity],
+    features: list[ProbeScanFeature],
+    report: ImportReport,
+    consumed: set[DXFEntity],
+) -> None:
+    n = 0
+    for ent in entities:
+        dtype = ent.dxftype()
+        if dtype not in ("TEXT", "MTEXT"):
+            report.warnings.append(
+                f"Skipped non-text entity on PROBED_ANGLES: {dtype}"
+            )
+            report.skipped += 1
+            continue
+        consumed.add(ent)
+        if dtype == "TEXT":
+            raw = str(ent.dxf.text)
+            ins = ent.dxf.insert
+        else:
+            raw = ent.plain_text() if hasattr(ent, "plain_text") else str(ent.text)
+            ins = ent.dxf.insert
+        m = _RE_ANGLE_DXF_TEXT.search(raw)
+        if not m:
+            report.warnings.append(f"Skipped angle label without degrees: {raw!r}")
+            report.skipped += 1
+            continue
+        deg = float(m.group(1))
+        n += 1
+        features.append(
+            ProbeScanFeature.new_angle(
+                f"A{n}",
+                deg,
+                x=float(ins.x),
+                y=float(ins.y),
+                z=float(getattr(ins, "z", 0.0)),
             )
         )
 

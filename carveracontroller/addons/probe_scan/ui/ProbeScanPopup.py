@@ -651,10 +651,17 @@ class ProbeScanPopup(ModalView):
             )
             self.session.features.append(f)
         elif op == "M465":
+            mx = float(CNC.vars.get("mx", 0.0))
+            my = float(CNC.vars.get("my", 0.0))
+            mz = float(CNC.vars.get("mz", 0.0))
+            wx, wy, wz = mcs_xyz_to_wcs_xyz(mx, my, mz)
             f = ProbeScanFeature.new_angle(
                 tr._("Angle (M465)"),
                 float(vd.get(PROBE_VAR_ANGLE, 0.0)),
                 probe_variant=str(self._angle_variant or ""),
+                x=wx,
+                y=wy,
+                z=wz,
             )
             self.session.features.append(f)
         self._refresh_feature_ui()
@@ -1280,7 +1287,7 @@ class ProbeScanPopup(ModalView):
         _format_labels = {
             "JSON": tr._("JSON (full session)"),
             "CSV": tr._("CSV (feature table)"),
-            "DXF": tr._("DXF (geometry only)"),
+            "DXF": tr._("DXF (geometry + angle labels)"),
         }
         for kind in ("JSON", "CSV", "DXF"):
 

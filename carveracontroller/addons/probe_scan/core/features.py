@@ -516,7 +516,15 @@ class PolylineGeom:
     closed: bool
 
 
-FeatureGeom = PointGeom | CircleGeom | SegmentGeom | PolylineGeom | None
+@dataclass
+class LabelGeom:
+    x: float
+    y: float
+    text: str
+    kind: FeatureKind  # ANGLE (text at probe site)
+
+
+FeatureGeom = PointGeom | CircleGeom | SegmentGeom | PolylineGeom | LabelGeom | None
 
 
 def resolve_geometry(
@@ -525,8 +533,8 @@ def resolve_geometry(
 ) -> FeatureGeom:
     """Map a feature to a typed geometry value for drawing and hit-testing.
 
-    Returns None when the geometry cannot be resolved (e.g. ANGLE features,
-    missing references, or incomplete payloads).
+    Returns None when the geometry cannot be resolved (e.g. ANGLE features
+    without coordinates, missing references, or incomplete payloads).
     """
     p = feature.payload
     k = feature.kind
@@ -593,7 +601,15 @@ def resolve_geometry(
             verts.append(xy)
         return PolylineGeom(verts, bool(p.get("closed", False)))
 
-    # ANGLE and unknown kinds have no drawable geometry.
+    if k == FeatureKind.ANGLE:
+        try:
+            x = float(p["x"])
+            y = float(p["y"])
+            deg = float(p["degrees"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return LabelGeom(x, y, f"{deg:.3f}\u00b0", k)
+
     return None
 
 

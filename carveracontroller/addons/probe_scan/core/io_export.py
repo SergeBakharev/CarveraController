@@ -14,11 +14,14 @@ DXF_LAYERS = (
     "PROBED_POINTS",
     "PROBED_CENTERS",
     "PROBED_CORNERS",
+    "PROBED_ANGLES",
     "CONSTRUCTED_SEGMENTS",
     "CONSTRUCTED_POLYLINES",
     "CONSTRUCTED_CIRCLES",
     "CONSTRUCTED_POINTS",
 )
+
+_DXF_ANGLE_TEXT_HEIGHT_MM = 2.0
 
 
 def export_json(session: ProbeScanSession) -> str:
@@ -61,32 +64,6 @@ def export_csv(session: ProbeScanSession) -> str:
     return buf.getvalue()
 
 
-def _add_dxf_ellipse(
-    msp,
-    cx: float,
-    cy: float,
-    rx: float,
-    ry: float,
-    *,
-    layer: str,
-) -> None:
-    major_r = max(rx, ry)
-    minor_r = min(rx, ry)
-    if major_r <= 0:
-        return
-    ratio = minor_r / major_r
-    if rx >= ry:
-        major_axis = (major_r, 0.0, 0.0)
-    else:
-        major_axis = (0.0, major_r, 0.0)
-    msp.add_ellipse(
-        (cx, cy, 0.0),
-        major_axis=major_axis,
-        ratio=ratio,
-        dxfattribs={"layer": layer},
-    )
-
-
 def export_dxf(session: ProbeScanSession) -> str:
     """Write a layered DXF (R2010) as a string for clipboard or disk."""
     import ezdxf
@@ -126,6 +103,13 @@ def export_dxf(session: ProbeScanSession) -> str:
                 (float(p.get("x", 0)), float(p.get("y", 0)), 0.0),
                 dxfattribs={"layer": "PROBED_CORNERS"},
             )
+        elif f.kind == FeatureKind.ANGLE:
+            try:
+                ax = float(p["x"])
+                ay = float(p["y"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            _add_dxf_angle(msp, ax, ay, float(p.get("degrees", 0.0)))
         elif f.kind == FeatureKind.SEGMENT:
             ends = segment_endpoints(by_id, f)
             if not ends:
@@ -181,3 +165,42 @@ def export_dxf(session: ProbeScanSession) -> str:
             os.unlink(path)
         except OSError:
             pass
+
+
+def _add_dxf_ellipse(
+    msp,
+    cx: float,
+    cy: float,
+    rx: float,
+    ry: float,
+    *,
+    layer: str,
+) -> None:
+    major_r = max(rx, ry)
+    minor_r = min(rx, ry)
+    if major_r <= 0:
+        return
+    ratio = minor_r / major_r
+    if rx >= ry:
+        major_axis = (major_r, 0.0, 0.0)
+    else:
+        major_axis = (0.0, major_r, 0.0)
+    msp.add_ellipse(
+        (cx, cy, 0.0),
+        major_axis=major_axis,
+        ratio=ratio,
+        dxfattribs={"layer": layer},
+    )
+
+
+def _add_dxf_angle(msp, x: float, y: float, degrees: float) -> None:
+    from ezdxf.enums import TextEntityAlignment
+
+    ent = msp.add_text(
+        f"{degrees:.3f}\u00b0",
+        dxfattribs={
+            "layer": "PROBED_ANGLES",
+            "height": _DXF_ANGLE_TEXT_HEIGHT_MM,
+        },
+    )
+    ent.set_placement((x, y, 0.0), align=TextEntityAlignment.MIDDLE_CENTER)

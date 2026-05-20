@@ -14,6 +14,7 @@ from ..core.features import (
     CircleGeom,
     FeatureGeom,
     FeatureKind,
+    LabelGeom,
     PointGeom,
     PolylineGeom,
     ProbeScanFeature,
@@ -81,6 +82,45 @@ class ProbeScanPreviewSketch(Widget):
         self._selection_ids = list(selection_ids) if selection_ids is not None else []
         self._redraw()
 
+    def _draw_texture_label(
+        self,
+        text: str,
+        cx: float,
+        cy: float,
+        *,
+        font_size: float,
+        color: tuple[float, float, float, float],
+        y_offset: float = 0.0,
+    ) -> None:
+        """Draw a centered Kivy text texture at widget-local pixel coords."""
+        try:
+            label = CoreLabel(
+                text=text,
+                font_size=font_size,
+                bold=True,
+                color=color[:4],
+                outline_width=1,
+                outline_color=(0.0, 0.0, 0.0, 0.85),
+            )
+        except TypeError:
+            label = CoreLabel(
+                text=text,
+                font_size=font_size,
+                bold=True,
+                color=color[:4],
+            )
+        label.refresh()
+        tex = label.texture
+        if tex is None or tex.width < 1:
+            return
+        tw, th = tex.size
+        Color(1, 1, 1, 1)
+        Rectangle(
+            texture=tex,
+            pos=(cx - tw * 0.5, cy - th * 0.5 + y_offset),
+            size=(tw, th),
+        )
+
     def _world_to_px(self, wx: float, wy: float) -> tuple[float, float]:
         """Widget-local pixel coordinates for a world point (uses last transform)."""
         iw, ih = self._last_iw, self._last_ih
@@ -140,6 +180,8 @@ class ProbeScanPreviewSketch(Widget):
         """Screen-space hit radius in pixels for a given feature."""
         sc = abs(self._last_scale)
         geom = resolve_geometry(f, by_id)
+        if isinstance(geom, LabelGeom):
+            return max(dp(24), sc * 0.85)
         if isinstance(geom, PointGeom) or geom is None:
             return max(dp(18), sc * 0.65)
         if isinstance(geom, CircleGeom):
@@ -159,7 +201,7 @@ class ProbeScanPreviewSketch(Widget):
         geom = resolve_geometry(f, by_id)
         if geom is None:
             return float("inf")
-        if isinstance(geom, PointGeom):
+        if isinstance(geom, (PointGeom, LabelGeom)):
             u, v = self._world_to_px(geom.x, geom.y)
             return math.hypot(tx - u, ty - v)
         if isinstance(geom, CircleGeom):
@@ -223,6 +265,11 @@ class ProbeScanPreviewSketch(Widget):
                 s = max(5.0, abs(scale) * 0.58)
                 Line(points=[u - s, v, u + s, v], width=lw)
                 Line(points=[u, v - s, u, v + s], width=lw)
+        elif isinstance(geom, LabelGeom):
+            u, v = px(geom.x, geom.y)
+            s = max(4.0, abs(scale) * 0.45)
+            Line(points=[u - s, v, u + s, v], width=lw)
+            Line(points=[u, v - s, u, v + s], width=lw)
         elif isinstance(geom, CircleGeom):
             Line(
                 points=_ellipse_polyline_px(geom.cx, geom.cy, geom.rx, geom.ry, px),
@@ -254,7 +301,7 @@ class ProbeScanPreviewSketch(Widget):
         geom = resolve_geometry(f, by_id)
         if geom is None:
             return None
-        if isinstance(geom, PointGeom):
+        if isinstance(geom, (PointGeom, LabelGeom)):
             return px(geom.x, geom.y)
         if isinstance(geom, CircleGeom):
             return px(geom.cx, geom.cy)
@@ -284,13 +331,15 @@ class ProbeScanPreviewSketch(Widget):
         geom = resolve_geometry(f, by_id)
         sc = abs(scale)
 
-        if isinstance(geom, PointGeom):
-            if geom.kind == FeatureKind.CORNER:
+        if isinstance(geom, (PointGeom, LabelGeom)):
+            if isinstance(geom, PointGeom) and geom.kind == FeatureKind.CORNER:
                 s = max(5.5, sc * 0.52)
                 clear = s * math.sqrt(2) + dp(14)
             else:
                 s = max(5.0, sc * 0.58)
                 clear = s + dp(14)
+            if isinstance(geom, LabelGeom):
+                clear += dp(10)
             ang = (
                 math.pi / 4
                 + (ord_idx % 4) * (math.pi / 2)
@@ -388,9 +437,13 @@ class ProbeScanPreviewSketch(Widget):
         by_id = index_by_id(self._features)
         for f in self._features:
             geom = resolve_geometry(f, by_id)
-            if isinstance(geom, PointGeom):
+            if isinstance(geom, (PointGeom, LabelGeom)):
                 xs.append(geom.x)
                 ys.append(geom.y)
+                if isinstance(geom, LabelGeom):
+                    pad = max(4.0, len(geom.text) * 0.45)
+                    xs.extend([geom.x - pad, geom.x + pad])
+                    ys.extend([geom.y - pad, geom.y + pad])
             elif isinstance(geom, CircleGeom):
                 xs.extend([geom.cx - geom.rx, geom.cx + geom.rx])
                 ys.extend([geom.cy - geom.ry, geom.cy + geom.ry])
@@ -532,6 +585,22 @@ class ProbeScanPreviewSketch(Widget):
                         points=[u - s, v - s, u + s, v - s, u + s, v + s,
                                 u - s, v + s, u - s, v - s],
                         width=1.2,
+                    )
+
+                elif isinstance(geom, LabelGeom) and geom.kind == FeatureKind.ANGLE:
+                    u, v = px(geom.x, geom.y)
+                    s = max(3.0, abs(scale) * 0.4)
+                    Color(0.95, 0.82, 0.4, 1)
+                    Line(points=[u - s, v, u + s, v], width=1.3)
+                    Line(points=[u, v - s, u, v + s], width=1.3)
+                    font_size = max(dp(10), min(dp(15), abs(scale) * 0.42))
+                    self._draw_texture_label(
+                        geom.text,
+                        u,
+                        v,
+                        font_size=font_size,
+                        color=(0.95, 0.88, 0.55, 1.0),
+                        y_offset=dp(6),
                     )
 
             # Selection highlights and order badges

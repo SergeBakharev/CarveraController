@@ -116,11 +116,19 @@ class ProbeScanFeature:
         degrees: float,
         *,
         probe_variant: str = "",
+        x: float | None = None,
+        y: float | None = None,
+        z: float | None = None,
     ) -> ProbeScanFeature:
         """``degrees`` from M465 probe result (``PROBE_VAR_ANGLE``, firmware #153)."""
         payload: dict[str, Any] = {"degrees": float(degrees)}
         if probe_variant:
             payload["probe_variant"] = str(probe_variant)
+        if x is not None and y is not None:
+            payload["x"] = float(x)
+            payload["y"] = float(y)
+            if z is not None:
+                payload["z"] = float(z)
         return ProbeScanFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.ANGLE,
