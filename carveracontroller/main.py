@@ -66,39 +66,6 @@ import threading
 import logging
 logger = logging.getLogger(__name__)
 
-# Add Android imports
-if kivy_platform == 'android':
-    from android import mActivity
-    from android.storage import primary_external_storage_path
-    from android.permissions import request_permissions, Permission, check_permission
-    from jnius import autoclass
-    Intent = autoclass('android.content.Intent')
-    Settings = autoclass('android.provider.Settings')
-    Environment = autoclass('android.os.Environment')
-
-def has_all_files_access():
-    if kivy_platform == 'android':
-        try:
-            return Environment.isExternalStorageManager()
-        except Exception as e:
-            logger.error(f"Error checking storage manager status: {e}")
-            return False
-    return True
-
-def request_android_permissions():
-    if kivy_platform == 'android':
-        try:
-            # Check if we already have all files access
-            if has_all_files_access():
-                logger.info("Already have all files access permission")
-                return
-
-            # Request all files access permission
-            intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-            mActivity.startActivity(intent)
-        except Exception as e:
-            logger.error(f"Error requesting permissions: {e}")
-
 from carveracontroller.addons.probing.ProbingPopup import ProbingPopup
 from carveracontroller.addons.pendant import SettingPendantSelector, SUPPORTED_PENDANTS, OverrideController, SettingGamepadBindings
 from carveracontroller.serial_listeners import dispatch_serial_line
@@ -2011,13 +1978,7 @@ class SelectableRecycleBoxLayout(FocusBehavior, LayoutSelectionBehavior,
 class TopDataView(BoxLayout, ToolTipButton):
     pass
 
-class DirectoryView(BoxLayout, ToolTipButton):
-    pass
-
 class DropDownHint(Label):
-    pass
-
-class DropDownSplitter(Label):
     pass
 
 class SelectableLabel(RecycleDataViewBehavior, Label):
@@ -2566,35 +2527,12 @@ class LocalRV(DataRV):
         self.fill_dir(switch_reverse = False)
 
         self.curr_dir = os.path.normpath(new_dir)
-        win_drivers = ['%s:' % d for d in string.ascii_uppercase]
-        win_drivers_slash = ['%s:\\' % d for d in string.ascii_uppercase]
-        if self.curr_dir in win_drivers or self.curr_dir in win_drivers_slash:
-            self.curr_dir_name = self.curr_dir
-        else:
-            self.curr_dir_name = os.path.basename(self.curr_dir)
-
-        if self.curr_dir_name == self.base_dir:
-            self.curr_dir_name = 'root'
-
-        self.curr_full_path_list = [self.curr_dir]
-        self.curr_path_list = [self.curr_dir_name]
-        last_parent_dir = self.curr_dir
-
-        for loop in range(5):
-            # parent_dir = os.path.abspath(os.path.join(last_parent_dir, os.pardir))
-            parent_dir = os.path.dirname(last_parent_dir)
-            if last_parent_dir == parent_dir:
-                break
-            else:
-                self.curr_full_path_list.insert(0, parent_dir)
-                if parent_dir in win_drivers or parent_dir in win_drivers_slash:
-                    self.curr_path_list.insert(0, parent_dir)
-                else:
-                    self.curr_path_list.insert(0, os.path.basename(parent_dir))
-                last_parent_dir = parent_dir
-
-        if self.curr_path_list[0] == self.base_dir:
-            self.curr_path_list[0] = 'root'
+        self.curr_full_path_list, path_labels = Utils.directory_breadcrumb_paths(
+            self.curr_dir,
+            root_label_markers=(self.base_dir,),
+        )
+        self.curr_path_list = path_labels
+        self.curr_dir_name = path_labels[-1] if path_labels else ''
     
     def on_double_tap(self):
         app = App.get_running_app()
@@ -3517,89 +3455,31 @@ class Makera(RelativeLayout):
             self.spindle_drop_down.opened = True
 
     def fetch_common_local_dir_list(self):
-        home_path = Path.home()
-        if home_path.exists():
-            self.common_local_dir_list.append({'name': os.path.basename(home_path), 'path': str(home_path), 'icon': 'data/folder-home.png'})
-        if home_path.joinpath('Documents').exists():
-            self.common_local_dir_list.append({'name': tr._('Documents'), 'path': str(home_path.joinpath('Documents')), 'icon': 'data/folder-documents.png'})
-        if home_path.joinpath('Downloads').exists():
-            self.common_local_dir_list.append({'name': tr._('Downloads'), 'path': str(home_path.joinpath('Downloads')), 'icon': 'data/folder-downloads.png'})
-        if home_path.joinpath('Desktop').exists():
-            self.common_local_dir_list.append({'name': tr._('Desktop'), 'path': str(home_path.joinpath('Desktop')), 'icon': 'data/folder-desktop.png'})
-
-        # android storage
-        if kivy_platform == 'android':
-            logger.info('Android storage permission check')
-            try:
-                # Request permissions first
-                request_android_permissions()
-
-                # Add primary storage path
-                android_storage_path = primary_external_storage_path()
-                if android_storage_path and os.path.exists(android_storage_path):
-                    self.common_local_dir_list.append(
-                        {'name': tr._('Storage'), 'path': str(android_storage_path), 'icon': 'data/folder-home.png'})
-            except Exception as e:
-                logger.error(f'Get Android Storage Error: {e}')
-
-        # windows disks
-        available_drives = ['%s:' % d for d in string.ascii_uppercase if os.path.exists('%s:' % d)]
-        for drive in available_drives:
-            self.common_local_dir_list.append(
-                {'name': drive, 'path': drive, 'icon': ''})
+        self.common_local_dir_list = Utils.common_local_directories()
 
     def fetch_recent_local_dir_list(self):
-        if Config.has_section('carvera'):
-            for index in range(5):
-                if Config.has_option('carvera', 'local_folder_' + str(index + 1)):
-                    folder = Config.get('carvera', 'local_folder_' + str(index + 1))
-                    if folder:
-                        self.recent_local_dir_list.append(folder)
-            if kivy_platform == 'android':
-                if len(self.recent_local_dir_list) == 0:
-                    self.update_recent_local_dir_list(str(os.path.abspath('carveracontroller/gcodes')))
-            else:
-                if len(self.recent_local_dir_list) == 0:
-                    self.update_recent_local_dir_list(str(os.path.abspath('./gcodes')))
+        self.recent_local_dir_list = Utils.load_recent_local_directories()
 
     def update_recent_local_dir_list(self, new_dir):
-        if new_dir in self.recent_local_dir_list:
-            if self.recent_local_dir_list[0] == new_dir:
-                return
-            self.recent_local_dir_list.remove(new_dir)
-        self.recent_local_dir_list.insert(0, new_dir)
-        del self.recent_local_dir_list[5:]
-        # save config
-        for index in range(5):
-            if index < len(self.recent_local_dir_list):
-                Config.set('carvera', 'local_folder_' + str(index + 1), self.recent_local_dir_list[index])
-            else:
-                Config.set('carvera', 'local_folder_' + str(index + 1), '')
-        Config.write()
+        self.recent_local_dir_list = Utils.update_recent_local_directory_list(
+            self.recent_local_dir_list, new_dir,
+        )
+        Utils.persist_recent_local_directories(self.recent_local_dir_list)
 
     # -----------------------------------------------------------------------
     def open_local_dir_drop_down(self, button):
         if len(self.common_local_dir_list) == 0:
             self.fetch_common_local_dir_list()
 
-        if len(self.recent_local_dir_list) == 0:
-            self.fetch_recent_local_dir_list()
+        self.recent_local_dir_list = Utils.load_recent_local_directories(
+            seed_if_empty=len(self.recent_local_dir_list) == 0,
+        )
 
-        self.local_dir_drop_down.clear_widgets()
-
-        for common_dir in self.common_local_dir_list:
-            btn = DirectoryView(full_path = common_dir['path'], data_text = common_dir['name'], data_icon = common_dir['icon'], size_hint_y=None, height='30dp')
-            btn.bind(on_release=lambda btn: self.local_dir_drop_down.select(btn.full_path))
-            self.local_dir_drop_down.add_widget(btn)
-
-        splitter = DropDownSplitter(text='       ' + tr._('Recent Places'))
-        self.local_dir_drop_down.add_widget(splitter)
-
-        for recent_dir in self.recent_local_dir_list:
-            btn = DirectoryView(full_path = recent_dir, data_text = os.path.basename(recent_dir), data_icon = '', size_hint_y=None, height='30dp')
-            btn.bind(on_release=lambda btn: self.local_dir_drop_down.select(btn.full_path))
-            self.local_dir_drop_down.add_widget(btn)
-
+        Utils.fill_local_dir_dropdown(
+            self.local_dir_drop_down,
+            self.common_local_dir_list,
+            self.recent_local_dir_list,
+        )
         self.local_dir_drop_down.open(button)
 
     # -----------------------------------------------------------------------
@@ -3631,6 +3511,9 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def open_remote_dir_drop_down(self, button):
+        from carveracontroller.ui.DirectoryView import DirectoryView
+        from carveracontroller.ui.DropDownSplitter import DropDownSplitter
+
         if len(self.recent_remote_dir_list) == 0:
             self.fetch_recent_remote_dir_list()
 

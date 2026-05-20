@@ -37,45 +37,6 @@
     input_filter: 'float'
 
 
-<ProbeScanFileSheet@BoxLayout>:
-    orientation: 'vertical'
-    padding: dp(8)
-    spacing: dp(8)
-    Label:
-        text: tr._('Choose folder and file name')
-        size_hint_y: None
-        height: dp(22)
-        font_size: dp(11)
-        text_size: self.width, None
-        halign: 'left'
-        color: 0.78, 0.79, 0.82, 1
-    FileChooserListView:
-        id: fc
-        size_hint_y: 0.6
-    Label:
-        text: tr._('File name')
-        size_hint_y: None
-        height: dp(18)
-        font_size: dp(10)
-        halign: 'left'
-        text_size: self.width, None
-    TextInput:
-        id: ti_filename
-        multiline: False
-        size_hint_y: None
-        height: dp(36)
-    BoxLayout:
-        size_hint_y: None
-        height: dp(44)
-        spacing: dp(8)
-        Button:
-            id: btn_cancel
-            text: tr._('Cancel')
-        Button:
-            id: btn_save
-            text: tr._('Save')
-
-
 <ProbeScanPopup>:
     title: tr._('Probe scan')
     size_hint: 0.9, 0.88
@@ -913,42 +874,34 @@
                         height: dp(100)
                         Button:
                             text: tr._('Segment')
-                            font_size: dp(13)
                             disabled: not root.can_make_segment
                             on_release: root.on_construct_segment()
                         Button:
                             text: tr._('Poly open')
-                            font_size: dp(13)
                             disabled: not root.can_make_polyline_open
                             on_release: root.on_construct_polyline_open()
                         Button:
                             text: tr._('Poly closed')
-                            font_size: dp(13)
                             disabled: not root.can_make_polyline_closed
                             on_release: root.on_construct_polyline_closed()
                         Button:
                             text: tr._('Circumcircle')
-                            font_size: dp(13)
                             disabled: not root.can_make_circumcircle
                             on_release: root.on_construct_derived_circle()
                         Button:
                             text: tr._('Intersect')
-                            font_size: dp(13)
                             disabled: not root.can_make_intersection
                             on_release: root.on_construct_intersection()
                         Button:
                             text: tr._('Midpoint')
-                            font_size: dp(13)
                             disabled: not root.can_make_midpoint
                             on_release: root.on_construct_midpoint()
                         Button:
                             text: tr._('Tangent')
-                            font_size: dp(13)
                             disabled: not root.can_make_tangent
                             on_release: root.on_construct_tangent()
                         Button:
                             text: tr._('Clear sel.')
-                            font_size: dp(13)
                             disabled: not root.has_construct_selection
                             on_release: root.on_clear_construct_selection()
 
@@ -972,37 +925,31 @@
                 spacing: dp(6)
                 Button:
                     text: tr._('Load...')
-                    font_size: dp(12)
                     size_hint_x: 1
                     disabled: root.is_probing
                     on_release: root.on_load_session()
                 Button:
                     text: tr._('Save as...')
-                    font_size: dp(12)
                     size_hint_x: 1
                     disabled: root.is_probing
                     on_release: root.open_save_format_dropdown(self)
                 Button:
                     text: tr._('Copy as...')
-                    font_size: dp(12)
                     size_hint_x: 1
                     disabled: root.is_probing
                     on_release: root.open_copy_format_dropdown(self)
                 Button:
                     text: tr._('Reset')
-                    font_size: dp(12)
                     size_hint_x: 1
                     disabled: root.is_probing
                     on_release: root.on_reset_session()
                 Button:
                     text: tr._('Jog...')
-                    font_size: dp(12)
                     size_hint_x: 1
                     disabled: root.is_probing
                     on_release: root.open_jog_popup()
                 Button:
                     text: tr._('Close')
-                    font_size: dp(12)
                     size_hint_x: 1
                     on_release: root.dismiss()
 

@@ -28,6 +28,10 @@ from carveracontroller.serial_listeners import (
     unregister_serial_listener,
 )
 from carveracontroller.translation import tr
+from carveracontroller.ui.LocalFilePicker import (
+    confirm_overwrite_then,
+    open_local_file_picker,
+)
 
 from ..core.features import (
     ConstructButtonStates,
@@ -1345,78 +1349,6 @@ class ProbeScanPopup(ModalView):
     def on_load_session(self):
         self._prompt_load_session_file()
 
-    def _home_dir_fc(self) -> str:
-        try:
-            h = os.path.expanduser("~")
-            return h if os.path.isdir(h) else os.getcwd()
-        except Exception:
-            return "/"
-
-    def _overwrite_then(self, dest: str, write_fn):
-        root = App.get_running_app().root
-        if os.path.isfile(dest):
-            cp = root.confirm_popup
-            cp.lb_title.text = tr._("Overwrite file?")
-            cp.lb_content.text = tr._("Replace existing file?\n%s") % dest
-            cp.confirm = lambda: write_fn(dest)
-            cp.cancel = None
-            cp.open(root)
-        else:
-            write_fn(dest)
-
-    def _open_file_dialog(
-        self,
-        *,
-        title,
-        default_name,
-        size_hint,
-        on_confirm,
-        btn_text=None,
-        filters=None,
-    ):
-        root = App.get_running_app().root
-        try:
-            content = Factory.ProbeScanFileSheet()
-        except KeyError:
-            self._toast(tr._("Dialog unavailable (UI not loaded)."))
-            return
-        fc = content.ids.fc
-        ti = content.ids.ti_filename
-        fc.path = self._home_dir_fc()
-        fc.filters = list(filters) if filters else []
-        ti.text = default_name
-
-        def sync_filename_from_selection(_inst, sel):
-            if not sel:
-                return
-            path = sel[0]
-            try:
-                if os.path.isfile(path):
-                    ti.text = os.path.basename(path)
-            except OSError:
-                pass
-
-        fc.bind(selection=sync_filename_from_selection)
-        popup = Popup(title=title, content=content, size_hint=size_hint, auto_dismiss=False)
-        if btn_text:
-            content.ids.btn_save.text = btn_text
-
-        def attempt(*_):
-            raw_name = ti.text.strip()
-            if not raw_name:
-                root.show_message_popup(tr._("Enter a file name."), False)
-                return
-            fn = os.path.basename(raw_name)
-            dd = fc.path
-            if not dd or not os.path.isdir(dd):
-                root.show_message_popup(tr._("Choose an existing folder."), False)
-                return
-            on_confirm(popup, os.path.join(dd, fn))
-
-        content.ids.btn_cancel.bind(on_release=lambda *_: popup.dismiss())
-        content.ids.btn_save.bind(on_release=attempt)
-        popup.open()
-
     def _prompt_load_session_file(self):
         root = App.get_running_app().root
 
@@ -1448,12 +1380,12 @@ class ProbeScanPopup(ModalView):
             except Exception as e:
                 root.show_message_popup(tr._("Invalid session file:\n%s") % e, False)
 
-        self._open_file_dialog(
+        open_local_file_picker(
             title=tr._("Load session"),
             default_name="probe_scan_export.json",
             size_hint=(0.82, 0.82),
             on_confirm=on_confirm,
-            btn_text=tr._("Load"),
+            confirm_label=tr._("Load"),
             filters=[p for patterns in _SESSION_FILE_FILTERS.values() for p in patterns],
         )
 
@@ -1486,9 +1418,9 @@ class ProbeScanPopup(ModalView):
                 except OSError as e:
                     root.show_message_popup(tr._("Could not save:\n%s") % e, False)
 
-            self._overwrite_then(dest, write)
+            confirm_overwrite_then(dest, write)
 
-        self._open_file_dialog(
+        open_local_file_picker(
             title=tr._("Save export (%s)") % kind,
             default_name=stems[kind],
             size_hint=(0.82, 0.85),
