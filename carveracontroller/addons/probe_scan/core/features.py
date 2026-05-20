@@ -764,10 +764,26 @@ def construct_midpoint(
     selection_ids: list[str],
     label: str = "Midpoint",
 ) -> tuple[list[ProbeScanFeature], str | None]:
-    """Create a DERIVED_POINT at the midpoint of two point-like features."""
-    if len(selection_ids) != 2:
-        return [], "Select exactly two point features."
+    """Create a DERIVED_POINT at the midpoint of two points or one segment."""
     by_id = index_by_id(features)
+    n = len(selection_ids)
+
+    if n == 1:
+        seg = by_id.get(selection_ids[0])
+        if seg is None or seg.kind != FeatureKind.SEGMENT:
+            return [], "Select one segment or two point features."
+        ends = segment_endpoints(by_id, seg)
+        if ends is None:
+            return [], "Could not resolve segment endpoints."
+        (ax, ay), (bx, by_) = ends
+        mx, my = midpoint_2d(ax, ay, bx, by_)
+        a_id = str(seg.payload.get("a_id", ""))
+        b_id = str(seg.payload.get("b_id", ""))
+        return [ProbeScanFeature.new_derived_point(label, a_id, b_id, mx, my)], None
+
+    if n != 2:
+        return [], "Select one segment or two point features."
+
     fa, fb = by_id.get(selection_ids[0]), by_id.get(selection_ids[1])
     if not fa or not fb:
         return [], "Missing features for midpoint."
@@ -911,7 +927,10 @@ def compute_construct_button_states(
         or (is_curve_like(ids[0]) and is_segment(ids[1]))
         or (is_segment(ids[0]) and is_curve_like(ids[1]))
     )
-    states.can_midpoint = n == 2 and all(is_point_like(fid) for fid in ids)
+    states.can_midpoint = (
+        (n == 2 and all(is_point_like(fid) for fid in ids))
+        or (n == 1 and is_segment(ids[0]))
+    )
     states.can_tangent = n == 2 and (
         (is_point_like(ids[0]) and is_curve_like(ids[1]))
         or (is_curve_like(ids[0]) and is_point_like(ids[1]))
