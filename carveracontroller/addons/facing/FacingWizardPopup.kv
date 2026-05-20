@@ -14,44 +14,6 @@
     valign: 'middle'
     color: 200/255, 200/255, 200/255, 1
 
-<FacingSaveGcodeContent>:
-    orientation: 'vertical'
-    padding: dp(6)
-    spacing: dp(6)
-    Label:
-        size_hint_y: None
-        height: dp(22)
-        font_size: dp(11)
-        text_size: self.width, None
-        halign: 'left'
-        text: tr._('Choose folder and file name')
-    FileChooserListView:
-        id: fc
-        size_hint_y: 0.7
-    Label:
-        size_hint_y: None
-        height: dp(18)
-        font_size: dp(10)
-        text_size: self.width, None
-        halign: 'left'
-        text: tr._('File name')
-    TextInput:
-        id: ti_filename
-        size_hint_y: None
-        height: dp(36)
-        multiline: False
-        text: 'facing_wizard.nc'
-    BoxLayout:
-        size_hint_y: None
-        height: dp(44)
-        spacing: dp(8)
-        Button:
-            id: btn_cancel
-            text: tr._('Cancel')
-        Button:
-            id: btn_save
-            text: tr._('Save')
-
 <FacingSavePresetContent>:
     orientation: 'vertical'
     size_hint: 1, None
