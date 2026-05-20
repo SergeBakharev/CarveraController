@@ -502,9 +502,11 @@ class ProbeScanPopup(ModalView):
         def _ui(_dt):
             if not self._runner.is_token_valid(saved_token):
                 return
-            self._runner.complete()
             vd = map_values_to_dict(op, values, var_keys)
-            self._append_probe_result(op, vd, var_keys)
+            if self._append_probe_result(op, vd, var_keys):
+                self._runner.complete()
+            else:
+                self._runner.cancel()
 
         Clock.schedule_once(_ui, 0)
 
@@ -602,7 +604,8 @@ class ProbeScanPopup(ModalView):
 
     def _append_probe_result(
         self, op: str, vd: dict[str, float], var_keys: list[str] | None = None
-    ):
+    ) -> bool:
+        """Apply probe values to the session. Returns True when a feature was added."""
         if op == "M466":
             mx = float(CNC.vars.get("mx", 0.0))
             my = float(CNC.vars.get("my", 0.0))
@@ -619,15 +622,17 @@ class ProbeScanPopup(ModalView):
                 source="M466",
             )
             self.session.features.append(f)
+            self._refresh_feature_ui()
+            return True
         elif op in ("M461", "M462"):
             preset = self._m461_preset if op == "M461" else self._m462_preset
             if not preset:
                 self._toast_need_probing_option()
-                return
+                return False
             labels = self._m461_m462_probe_labels(op, preset)
             if labels is None:
                 self._toast_need_probing_option()
-                return
+                return False
             mx = float(CNC.vars.get("mx", 0.0))
             my = float(CNC.vars.get("my", 0.0))
             feat_kwargs: dict[str, object] = {
@@ -640,7 +645,7 @@ class ProbeScanPopup(ModalView):
             if preset in ("CenterBore", "CenterBoss"):
                 tol = self._read_circle_classify_tolerance_mm(op)
                 if tol is None:
-                    return
+                    return False
                 feat_kwargs["tolerance_mm"] = tol
             feats, err = features_from_m461_m462(
                 vd,
@@ -649,8 +654,12 @@ class ProbeScanPopup(ModalView):
             )
             if err is not None:
                 self._toast(tr._(err))
-            elif feats:
-                self.session.features.extend(feats)
+                return False
+            if not feats:
+                return False
+            self.session.features.extend(feats)
+            self._refresh_feature_ui()
+            return True
         elif op in ("M463", "M464"):
             xm = float(vd.get(PROBE_VAR_CENTER_X, 0.0))
             ym = float(vd.get(PROBE_VAR_CENTER_Y, 0.0))
@@ -663,6 +672,8 @@ class ProbeScanPopup(ModalView):
                 wy,
             )
             self.session.features.append(f)
+            self._refresh_feature_ui()
+            return True
         elif op == "M465":
             mx = float(CNC.vars.get("mx", 0.0))
             my = float(CNC.vars.get("my", 0.0))
@@ -677,7 +688,9 @@ class ProbeScanPopup(ModalView):
                 z=wz,
             )
             self.session.features.append(f)
-        self._refresh_feature_ui()
+            self._refresh_feature_ui()
+            return True
+        return False
 
     def _sanitize_feature_ui_state(self):
         avail = {f.id for f in self.session.features}

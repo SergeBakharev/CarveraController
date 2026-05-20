@@ -231,6 +231,16 @@ def _normalized_var_keys(var_keys: list[str]) -> set[str]:
     return {str(k).strip() for k in var_keys if str(k).strip()}
 
 
+def _wcs_axis_unit_delta_mcs(axis: Literal["x", "y"]) -> tuple[float, float]:
+    """Unit displacement in MCS for +1 mm along WCS X or Y (matches firmware G38 rotation)."""
+    theta = math.radians(float(CNC.vars.get("rotation_angle", 0.0)))
+    c = math.cos(theta)
+    s = math.sin(theta)
+    if axis == "x":
+        return c, s
+    return -s, c
+
+
 def _probe_axis_segment_bundle(
     segment_label: str,
     endpoint_a_label: str,
@@ -244,14 +254,11 @@ def _probe_axis_segment_bundle(
     include_center: bool = True,
     source: str,
 ) -> list[ProbeScanFeature]:
-    """Horizontal (axis x) or vertical (axis y) chord: endpoints, segment, optional center."""
+    """Chord along WCS X (axis x) or WCS Y (axis y) through MCS center"""
     half = float(diameter) / 2.0
-    if axis == "x":
-        x1_m, y1_m = cx_m - half, cy_m
-        x2_m, y2_m = cx_m + half, cy_m
-    else:
-        x1_m, y1_m = cx_m, cy_m - half
-        x2_m, y2_m = cx_m, cy_m + half
+    ux, uy = _wcs_axis_unit_delta_mcs(axis)
+    x1_m, y1_m = cx_m - half * ux, cy_m - half * uy
+    x2_m, y2_m = cx_m + half * ux, cy_m + half * uy
     wx1, wy1, _ = mcs_xyz_to_wcs_xyz(x1_m, y1_m, 0.0)
     wx2, wy2, _ = mcs_xyz_to_wcs_xyz(x2_m, y2_m, 0.0)
     pa = ProbeScanFeature.new_point(

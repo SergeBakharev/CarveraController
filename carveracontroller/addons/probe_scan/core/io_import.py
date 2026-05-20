@@ -126,7 +126,7 @@ def import_csv(text: str) -> tuple[ProbeScanSession, ImportReport]:
                     f"Feature {feat_id}: could not parse extra ({e})"
                 )
 
-        _merge_csv_geometry(kind, payload, row, col)
+        _merge_csv_geometry(kind, payload, row, col, report)
 
         features.append(
             ProbeScanFeature(
@@ -148,17 +148,25 @@ def _merge_csv_geometry(
     payload: dict,
     row: dict,
     col: Callable[[dict, str], str],
+    report: ImportReport,
 ) -> None:
     x_s, y_s, z_s, r_s = col(row, "x"), col(row, "y"), col(row, "z"), col(row, "r")
     dx_s, dy_s = col(row, "diameter_x"), col(row, "diameter_y")
+    feat_id = col(row, "id") or "?"
 
-    def _f(s: str) -> float | None:
+    def _f(s: str, field: str) -> float | None:
         if not s:
             return None
-        return float(s)
+        try:
+            return float(s.replace(",", "."))
+        except ValueError:
+            report.warnings.append(
+                f"Feature {feat_id}: invalid number in {field}: {s!r}"
+            )
+            return None
 
     if kind in (FeatureKind.CIRCLE, FeatureKind.DERIVED_CIRCLE, FeatureKind.ELLIPSE):
-        fx, fy, fz = _f(x_s), _f(y_s), _f(z_s)
+        fx, fy, fz = _f(x_s, "x"), _f(y_s, "y"), _f(z_s, "z")
         if fx is not None:
             payload["cx"] = fx
         if fy is not None:
@@ -166,22 +174,22 @@ def _merge_csv_geometry(
         if fz is not None:
             payload["z"] = fz
         if kind == FeatureKind.CIRCLE:
-            fr = _f(r_s)
+            fr = _f(r_s, "r")
             if fr is not None:
                 payload["r"] = fr
         elif kind == FeatureKind.ELLIPSE:
-            fdx, fdy = _f(dx_s), _f(dy_s)
+            fdx, fdy = _f(dx_s, "diameter_x"), _f(dy_s, "diameter_y")
             if fdx is not None:
                 payload["diameter_x"] = fdx
             if fdy is not None:
                 payload["diameter_y"] = fdy
         elif kind == FeatureKind.DERIVED_CIRCLE:
-            fr = _f(r_s)
+            fr = _f(r_s, "r")
             if fr is not None:
                 payload["r"] = fr
         return
 
-    fx, fy, fz = _f(x_s), _f(y_s), _f(z_s)
+    fx, fy, fz = _f(x_s, "x"), _f(y_s, "y"), _f(z_s, "z")
     if fx is not None:
         payload["x"] = fx
     if fy is not None:
@@ -633,7 +641,6 @@ def _import_dxf_derived_points(
     registry: _PointRegistry,
     consumed: set[DXFEntity],
 ) -> None:
-    n = 0
     for ent in entities:
         if ent.dxftype() != "POINT":
             report.warnings.append(
@@ -643,18 +650,12 @@ def _import_dxf_derived_points(
             continue
         consumed.add(ent)
         loc = ent.dxf.location
-        n += 1
-        features.append(
-            ProbeScanFeature(
-                id=str(uuid.uuid4()),
-                kind=FeatureKind.DERIVED_POINT,
-                label=f"DP{n}",
-                payload={
-                    "x": float(loc.x),
-                    "y": float(loc.y),
-                    "z": float(loc.z),
-                },
-            )
+        registry.snap(
+            float(loc.x),
+            float(loc.y),
+            float(loc.z),
+            kind=FeatureKind.DERIVED_POINT,
+            prefix="DP",
         )
 
 
