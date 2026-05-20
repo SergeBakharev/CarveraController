@@ -7,7 +7,7 @@ import io
 import os
 import tempfile
 
-from .feature_resolve import index_by_id, resolve_xy, segment_endpoints
+from .features import index_by_id, resolve_xy, segment_endpoints
 from .session import FeatureKind, ProbeScanSession
 
 DXF_LAYERS = (

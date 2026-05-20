@@ -1,8 +1,4 @@
-"""Pure 2D construction math (no Kivy dependency).
-
-Axis-aligned ellipses only. Ellipse–ellipse intersection and external tangents use
-numeric sampling; results are approximate near degenerate cases.
-"""
+"""Pure 2D construction math"""
 
 from __future__ import annotations
 
@@ -276,9 +272,7 @@ def ellipse_line_intersections_2d(
     *,
     tol: float = 1e-9,
 ) -> list[tuple[float, float]]:
-    """
-    Intersections of axis-aligned ellipse (cx, cy, rx, ry) with infinite line through A and B.
-  """
+    """Intersections of axis-aligned ellipse (cx, cy, rx, ry) with infinite line through A and B."""
     dx, dy = bx - ax, by - ay
     length = math.hypot(dx, dy)
     if length < tol or rx < tol or ry < tol:

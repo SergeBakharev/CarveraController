@@ -16,10 +16,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ezdxf.entities import DXFEntity
 
-from .export_format import DXF_LAYERS
-from .feature_resolve import payload_referenced_feature_ids
+from .io_export import DXF_LAYERS
+from .features import payload_referenced_feature_ids
 from .session import (
-    CoordSys,
     FeatureKind,
     ProbeScanFeature,
     ProbeScanSession,
@@ -133,7 +132,6 @@ def import_csv(text: str) -> tuple[ProbeScanSession, ImportReport]:
                 id=feat_id,
                 kind=kind,
                 label=col(row, "label"),
-                coord_sys=CoordSys.WCS,
                 payload=payload,
             )
         )
@@ -341,7 +339,6 @@ class _PointRegistry:
                 id=str(uuid.uuid4()),
                 kind=FeatureKind.DERIVED_POINT,
                 label=label,
-                coord_sys=CoordSys.WCS,
                 payload={"x": x, "y": y, "z": z},
             )
         else:
@@ -572,7 +569,6 @@ def _import_dxf_derived_circles(
                 id=str(uuid.uuid4()),
                 kind=FeatureKind.DERIVED_CIRCLE,
                 label=f"DC{n}",
-                coord_sys=CoordSys.WCS,
                 payload={
                     "cx": float(center.x),
                     "cy": float(center.y),
@@ -605,7 +601,6 @@ def _import_dxf_derived_points(
                 id=str(uuid.uuid4()),
                 kind=FeatureKind.DERIVED_POINT,
                 label=f"DP{n}",
-                coord_sys=CoordSys.WCS,
                 payload={
                     "x": float(loc.x),
                     "y": float(loc.y),
@@ -636,7 +631,6 @@ def _add_circle_feature(
                 id=str(uuid.uuid4()),
                 kind=kind,
                 label=f"{prefix}{n}",
-                coord_sys=CoordSys.WCS,
                 payload={"cx": cx, "cy": cy, "r": r},
             )
         )

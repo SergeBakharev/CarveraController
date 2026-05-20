@@ -3222,7 +3222,7 @@ class Makera(RelativeLayout):
 
     def _ensure_probe_scan_popup(self):
         if self.probe_scan_popup is None:
-            from carveracontroller.addons.probe_scan.ProbeScanPopup import (
+            from carveracontroller.addons.probe_scan.ui.ProbeScanPopup import (
                 ProbeScanPopup,
             )
 

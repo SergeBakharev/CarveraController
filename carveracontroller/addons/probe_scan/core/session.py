@@ -13,8 +13,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-class CoordSys(str, Enum):
-    WCS = "wcs"
+SESSION_FORMAT_VERSION = 1
 
 
 class FeatureKind(str, Enum):
@@ -36,7 +35,6 @@ class ProbeScanFeature:
     id: str
     kind: FeatureKind
     label: str
-    coord_sys: CoordSys
     payload: dict[str, Any] = field(default_factory=dict)
     created_ts: float = field(default_factory=lambda: time.time())
 
@@ -48,13 +46,11 @@ class ProbeScanFeature:
         z: float,
         *,
         source: str = "wcs",
-        coord_sys: CoordSys = CoordSys.WCS,
     ) -> ProbeScanFeature:
         return ProbeScanFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.POINT,
             label=label,
-            coord_sys=coord_sys,
             payload={
                 "x": x,
                 "y": y,
@@ -69,14 +65,11 @@ class ProbeScanFeature:
         cx: float,
         cy: float,
         r: float,
-        *,
-        coord_sys: CoordSys = CoordSys.WCS,
     ) -> ProbeScanFeature:
         return ProbeScanFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.CIRCLE,
             label=label,
-            coord_sys=coord_sys,
             payload={
                 "cx": cx,
                 "cy": cy,
@@ -91,14 +84,11 @@ class ProbeScanFeature:
         cy: float,
         diameter_x: float,
         diameter_y: float,
-        *,
-        coord_sys: CoordSys = CoordSys.WCS,
     ) -> ProbeScanFeature:
         return ProbeScanFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.ELLIPSE,
             label=label,
-            coord_sys=coord_sys,
             payload={
                 "cx": cx,
                 "cy": cy,
@@ -112,14 +102,11 @@ class ProbeScanFeature:
         label: str,
         x: float,
         y: float,
-        *,
-        coord_sys: CoordSys = CoordSys.WCS,
     ) -> ProbeScanFeature:
         return ProbeScanFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.CORNER,
             label=label,
-            coord_sys=coord_sys,
             payload={"x": x, "y": y},
         )
 
@@ -138,7 +125,6 @@ class ProbeScanFeature:
             id=str(uuid.uuid4()),
             kind=FeatureKind.ANGLE,
             label=label,
-            coord_sys=CoordSys.WCS,
             payload=payload,
         )
 
@@ -148,7 +134,6 @@ class ProbeScanFeature:
             id=str(uuid.uuid4()),
             kind=FeatureKind.SEGMENT,
             label=label,
-            coord_sys=CoordSys.WCS,
             payload={"a_id": str(a_id), "b_id": str(b_id)},
         )
 
@@ -163,7 +148,6 @@ class ProbeScanFeature:
             id=str(uuid.uuid4()),
             kind=FeatureKind.POLYLINE,
             label=label,
-            coord_sys=CoordSys.WCS,
             payload={
                 "vertex_feature_ids": [str(v) for v in vertex_feature_ids],
                 "closed": closed,
@@ -183,7 +167,6 @@ class ProbeScanFeature:
             id=str(uuid.uuid4()),
             kind=FeatureKind.DERIVED_CIRCLE,
             label=label,
-            coord_sys=CoordSys.WCS,
             payload={
                 "source_ids": [a, b, c],
                 "cx": cx,
@@ -204,7 +187,6 @@ class ProbeScanFeature:
             id=str(uuid.uuid4()),
             kind=FeatureKind.DERIVED_POINT,
             label=label,
-            coord_sys=CoordSys.WCS,
             payload={
                 "segment_a_id": str(segment_a_id),
                 "segment_b_id": str(segment_b_id),
@@ -213,9 +195,6 @@ class ProbeScanFeature:
                 "z": 0.0,
             },
         )
-
-
-SESSION_FORMAT_VERSION = 1
 
 
 @dataclass
@@ -262,7 +241,6 @@ class ProbeScanSession:
                 id=row.get("id", str(uuid.uuid4())),
                 kind=kind_enum,
                 label=row.get("label", ""),
-                coord_sys=CoordSys.WCS,
                 payload=dict(row.get("payload", {})),
                 created_ts=float(row.get("created_ts", time.time())),
             )
