@@ -926,12 +926,12 @@
                 Button:
                     text: tr._('Load...')
                     size_hint_x: 1
-                    disabled: root.is_probing
+                    disabled: root.is_probing or not root.can_use_local_file_picker
                     on_release: root.on_load_session()
                 Button:
                     text: tr._('Save as...')
                     size_hint_x: 1
-                    disabled: root.is_probing
+                    disabled: root.is_probing or not root.can_use_local_file_picker
                     on_release: root.open_save_format_dropdown(self)
                 Button:
                     text: tr._('Copy as...')

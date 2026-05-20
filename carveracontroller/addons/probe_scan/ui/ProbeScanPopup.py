@@ -23,6 +23,7 @@ from kivy.factory import Factory
 
 from carveracontroller.CNC import CNC
 from carveracontroller.Controller import Controller
+from carveracontroller.main import is_ios
 from carveracontroller.serial_listeners import (
     register_serial_listener,
     unregister_serial_listener,
@@ -195,6 +196,7 @@ class ProbeScanPopup(ModalView):
 
     is_probing = BooleanProperty(False)
     probing_status_text = StringProperty("")
+    can_use_local_file_picker = BooleanProperty(not is_ios())
 
     # Construction button enable states — recomputed after every selection change.
     can_make_segment = BooleanProperty(False)
