@@ -5721,7 +5721,7 @@ class Makera(RelativeLayout):
         jog_modal_excused = self.probing_popup._is_open or probe_scan_jog_overlay
 
         if app.state == "Run" and self.allow_jogging_while_machine_running == "1":
-            return not self._is_popup_open()
+            return (not self._is_popup_open()) or jog_modal_excused
 
         return (
             not app.playing
