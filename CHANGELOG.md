@@ -15,6 +15,7 @@
 - Fixed: Fit the gcode viewer to the path's bounding box instead of its max X/Y/Z
 - Fixed: Last character of the current file was sometimes missing in the file viewer
 - Fixed: Disable trackpad being treated as touchscreen on Linux
+- Fixed: Jogging was incorrectly blocked/allowed under certain conditions
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 
 [2.1.0]
