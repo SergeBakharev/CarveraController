@@ -5718,14 +5718,11 @@ class Makera(RelativeLayout):
         # except for probing and the probe-scan jog overlay (see allows_external_jog).
         popup_prevents_jogging = self._popup_prevents_jogging()
 
-        if app.state == "Run" and self.allow_jogging_while_machine_running == "1":
-            return not popup_prevents_jogging
-
         return (
-            not app.playing
+            (not app.playing or app.state == "Pause")
             and (
-                app.state in ["Idle", "Run", "Pause"]
-                or (app.playing and app.state == "Pause")
+                app.state in ["Idle", "Pause"]
+                or (app.state == "Run" and self.allow_jogging_while_machine_running == "1")
             )
             and not popup_prevents_jogging
         )
