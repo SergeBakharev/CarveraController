@@ -5705,23 +5705,21 @@ class Makera(RelativeLayout):
         self.probing_popup.ids.step_z.disabled = True
         self.update_pendant_jog_text()
 
+    def _popup_prevents_jogging(self):
+        modals = [self.probing_popup]
+        if self.probe_scan_popup is not None:
+            modals.append(self.probe_scan_popup)
+        return self._is_popup_open() and not any(m.allows_external_jog() for m in modals)
+
     def is_jogging_enabled(self):
         app = App.get_running_app()
-        popup = self.probe_scan_popup
-        jog_popup = getattr(popup, "_jog_popup", None) if popup is not None else None
-        probe_scan_jog_overlay = (
-            popup is not None
-            and popup._is_open
-            and jog_popup is not None
-            and jog_popup._is_open
-            and not popup.is_probing
-        )
+
         # Keyboard/pendant jogging is normally blocked whenever a modal popup is open,
-        # except for probing and the probe-scan "Jog" overlay
-        jog_modal_excused = self.probing_popup._is_open or probe_scan_jog_overlay
+        # except for probing and the probe-scan jog overlay (see allows_external_jog).
+        popup_prevents_jogging = self._popup_prevents_jogging()
 
         if app.state == "Run" and self.allow_jogging_while_machine_running == "1":
-            return (not self._is_popup_open()) or jog_modal_excused
+            return not popup_prevents_jogging
 
         return (
             not app.playing
@@ -5729,7 +5727,7 @@ class Makera(RelativeLayout):
                 app.state in ["Idle", "Run", "Pause"]
                 or (app.playing and app.state == "Pause")
             )
-            and (not self._is_popup_open() or jog_modal_excused)
+            and not popup_prevents_jogging
         )
 
     def is_pendant_jogging_enabled(self):
@@ -5739,7 +5737,7 @@ class Makera(RelativeLayout):
         # ...otherwise behave as any other jogging except when probing screen is
         # open. We want to use the pendant as a convenient way to get to the
         # initial probing location
-        return (self.is_jogging_enabled())# or self.probing_popup._is_open)
+        return self.is_jogging_enabled()
 
     def restore_keyboard_jog_control(self):
         prev = getattr(self, '_pre_probing_keyboard_jog', None)
@@ -5903,8 +5901,7 @@ class Makera(RelativeLayout):
                            self.confirm_popup._is_open, self.unlock_popup._is_open,
                            self.message_popup._is_open, self.progress_popup._is_open, self.input_popup._is_open,
                            self.config_popup._is_open, self.probing_popup._is_open,
-                           (self.probe_scan_popup._is_open
-                            if self.probe_scan_popup is not None else False)]
+                           (self.probe_scan_popup._is_open if self.probe_scan_popup is not None else False)]
 
         return any(popups_to_check)
     

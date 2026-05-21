@@ -359,10 +359,18 @@ class ProbeScanPopup(ModalView):
         except Exception:
             logger.debug("Could not toggle row focus", exc_info=True)
 
+    def is_jog_overlay_open(self) -> bool:
+        jog = self._jog_popup
+        return jog is not None and jog._is_open
+
+    def allows_external_jog(self) -> bool:
+        """Allow keyboard/pendant jog via the probe-scan jog overlay."""
+        return self._is_open and self.is_jog_overlay_open() and not self.is_probing
+
     def open_jog_popup(self, *_args):
         if not self._guard_session_mutation():
             return
-        jog = getattr(self, "_jog_popup", None)
+        jog = self._jog_popup
         if jog is None:
             jog = Factory.JogProbeScanPopup()
             jog.bind(on_open=self._on_jog_modal_open)
@@ -384,9 +392,8 @@ class ProbeScanPopup(ModalView):
         root.toggle_keyboard_jog_control(True)
 
     def _dismiss_jog_popup(self):
-        jog = getattr(self, "_jog_popup", None)
-        if jog is not None:
-            jog.dismiss()
+        if self._jog_popup is not None:
+            self._jog_popup.dismiss()
 
     def on_open(self):
         self._capture = M118ProbeCapture(
