@@ -5797,14 +5797,15 @@ class Makera(RelativeLayout):
 
     def is_jogging_enabled(self):
         app = App.get_running_app()
-        
-        # Allow jogging when machine is running if the setting is enabled
-        if app.state == 'Run' and self.allow_jogging_while_machine_running == '1':
-            return not self._is_popup_open()
-        return \
-            not app.playing and \
-            (app.state in ['Idle', 'Run', 'Pause'] or (app.playing and app.state == 'Pause')) and \
-            not (self._is_popup_open() and not self.probing_popup._is_open)
+
+        return (
+            (not app.playing or app.state == 'Pause')
+            and (
+                app.state in ['Idle', 'Pause']
+                or (app.state == 'Run' and self.allow_jogging_while_machine_running == '1')
+            )
+            and not (self._is_popup_open() and not self.probing_popup._is_open)
+        )
 
     def is_pendant_jogging_enabled(self):
         # If the user disabled pendant, respect it.
