@@ -77,6 +77,7 @@ if "ProbeScanPreviewSketch" not in Factory.classes:
 # Feature list row highlight (canvas.before Color on each row BoxLayout).
 _FEATURE_ROW_FOCUS_RGBA_ON = (0.18, 0.38, 0.58, 0.22)
 _FEATURE_ROW_FOCUS_RGBA_OFF = (0.18, 0.38, 0.58, 0.0)
+_HIDDEN_FEATURE_LABEL_COLOR = "5a5a5f"
 
 _SESSION_FILE_FILTERS = {
     "JSON": ["*.json"],
@@ -94,8 +95,21 @@ class ProbeScanIconToggle(ToggleButton):
         self.background_color = (0, 0, 0, 0)
 
 
+class ProbeScanSketchVisibilityToggle(ProbeScanIconToggle):
+    """Per-row sketch visibility toggle — not in a shared ToggleButton group."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.group = None
+
+
 if "ProbeScanIconToggle" not in Factory.classes:
     Factory.register("ProbeScanIconToggle", cls=ProbeScanIconToggle)
+
+if "ProbeScanSketchVisibilityToggle" not in Factory.classes:
+    Factory.register(
+        "ProbeScanSketchVisibilityToggle", cls=ProbeScanSketchVisibilityToggle
+    )
 
 
 class JogProbeScanPopup(ModalView):
@@ -240,6 +254,9 @@ class ProbeScanPopup(ModalView):
 
     def _on_sketch_feature_tap(self, feat_id: str) -> None:
         """Called by ProbeScanPreviewSketch when the user taps a feature."""
+        feat = next((f for f in self.session.features if f.id == feat_id), None)
+        if feat is None or not feat.sketch_visible:
+            return
         if self._preview_focus_id == feat_id:
             self._preview_focus_id = None
         else:
@@ -281,11 +298,34 @@ class ProbeScanPopup(ModalView):
 
     def _effective_construct_selection(self) -> list[str]:
         """Checkbox selection, or the highlighted feature when no box is checked."""
+        visible = {f.id for f in self.session.features if f.sketch_visible}
         if self._selection_order:
-            return list(self._selection_order)
-        if self._preview_focus_id:
+            return [x for x in self._selection_order if x in visible]
+        if self._preview_focus_id and self._preview_focus_id in visible:
             return [self._preview_focus_id]
         return []
+
+    @staticmethod
+    def _feature_row_label_text(
+        line1: str, line2: str, *, visible: bool, detail_font: float
+    ) -> tuple[str, bool]:
+        title = (
+            line1
+            if visible
+            else f"[color={_HIDDEN_FEATURE_LABEL_COLOR}]{line1}[/color]"
+        )
+        if not line2:
+            return title, not visible
+        detail_color = "78797f" if visible else _HIDDEN_FEATURE_LABEL_COLOR
+        text = (
+            f"{title}\n"
+            f"[color={detail_color}][size={int(round(detail_font))}]"
+            f"{line2}[/size][/color]"
+        )
+        return text, True
+
+    def _sketch_hidden_ids(self) -> set[str]:
+        return {f.id for f in self.session.features if not f.sketch_visible}
 
     def _sync_sketch_preview(self) -> None:
         """Push session/focus/selection into the XY preview sketch."""
@@ -294,6 +334,7 @@ class ProbeScanPopup(ModalView):
                 self.session.features,
                 focus_id=self._preview_focus_id,
                 selection_ids=self._effective_construct_selection(),
+                hidden_ids=self._sketch_hidden_ids(),
             )
         except Exception:
             logger.debug("Could not update sketch preview", exc_info=True)
@@ -307,9 +348,12 @@ class ProbeScanPopup(ModalView):
                 fid = getattr(row, "_probe_feat_id", None)
                 if fc is None or fid is None:
                     continue
+                feat = next((f for f in self.session.features if f.id == fid), None)
                 fc.rgba = (
                     _FEATURE_ROW_FOCUS_RGBA_ON
-                    if fid == fid_focus
+                    if feat is not None
+                    and feat.sketch_visible
+                    and fid == fid_focus
                     else _FEATURE_ROW_FOCUS_RGBA_OFF
                 )
         except Exception:
@@ -703,9 +747,12 @@ class ProbeScanPopup(ModalView):
 
     def _sanitize_feature_ui_state(self):
         avail = {f.id for f in self.session.features}
-        if self._preview_focus_id is not None and self._preview_focus_id not in avail:
+        visible = {f.id for f in self.session.features if f.sketch_visible}
+        if self._preview_focus_id is not None and self._preview_focus_id not in visible:
             self._preview_focus_id = None
-        self._selection_order[:] = [x for x in self._selection_order if x in avail]
+        self._selection_order[:] = [
+            x for x in self._selection_order if x in avail and x in visible
+        ]
 
     def _recompute_construct_buttons(self) -> None:
         states: ConstructButtonStates = compute_construct_button_states(
@@ -724,6 +771,9 @@ class ProbeScanPopup(ModalView):
 
     def _on_feature_row_label_touch(self, feat_id: str, instance: Label, touch):
         if not instance.collide_point(*touch.pos):
+            return False
+        feat = next((f for f in self.session.features if f.id == feat_id), None)
+        if feat is None or not feat.sketch_visible:
             return False
         if self._preview_focus_id == feat_id:
             self._preview_focus_id = None
@@ -758,7 +808,8 @@ class ProbeScanPopup(ModalView):
                     fc = Color(
                         *(
                             _FEATURE_ROW_FOCUS_RGBA_ON
-                            if feat.id == self._preview_focus_id
+                            if feat.sketch_visible
+                            and feat.id == self._preview_focus_id
                             else _FEATURE_ROW_FOCUS_RGBA_OFF
                         )
                     )
@@ -781,21 +832,16 @@ class ProbeScanPopup(ModalView):
                 )
                 cb = CheckBox(size_hint=(1, 1))
                 cb.active = feat.id in self._selection_order
-                cb.disabled = self.is_probing
+                cb.disabled = self.is_probing or not feat.sketch_visible
                 cb.bind(active=partial(self._on_row_checkbox, feat.id))
                 cb_col.add_widget(cb)
 
+                lbl_text, lbl_markup = self._feature_row_label_text(
+                    line1, line2, visible=feat.sketch_visible, detail_font=detail_font
+                )
                 lbl = Label(
-                    text=(
-                        line1
-                        if not line2
-                        else (
-                            f"{line1}\n"
-                            f"[color=78797f][size={int(round(detail_font))}]{line2}[/size]"
-                            f"[/color]"
-                        )
-                    ),
-                    markup=bool(line2),
+                    text=lbl_text,
+                    markup=lbl_markup,
                     font_size=title_font,
                     size_hint_x=1,
                     size_hint_min_x=dp(120),
@@ -812,6 +858,18 @@ class ProbeScanPopup(ModalView):
 
                 row.add_widget(cb_col)
                 row.add_widget(lbl)
+                vis_btn = ProbeScanSketchVisibilityToggle(
+                    image="data/eye.png",
+                    size_hint_x=None,
+                    width=dp(32),
+                    state="down" if feat.sketch_visible else "normal",
+                    disabled=self.is_probing,
+                )
+                vis_btn.opacity = 1.0 if feat.sketch_visible else 0.38
+                vis_btn.bind(
+                    on_release=partial(self._on_sketch_visibility_toggle, feat.id)
+                )
+                row.add_widget(vis_btn)
                 rename_btn = Button(
                     text=tr._("Rename"),
                     size_hint_x=None,
@@ -838,9 +896,32 @@ class ProbeScanPopup(ModalView):
         except Exception:
             logger.debug("Could not refresh feature UI", exc_info=True)
 
+    def _on_sketch_visibility_toggle(self, fid: str, widget, *_args) -> None:
+        feat = next((f for f in self.session.features if f.id == fid), None)
+        if feat is None:
+            return
+        visible = widget.state == "down"
+        if feat.sketch_visible == visible:
+            return
+        feat.sketch_visible = visible
+        widget.opacity = 1.0 if visible else 0.38
+        if not visible:
+            if fid in self._selection_order:
+                self._selection_order[:] = [
+                    x for x in self._selection_order if x != fid
+                ]
+            if self._preview_focus_id == fid:
+                self._preview_focus_id = None
+            self._recompute_construct_buttons()
+        self._refresh_feature_ui()
+
     def _on_row_checkbox(self, fid: str, _widget, active: bool):
         if not self._guard_session_mutation():
             _widget.active = not active
+            return
+        feat = next((f for f in self.session.features if f.id == fid), None)
+        if feat is None or not feat.sketch_visible:
+            _widget.active = False
             return
         if active:
             if fid not in self._selection_order:

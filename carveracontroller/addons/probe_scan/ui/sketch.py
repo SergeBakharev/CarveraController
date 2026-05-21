@@ -57,6 +57,7 @@ class ProbeScanPreviewSketch(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._features: list[ProbeScanFeature] = []
+        self._hidden_ids: set[str] = set()
         self._focus_id: str | None = None
         self._selection_ids: list[str] = []
         # Last computed transform parameters – set during _redraw, used by hit-test.
@@ -76,11 +77,16 @@ class ProbeScanPreviewSketch(Widget):
         *,
         focus_id: str | None = None,
         selection_ids: list[str] | None = None,
+        hidden_ids: set[str] | None = None,
     ):
         self._features = list(feats)
+        self._hidden_ids = set(hidden_ids) if hidden_ids else set()
         self._focus_id = focus_id
         self._selection_ids = list(selection_ids) if selection_ids is not None else []
         self._redraw()
+
+    def _is_visible(self, f: ProbeScanFeature) -> bool:
+        return f.id not in self._hidden_ids
 
     def _draw_texture_label(
         self,
@@ -229,6 +235,8 @@ class ProbeScanPreviewSketch(Widget):
         best_id: str | None = None
         best_dist = float("inf")
         for f in self._features:
+            if not self._is_visible(f):
+                continue
             d = self._distance_to_feature_px(f, by_id, tx, ty)
             hr = self._hit_radius_for_feature(f, by_id)
             if d <= hr and d < best_dist:
@@ -392,7 +400,7 @@ class ProbeScanPreviewSketch(Widget):
         font_size = max(dp(11), min(dp(16), abs(scale) * 0.38))
         for ord_idx, fid in enumerate(self._selection_ids):
             sf = by_id.get(fid)
-            if sf is None:
+            if sf is None or not self._is_visible(sf):
                 continue
             anchor = self._selection_badge_anchor_px(sf, by_id, px)
             if anchor is None:
@@ -436,6 +444,8 @@ class ProbeScanPreviewSketch(Widget):
         ys: list[float] = []
         by_id = index_by_id(self._features)
         for f in self._features:
+            if not self._is_visible(f):
+                continue
             geom = resolve_geometry(f, by_id)
             if isinstance(geom, (PointGeom, LabelGeom)):
                 xs.append(geom.x)
@@ -520,7 +530,9 @@ class ProbeScanPreviewSketch(Widget):
             by_id = index_by_id(self._features)
             # Precompute all geometries once for both drawing passes.
             feature_geoms: list[tuple[ProbeScanFeature, FeatureGeom]] = [
-                (f, resolve_geometry(f, by_id)) for f in self._features
+                (f, resolve_geometry(f, by_id))
+                for f in self._features
+                if self._is_visible(f)
             ]
 
             # First pass: constructed/derived geometry (drawn underneath)
@@ -606,14 +618,14 @@ class ProbeScanPreviewSketch(Widget):
             # Selection highlights and order badges
             for ord_idx, fid in enumerate(self._selection_ids):
                 sf = by_id.get(fid)
-                if sf is None:
+                if sf is None or not self._is_visible(sf):
                     continue
                 col = _SEL_ORDER_PALETTE[ord_idx % len(_SEL_ORDER_PALETTE)]
                 self._draw_feature_highlight(sf, by_id, px, scale, col, 2.2)
 
             if self._focus_id:
                 ff = by_id.get(self._focus_id)
-                if ff is not None:
+                if ff is not None and self._is_visible(ff):
                     self._draw_feature_highlight(
                         ff, by_id, px, scale, (1.0, 1.0, 1.0, 0.93), 3.0
                     )

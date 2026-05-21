@@ -37,6 +37,7 @@ class ProbeScanFeature:
     label: str
     payload: dict[str, Any] = field(default_factory=dict)
     created_ts: float = field(default_factory=lambda: time.time())
+    sketch_visible: bool = True
 
     @staticmethod
     def new_point(
@@ -224,6 +225,7 @@ class ProbeScanSession:
                     "label": f.label,
                     "payload": f.payload,
                     "created_ts": f.created_ts,
+                    "sketch_visible": f.sketch_visible,
                 }
                 for f in self.features
             ],
@@ -251,6 +253,7 @@ class ProbeScanSession:
                 label=row.get("label", ""),
                 payload=dict(row.get("payload", {})),
                 created_ts=float(row.get("created_ts", time.time())),
+                sketch_visible=bool(row.get("sketch_visible", True)),
             )
             feats.append(feat)
         return cls(
