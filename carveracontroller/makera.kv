@@ -2,6 +2,7 @@
 #:import Factory kivy.factory.Factory
 #:import digitize_v carveracontroller.Utils.digitize_v
 #:import tr carveracontroller.__main__.tr
+#:import play_progress_bar carveracontroller.ui.PlayProgressBar
 #:include addons/tooltips/Tooltips.kv
 #:include addons/probing/ProbingPopup.kv
 
@@ -4455,7 +4456,7 @@
                         size_hint_x: None
                         width: '25dp'
                         color: 244/255, 208/255, 63/255, 1
-                    WideProgressBar:
+                    PlayProgressBar:
                         id: wpb_play
                         Label:
                             size_hint_x: None

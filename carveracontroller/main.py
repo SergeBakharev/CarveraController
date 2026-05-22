@@ -208,6 +208,7 @@ from . import custom_widgets
 from kivy.config import ConfigParser
 from .CNC import CNC, highlight_gcode_line, escape_gcode_markup, GCODE_DEFAULT_COLORS
 from .GcodeViewer import GCodeViewer
+from .ui.PlayProgressBar import tool_change_markers_to_percents
 from .Controller import Controller, NOT_CONNECTED, STATECOLOR, STATECOLORDEF,\
     LOAD_DIR, LOAD_MV, LOAD_RM, LOAD_MKDIR, LOAD_WIFI, LOAD_CONN_WIFI, CONN_USB, CONN_WIFI, SEND_FILE
 from .__version__ import __version__
@@ -2775,7 +2776,8 @@ class Makera(RelativeLayout):
 
     used_tools = ListProperty()
     upcoming_tool = 0
-    
+    tool_change_markers = []
+
     # Custom property to monitor CNC light state
     light_state = LightProperty(False)
 
@@ -6299,14 +6301,30 @@ class Makera(RelativeLayout):
         self.wpb_play.value = 0
         self.used_tools = []
         self.upcoming_tool = 0
+        self._clear_tool_change_markers()
         app = App.get_running_app()
         app.curr_page = 1
         app.total_pages = 1
         self.updateStatus()
 
     # ------------------------------------------------------------------------
+    def _clear_play_bar_tool_markers(self, *args):
+        if hasattr(self, 'wpb_play') and self.wpb_play:
+            self.wpb_play.tool_markers = []
+
+    def _clear_tool_change_markers(self):
+        self.tool_change_markers = []
+        self._clear_play_bar_tool_markers()
+
+    def _apply_tool_change_markers(self):
+        if not hasattr(self, 'wpb_play') or not self.wpb_play:
+            return
+        self.wpb_play.tool_markers = tool_change_markers_to_percents(self.tool_change_markers, self.selected_file_line_count)
+
+    # ------------------------------------------------------------------------
     def load_start(self, *args):
         self.loading_file = True
+        self._clear_play_bar_tool_markers()
         self.cmd_manager.transition.direction = 'right'
         self.cmd_manager.current = 'gcode_cmd_page'
         self.gcode_rv.data = []
@@ -6380,6 +6398,7 @@ class Makera(RelativeLayout):
 
     # ------------------------------------------------------------------------
     def load_error(self, error_msg, *args):
+        self._clear_tool_change_markers()
         self.progress_popup.dismiss()
         self.message_popup.lb_content.text = error_msg
         self.message_popup.open(self)
@@ -6431,6 +6450,7 @@ class Makera(RelativeLayout):
 
         self.updateStatus()
         self.loading_file = False
+        self._apply_tool_change_markers()
 
         # Scroll to top of program that we just loaded
         self.gcode_rv.scroll_y = 1
@@ -6455,6 +6475,7 @@ class Makera(RelativeLayout):
         self.load_event.set()
         self.upcoming_tool = 0
         self.used_tools = []
+        self.tool_change_markers = []
         Clock.schedule_once(self.load_start)
         f = None
         try:
@@ -6490,11 +6511,20 @@ class Makera(RelativeLayout):
             for line in self.lines:
                 if self.load_canceled:
                     break
+                prev_tool = self.cnc.tool
                 self.cnc.parseLine(line, line_no)
                 if self.upcoming_tool == 0:
                     self.upcoming_tool = self.cnc.tool
                 if self.cnc.tool not in self.used_tools:
                     self.used_tools.append(self.cnc.tool)
+                tool_change_label = None
+                if self.cnc.mval == 321:
+                    tool_change_label = 'L'
+                elif self.cnc.tool >= 1 and self.cnc.tool != prev_tool:
+                    tool_change_label = 'T%d' % self.cnc.tool
+                if tool_change_label is not None:
+                    if not (self.tool_change_markers and self.tool_change_markers[-1][1] == tool_change_label):
+                        self.tool_change_markers.append((line_no, tool_change_label))
 
                 if line_no % LOAD_INTERVAL == 0 or line_no == self.selected_file_line_count:
                     parsed_list = self.cnc.coordinates
