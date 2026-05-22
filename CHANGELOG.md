@@ -17,6 +17,7 @@
 - Fixed: Disable trackpad being treated as touchscreen on Linux
 - Fixed: Jogging was incorrectly blocked/allowed under certain conditions
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
+- Change: Resume playback will now use gcode loaded in the controller instead of cached local file
 
 [2.1.0]
 - Enhancement: Add right-click menu option to clear resume-at-line setting
