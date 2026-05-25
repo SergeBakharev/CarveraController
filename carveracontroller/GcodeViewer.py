@@ -141,7 +141,6 @@ def vec3_distance(v1, v2):
 
 GRID_STEP_MM = 10.0
 GRID_MAJOR_STEP_MM = 100.0
-GRID_PAD_MM = 10.0
 GRID_COLOR_MINOR = [0.35, 0.35, 0.35]
 GRID_COLOR_MAJOR = [0.55, 0.55, 0.55]
 # axis.obj points along +Y; rotations map meshes to world axes (see axis arrow setup)
@@ -212,73 +211,7 @@ def speed_colormap_rgb(t):
     return (a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u)
 
 
-def _is_major_grid_line(coord, step=GRID_MAJOR_STEP_MM):
-    rem = abs(coord) % step
-    return rem < 1e-3 or abs(rem - step) < 1e-3
-
-
-def _matrix_transform4(m, x, y, z, w=1.0):
-    return (
-        x * m[0] + y * m[4] + z * m[8] + w * m[12],
-        x * m[1] + y * m[5] + z * m[9] + w * m[13],
-        x * m[2] + y * m[6] + z * m[10] + w * m[14],
-        x * m[3] + y * m[7] + z * m[11] + w * m[15],
-    )
-
-
-def _matrix_apply_perspective(m, x, y, z, w=1.0):
-    tx, ty, tz, tw = _matrix_transform4(m, x, y, z, w)
-    if abs(tw) > 1e-8:
-        inv_w = 1.0 / tw
-        return tx * inv_w, ty * inv_w, tz * inv_w
-    return tx, ty, tz
-
-
-def build_xy_grid_mesh(min_pt, max_pt, scale, z_plane=0.0):
-    """Build a line-list mesh for an XY grid in scaled viewer coordinates."""
-    if not all(isfinite(v) for v in min_pt + max_pt):
-        return [], []
-
-    x0 = floor((min_pt[0] - GRID_PAD_MM) / GRID_STEP_MM) * GRID_STEP_MM
-    x1 = ceil((max_pt[0] + GRID_PAD_MM) / GRID_STEP_MM) * GRID_STEP_MM
-    y0 = floor((min_pt[1] - GRID_PAD_MM) / GRID_STEP_MM) * GRID_STEP_MM
-    y1 = ceil((max_pt[1] + GRID_PAD_MM) / GRID_STEP_MM) * GRID_STEP_MM
-
-    verts = []
-    indices = []
-    idx = 0
-    z = z_plane * scale
-
-    def add_line(x1, y1, x2, y2, color):
-        nonlocal idx
-        verts.extend([x1 * scale, y1 * scale, z, color[0], color[1], color[2]])
-        verts.extend([x2 * scale, y2 * scale, z, color[0], color[1], color[2]])
-        indices.extend([idx, idx + 1])
-        idx += 2
-
-    x = x0
-    while x <= x1 + 1e-6:
-        if abs(x) < 1e-3:
-            color = AXIS_COLOR_Y
-        elif _is_major_grid_line(x):
-            color = GRID_COLOR_MAJOR
-        else:
-            color = GRID_COLOR_MINOR
-        add_line(x, y0, x, y1, color)
-        x += GRID_STEP_MM
-
-    y = y0
-    while y <= y1 + 1e-6:
-        if abs(y) < 1e-3:
-            color = AXIS_COLOR_X
-        elif _is_major_grid_line(y):
-            color = GRID_COLOR_MAJOR
-        else:
-            color = GRID_COLOR_MINOR
-        add_line(x0, y, x1, y, color)
-        y += GRID_STEP_MM
-
-    return verts, indices
+GRID_QUAD_MIN_SIZE = 10.0
 
 
 class MeshManager():
@@ -894,7 +827,7 @@ class GCodeViewer(Widget):
     off_y = 0
 
     orbit = True
-    _grid_visible = False
+    _grid_visible = True
     color_scheme = COLOR_SCHEME_BY_TYPE
     feed_min = 0.0
     feed_max = DEFAULT_FEED_MM_MIN
@@ -906,6 +839,7 @@ class GCodeViewer(Widget):
 
         self.gridmesh = RenderContext()
         self.gridmesh.shader.source = os.path.join(shader_dir, 'grid.glsl')
+        self._setup_grid_quad()
 
         self.linemesh = RenderContext()
         self.linemesh.shader.source = os.path.join(shader_dir, 'toolpath.glsl')
@@ -935,8 +869,8 @@ class GCodeViewer(Widget):
         self._axis_y_rot = Matrix().rotate(0.5 * math.pi, 1, 0, 0)
         self._axis_z_rot = Matrix().rotate(-0.5 * math.pi, 0, 0, 1)
         self._proj_matrix = Matrix()
-        self._grid_dirty = True
-        self._grid_visible = False
+        self.m_viewMatrix = Matrix()
+        self._grid_visible = True
         self._viewer_meshes_active = False
 
         self.bind(size=self._on_size_change, pos=self._on_size_change)
@@ -949,7 +883,6 @@ class GCodeViewer(Widget):
     def _on_size_change(self, *args):
         self._proj_dirty = True
         self._scene_dirty = True
-        self._grid_dirty = True
 
     def _get_line_vertex_fmt(self):
         return [
@@ -963,17 +896,25 @@ class GCodeViewer(Widget):
         ]
 
     def _get_grid_vertex_fmt(self):
-        return [
-            (b'position', 3, 'float'),
-            (b'color_att', 3, 'float'),
-        ]
+        return [(b'position', 3, 'float')]
 
-    def _grid_on_canvas(self):
-        return self.gridmesh in self.canvas.children
+    def _setup_grid_quad(self):
+        """Single quad on the XY plane; grid lines are drawn in the fragment shader."""
+        verts = [-0.5, -0.5, 0.0, 0.5, -0.5, 0.0, -0.5, 0.5, 0.0, 0.5, 0.5, 0.0]
+        indices = [0, 1, 2, 2, 1, 3]
+        self.gridmesh.clear()
+        with self.gridmesh:
+            self.cb = Callback(self.setup_gl_context)
+            Mesh(
+                fmt=self._get_grid_vertex_fmt(),
+                vertices=verts,
+                indices=indices,
+                mode='triangles',
+            )
+            self.cb = Callback(None)
 
     def _add_canvas_children(self):
-        if self._grid_visible:
-            self.canvas.add(self.gridmesh)
+        self.canvas.add(self.gridmesh)
         self.canvas.add(self.linemesh)
         self.canvas.add(self.pointermesh)
         self.canvas.add(self.axisxmesh)
@@ -981,66 +922,24 @@ class GCodeViewer(Widget):
         self.canvas.add(self.axiszmesh)
         self._viewer_meshes_active = True
 
-    def _setup_grid_mesh(self, min_pt, max_pt, position_scale):
-        self.gridmesh.clear()
-        verts, indices = build_xy_grid_mesh(min_pt, max_pt, position_scale)
-        if not verts:
-            return
-        with self.canvas:
-            with self.gridmesh:
-                self.cb = Callback(self.setup_gl_context)
-                Mesh(fmt=self._get_grid_vertex_fmt(), vertices=verts, indices=indices, mode='lines')
-                self.cb = Callback(None)
+    def _grid_quad_extent(self):
+        """World-space quad width so the plane covers the viewport when orbiting."""
+        asp = self.size[0] / max(self.size[1], 1.0)
+        return max(self.m_distance * self.m_zoom * max(asp, 1.0) * 4.0, GRID_QUAD_MIN_SIZE)
 
     def _update_grid_uniforms(self):
-        self.gridmesh['center_offset'] = Matrix().translate(
-            -self.lines_center[0], -self.lines_center[1], -self.lines_center[2])
+        scale = self.move_scale_by_positon if self.move_scale_by_positon else 1.0
+        center = getattr(self, 'lines_center', [0.0, 0.0, 0.0])
+        self.gridmesh['center_offset'] = Matrix().translate(-center[0], -center[1], -center[2])
         self.gridmesh['view_mat'] = self.m_viewMatrix
-
-    def _compute_visible_grid_bounds_mm(self, z_plane_scaled=0.0):
-        """XY bounds (mm) of the Z plane visible in the current viewport."""
-        scale = self.move_scale_by_positon if self.move_scale_by_positon else 1.0
-        center_mat = Matrix().translate(-self.lines_center[0], -self.lines_center[1], -self.lines_center[2])
-        mvp = self._proj_matrix.multiply(self.m_viewMatrix).multiply(center_mat)
-        try:
-            inv_m = Matrix(mvp).inverse().get()
-        except Exception:
-            span = 500.0 / scale
-            return [-span, -span, 0.0], [span, span, 0.0]
-
-        hits = []
-        for ndc_x, ndc_y in ((-0.995, -0.995), (0.995, -0.995), (0.995, 0.995), (-0.995, 0.995)):
-            p_near = _matrix_apply_perspective(inv_m, ndc_x, ndc_y, -1.0, 1.0)
-            p_far = _matrix_apply_perspective(inv_m, ndc_x, ndc_y, 1.0, 1.0)
-            dz = p_far[2] - p_near[2]
-            if abs(dz) < 1e-8:
-                continue
-            t = (z_plane_scaled - p_near[2]) / dz
-            hit = (
-                p_near[0] + (p_far[0] - p_near[0]) * t,
-                p_near[1] + (p_far[1] - p_near[1]) * t,
-                z_plane_scaled,
-            )
-            hits.append(hit)
-
-        if not hits:
-            span = 500.0 / scale
-            return [-span, -span, 0.0], [span, span, 0.0]
-
-        pad_mm = GRID_MAJOR_STEP_MM
-        x0 = min(h[0] for h in hits) / scale - pad_mm
-        x1 = max(h[0] for h in hits) / scale + pad_mm
-        y0 = min(h[1] for h in hits) / scale - pad_mm
-        y1 = max(h[1] for h in hits) / scale + pad_mm
-        return [x0, y0, 0.0], [x1, y1, 0.0]
-
-    def _rebuild_view_grid(self):
-        if not self._viewer_meshes_active or not self._grid_visible:
-            return
-        scale = self.move_scale_by_positon if self.move_scale_by_positon else 1.0
-        min_pt, max_pt = self._compute_visible_grid_bounds_mm()
-        self._setup_grid_mesh(min_pt, max_pt, scale)
-        self._update_grid_uniforms()
+        self.gridmesh['grid_visible'] = 1.0 if self._grid_visible else 0.0
+        self.gridmesh['grid_size'] = float(self._grid_quad_extent())
+        self.gridmesh['subcell_size'] = float(GRID_STEP_MM * scale)
+        self.gridmesh['cell_size'] = float(GRID_MAJOR_STEP_MM * scale)
+        self.gridmesh['color_minor'] = GRID_COLOR_MINOR
+        self.gridmesh['color_major'] = GRID_COLOR_MAJOR
+        self.gridmesh['color_axis_x'] = AXIS_COLOR_X
+        self.gridmesh['color_axis_y'] = AXIS_COLOR_Y
 
     def clearDisplay(self):
         self.lengths = []
@@ -1052,9 +951,7 @@ class GCodeViewer(Widget):
         self.raw_feed_rates = []
         self.linemesh.clear()
         self.canvas.remove(self.linemesh)
-        if self._grid_on_canvas():
-            self.canvas.remove(self.gridmesh)
-        self.gridmesh.clear()
+        self.canvas.remove(self.gridmesh)
         self.canvas.remove(self.pointermesh)
         self.pointermesh.clear()
         self.canvas.remove(self.axisxmesh)
@@ -1116,8 +1013,6 @@ class GCodeViewer(Widget):
         if (self.is_4_axis):
             self.rotate_line_or_knife = True
 
-
-        self._grid_dirty = True
 
         with self.canvas:
             with self.linemesh:
@@ -1273,8 +1168,6 @@ class GCodeViewer(Widget):
             if (self.is_4_axis):
                 self.rotate_line_or_knife = True
 
-
-            self._grid_dirty = True
 
             with self.canvas:
                 with self.linemesh:
@@ -1763,8 +1656,6 @@ class GCodeViewer(Widget):
         if(self.is_4_axis):
             self.rotate_line_or_knife = True
 
-        self._grid_dirty = True
-
         with self.canvas:
             
             with self.linemesh:
@@ -1840,9 +1731,9 @@ class GCodeViewer(Widget):
         zoomidx = self.m_zoom
         proj.view_clip((-0.5 + self.m_xPan) * asp * zoomidx, (0.5 + self.m_xPan) * asp * zoomidx, (-0.5 + self.m_yPan)*zoomidx, (0.5 + self.m_yPan)*zoomidx, 2, self.m_distance * 2,1)
         self._proj_matrix = proj
-        self._grid_dirty = True
         self.linemesh['proj_mat'] = proj
         self.gridmesh['proj_mat'] = proj
+        self._update_grid_uniforms()
         self.pointermesh['projection_mat'] = proj
         self.axisxmesh['projection_mat'] = proj
         self.axisymesh['projection_mat'] = proj
@@ -1861,12 +1752,13 @@ class GCodeViewer(Widget):
             math.cos(angX))
         up = normalize(up)
         self.m_viewMatrix=Matrix().look_at(eye[0],eye[1],eye[2], center[0],center[1],center[2],up[0],up[1],up[2])
-        self._grid_dirty = True
+        self._update_grid_uniforms()
 
 
     def setup_gl_context(self, *args):
         glViewport(self.pos[0]+self.off_x,self.pos[1]+self.off_y,self.size[0],self.size[1])
         glEnable(GL_DEPTH_TEST)
+
     def reset_gl_context(self, *args):
         glDisable(GL_DEPTH_TEST)
         glViewport(0,0,Window.size[0],Window.size[1])
@@ -2150,10 +2042,6 @@ class GCodeViewer(Widget):
             self.update_proj()
             self._proj_dirty = False
 
-        if self._grid_visible and self._grid_dirty:
-            self._rebuild_view_grid()
-            self._grid_dirty = False
-
         if self.lengths is None or len(self.lengths) <= 1:
             #data is not loaded yet
             return
@@ -2213,8 +2101,7 @@ class GCodeViewer(Widget):
         self.linemesh['rotation_mat'] = self._identity_mat
         
         self.linemesh['view_mat'] = self.m_viewMatrix
-        if self._grid_visible and self._grid_on_canvas():
-            self.gridmesh['view_mat'] = self.m_viewMatrix
+        self._update_grid_uniforms()
 
         pointer_updated_pos = 3*int(line_index_withratio)
         
@@ -2372,14 +2259,7 @@ class GCodeViewer(Widget):
         if visible == self._grid_visible:
             return
         self._grid_visible = visible
-        if not self._viewer_meshes_active:
-            return
-        if visible:
-            if not self._grid_on_canvas():
-                self.canvas.insert(0, self.gridmesh)
-            self._grid_dirty = True
-        elif self._grid_on_canvas():
-            self.canvas.remove(self.gridmesh)
+        self._update_grid_uniforms()
         self._scene_dirty = True
 
     def is_grid_visible(self):
