@@ -894,7 +894,7 @@ class GCodeViewer(Widget):
     off_y = 0
 
     orbit = True
-    _grid_visible = True
+    _grid_visible = False
     color_scheme = COLOR_SCHEME_BY_TYPE
     feed_min = 0.0
     feed_max = DEFAULT_FEED_MM_MIN
@@ -936,7 +936,7 @@ class GCodeViewer(Widget):
         self._axis_z_rot = Matrix().rotate(-0.5 * math.pi, 0, 0, 1)
         self._proj_matrix = Matrix()
         self._grid_dirty = True
-        self._grid_visible = True
+        self._grid_visible = False
         self._viewer_meshes_active = False
 
         self.bind(size=self._on_size_change, pos=self._on_size_change)
