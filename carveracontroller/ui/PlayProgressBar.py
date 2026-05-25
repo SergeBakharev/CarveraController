@@ -137,6 +137,12 @@ class PlayProgressBar(BoxLayout):
     def _track_width(self):
         return max(0, self.width - dp(5)) if self.width > 0 else 0
 
+    def _fill_offset(self):
+        return dp(5)
+
+    def _position_for_percent(self, track_w, percent):
+        return track_w * percent / 100.0 + self._fill_offset()
+
     def _update_fill_color(self, instance, value):
         self._fill_color.rgba = value
 
@@ -145,15 +151,16 @@ class PlayProgressBar(BoxLayout):
         bar_h = self.height if self.width > 0 else 0
         self._bg_rect.pos = self.pos
         self._bg_rect.size = (track_w, bar_h)
-        fill_w = track_w * (self.value / 100.0) + dp(5) if self.width > 0 else 0
+        fill_w = self._position_for_percent(track_w, self.value) if self.width > 0 else 0
         self._fill_rect.pos = self.pos
         self._fill_rect.size = (fill_w, bar_h)
         self._update_markers(None, self.tool_markers)
 
     def _prepare_marker_draw_items(self, value, track_w):
+        layout_w = track_w + self._fill_offset()
         items = []
         for percent, label in value:
-            local_x = track_w * percent / 100.0
+            local_x = self._position_for_percent(track_w, percent)
             label_bg_color = _marker_label_bg_color(label)
             core = CoreLabel(
                 text=label,
@@ -176,7 +183,7 @@ class PlayProgressBar(BoxLayout):
                 'row': 0,
                 'show_label': True,
             })
-        return _layout_tool_marker_labels(items, track_w)
+        return _layout_tool_marker_labels(items, layout_w)
 
     def _label_y_for_row(self, oy, row, label_h):
         row_top = oy + self.height - dp(1) - (row + 1) * self.LABEL_ROW_H
