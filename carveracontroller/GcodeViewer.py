@@ -58,6 +58,7 @@ def normalize_angle(angle):
     return angle
 
 ZOOMSTEP = 1.1
+DEFAULT_ZOOM = 0.65
 M_PI = 3.141592653
 MESH_LINE_CHUNK = 65500 # Max G-code lines per line_strip mesh (65500 vertices)
 
@@ -798,7 +799,7 @@ class GCodeViewer(Widget):
     m_xRotTarget = 90
     m_yRotTarget = 0
 
-    m_zoom = 1
+    m_zoom = DEFAULT_ZOOM
 
     m_xPan = 0
     m_yPan = 0
@@ -1076,6 +1077,7 @@ class GCodeViewer(Widget):
 
         self.pointermesh['offset'] = (-self.lines_center[0], -self.lines_center[1], -self.lines_center[2])
 
+        self.m_zoom = DEFAULT_ZOOM
         self.update_proj()
         self.update_view()
         self._scene_dirty = True
@@ -1232,6 +1234,7 @@ class GCodeViewer(Widget):
 
             self.pointermesh['offset'] = (-self.lines_center[0], -self.lines_center[1], -self.lines_center[2])
 
+            self.m_zoom = DEFAULT_ZOOM
             self.update_proj()
             self.update_view()
             self._scene_dirty = True
@@ -1721,12 +1724,13 @@ class GCodeViewer(Widget):
         self.pointermesh['offset'] = (-vert_center[0],-vert_center[1],-vert_center[2])
         self.lines_center = vert_center
 
+        self.m_zoom = DEFAULT_ZOOM
         self.update_proj()
         self.update_view()
         self._scene_dirty = True
 
     def update_proj(self):
-        asp = self.size[0] / self.size[1] 
+        asp = self.size[0] / max(self.size[1], 1.0)
         proj = Matrix()
         zoomidx = self.m_zoom
         proj.view_clip((-0.5 + self.m_xPan) * asp * zoomidx, (0.5 + self.m_xPan) * asp * zoomidx, (-0.5 + self.m_yPan)*zoomidx, (0.5 + self.m_yPan)*zoomidx, 2, self.m_distance * 2,1)
@@ -1992,7 +1996,7 @@ class GCodeViewer(Widget):
         self.m_zLookAt = 0
         self.m_xRot = 30
         self.m_yRot = 180
-        self.m_zoom = 1
+        self.m_zoom = DEFAULT_ZOOM
         self.m_xPan = 0
         self.m_yPan = 0
         self.update_proj()
