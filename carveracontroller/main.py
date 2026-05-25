@@ -208,7 +208,7 @@ from . import custom_widgets
 from kivy.config import ConfigParser
 from .CNC import CNC, highlight_gcode_line, escape_gcode_markup, GCODE_DEFAULT_COLORS
 from .GcodeViewer import GCodeViewer
-from .ui.PlayProgressBar import tool_change_markers_to_percents
+from .ui.PlayProgressBar import play_percent_from_line, tool_change_markers_to_percents
 from .Controller import Controller, NOT_CONNECTED, STATECOLOR, STATECOLORDEF,\
     LOAD_DIR, LOAD_MV, LOAD_RM, LOAD_MKDIR, LOAD_WIFI, LOAD_CONN_WIFI, CONN_USB, CONN_WIFI, SEND_FILE
 from .__version__ import __version__
@@ -3924,7 +3924,7 @@ class Makera(RelativeLayout):
         # Use playedlines if available, otherwise use the last tracked played_lines
         last_line = CNC.vars["playedlines"] if CNC.vars["playedlines"] > 0 else self.played_lines
         if last_line > 0:
-            self.update_resume_at_line_from_played_line(last_line, CNC.vars["playedpercent"])
+            self.update_resume_at_line_from_played_line(last_line, play_percent_from_line(last_line, self.selected_file_line_count))
 
         alarm_msg = CNC.vars.get("alarm_message", "")
 
@@ -5331,7 +5331,10 @@ class Makera(RelativeLayout):
                 # not playing - check if we were playing before (interrupted playback)
                 if self.played_lines > 0:
                     # Playback was interrupted, update resume at line with last executed line
-                    self.update_resume_at_line_from_played_line(self.played_lines, CNC.vars["playedpercent"])
+                    self.update_resume_at_line_from_played_line(
+                        self.played_lines,
+                        play_percent_from_line(self.played_lines, self.selected_file_line_count)
+                    )
                     self.played_lines = 0  # Reset after updating
                 
                 app.playing = False
@@ -5359,7 +5362,7 @@ class Makera(RelativeLayout):
                 app.playing = True
                 if self.played_lines != CNC.vars["playedlines"]:
                     self.played_lines = CNC.vars["playedlines"]
-                    self.wpb_play.value = CNC.vars["playedpercent"]
+                    self.wpb_play.value = play_percent_from_line(self.played_lines, self.selected_file_line_count)
                     if (app.selected_remote_filename != '' or app.selected_local_filename != '') and self.selected_file_line_count > 0:
                         self.gcode_rv.set_selected_line(self.played_lines)
                         self.gcode_viewer.set_distance_by_lineidx(self.played_lines, 0.5)

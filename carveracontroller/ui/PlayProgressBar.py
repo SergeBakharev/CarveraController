@@ -21,13 +21,18 @@ TOOL_MARKER_LABEL_BG_PALETTE = (
     (152 / 255, 214 / 255, 170 / 255, 1),
 )
 
+def play_percent_from_line(line_no, line_count):
+    if line_count <= 0 or line_no <= 0:
+        return 0.0
+    return min(100.0, line_no / float(line_count) * 100.0)
+
+
 def tool_change_markers_to_percents(markers, line_count):
     if line_count <= 0:
         return []
     percents = []
     for line_no, label in markers:
-        percent = line_no / float(line_count) * 100.0
-        percents.append((percent, label))
+        percents.append((play_percent_from_line(line_no, line_count), label))
     return percents
 
 
