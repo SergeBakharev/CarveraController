@@ -126,7 +126,7 @@
                 size: dp(root.icon_size) if root.icon else 0, dp(root.icon_size) if root.icon else 0
 
 <GcodeViewerToolBarButton@TransparentButton>:
-    height: dp(48)
+    height: dp(48) if app.show_gcode_ctl_bar else 0
     size_hint_y: None
 
 <WiFiButton>:
@@ -4153,6 +4153,7 @@
                                 size_hint_y: None
                                 height: dp(48) if app.show_gcode_ctl_bar else 0
                                 opacity: 1 if app.show_gcode_ctl_bar else 0
+                                disabled: not app.show_gcode_ctl_bar
                                 # pos: float_layout.x, 0
                                 pos_hint: {'x': 0.0, 'top': 1.0}
                                 canvas.before:
@@ -4163,7 +4164,7 @@
                                         size: self.size
                                 BoxLayout:
                                     size_hint_y: None
-                                    height: dp(48)
+                                    height: dp(48) if app.show_gcode_ctl_bar else 0
                                     # tool bar buttons
                                     GcodeViewerToolBarButton:
                                         width: '50dp'
@@ -4281,7 +4282,7 @@
                                             app.root.filter_tool()
                                     TransparentGrayButton:
                                         id: hide_all
-                                        height: dp(48)
+                                        height: dp(48) if app.show_gcode_ctl_bar else 0
                                         size_hint_y: None
                                         width: '50dp'
                                         icon: 'data/eye.png'
