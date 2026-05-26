@@ -146,7 +146,8 @@ strict = true
 [[tool.mypy.overrides]]
 module = "carveracontroller.ui.*"
 disallow_untyped_defs = true
-# Not full strict — Kivy's dynamic attrs and .kv id-bindings fight strict mode.
+# Kivy widgets are untyped, so subclassing them is fundamental to anything in /ui/.
+disallow_subclassing_any = false
 
 [tool.importlinter]
 root_packages = ["carveracontroller"]
