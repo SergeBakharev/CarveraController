@@ -281,5 +281,13 @@
         "section": "carvera",
         "key": "high_precision_reamining_time_estimate",
         "default": "true"
+    },
+    {
+        "type": "bool",
+        "title": "Show tool changes on progress bar",
+        "desc": "Display tool change markers on the job playback progress bar.",
+        "section": "carvera",
+        "key": "show_playbar_tool_change_markers",
+        "default": "true"
     }
 ]

@@ -3010,6 +3010,7 @@ class Makera(RelativeLayout):
             App.get_running_app().active_color = self._parse_active_color(Config.get('carvera', 'active_color'))
 
         self._load_gcode_highlight_settings()
+        self._load_playbar_tool_change_marker_settings()
 
         # blink timer
         Clock.schedule_interval(self.blink_state, 0.5)
@@ -3040,6 +3041,15 @@ class Makera(RelativeLayout):
             return [parts[0]/255, parts[1]/255, parts[2]/255, parts[3]/255 if parts[3] > 1 else parts[3]]
         except Exception:
             return [0, 1, 1, 1]  # Default cyan
+
+    def _load_playbar_tool_change_marker_settings(self):
+        """Read playback bar tool-change marker visibility from config."""
+        raw_enabled = (
+            Config.get('carvera', 'show_playbar_tool_change_markers')
+            if Config.has_option('carvera', 'show_playbar_tool_change_markers')
+            else '1'
+        )
+        self.show_playbar_tool_change_markers = raw_enabled not in ('0', 'false', 'False')
 
     def _load_gcode_highlight_settings(self):
         """Read gcode highlighting config into cached attributes."""
@@ -6144,6 +6154,11 @@ class Makera(RelativeLayout):
             if hasattr(self, 'gcode_rv') and self.gcode_rv.data:
                 self.load_page(app.curr_page)
 
+        if 'show_playbar_tool_change_markers' in self.controller_setting_change_list:
+            raw_enabled = self.controller_setting_change_list['show_playbar_tool_change_markers']
+            self.show_playbar_tool_change_markers = raw_enabled not in ('0', 'false', 'False')
+            self._apply_tool_change_markers()
+
         self.controller_setting_change_list.clear()
 
     # -----------------------------------------------------------------------
@@ -6325,6 +6340,9 @@ class Makera(RelativeLayout):
 
     def _apply_tool_change_markers(self):
         if not hasattr(self, 'wpb_play') or not self.wpb_play:
+            return
+        if not getattr(self, 'show_playbar_tool_change_markers', True):
+            self.wpb_play.tool_markers = []
             return
         self.wpb_play.tool_markers = tool_change_markers_to_percents(self.tool_change_markers, self.selected_file_line_count)
 
@@ -6786,6 +6804,7 @@ def set_config_defaults(default_lang):
     if not Config.has_option('graphics', 'height'): Config.set('graphics', 'height', '1440')
     if not Config.has_option('graphics', 'width'): Config.set('graphics', 'width',  '900')
     if not Config.has_option('carvera', 'instantFSoverride'): Config.set('carvera','instantFSoverride','1')
+    if not Config.has_option('carvera', 'show_playbar_tool_change_markers'): Config.set('carvera', 'show_playbar_tool_change_markers', '1')
 
     # G-code viewer syntax highlighting defaults
     if not Config.has_option('carvera', 'gcode_highlight_enabled'): Config.set('carvera', 'gcode_highlight_enabled', '1')
