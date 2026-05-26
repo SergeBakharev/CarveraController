@@ -9,6 +9,7 @@ from kivy.graphics.transformation import Matrix
 from kivy.graphics import *
 from kivy.graphics.opengl import *
 from kivy.clock import Clock
+from kivy.config import Config
 from kivy.utils import platform
 import logging
 import os
@@ -213,6 +214,7 @@ def speed_colormap_rgb(t):
 
 
 GRID_QUAD_MIN_SIZE = 10.0
+CONFIG_GRID_VISIBLE_KEY = 'gcode_viewer_show_grid'
 
 
 class MeshManager():
@@ -871,7 +873,7 @@ class GCodeViewer(Widget):
         self._axis_z_rot = Matrix().rotate(-0.5 * math.pi, 0, 0, 1)
         self._proj_matrix = Matrix()
         self.m_viewMatrix = Matrix()
-        self._grid_visible = True
+        self._grid_visible = Config.getboolean('carvera', CONFIG_GRID_VISIBLE_KEY, fallback=True)
         self._viewer_meshes_active = False
 
         self.bind(size=self._on_size_change, pos=self._on_size_change)
@@ -1342,10 +1344,7 @@ class GCodeViewer(Widget):
                 pos1 = [positions[3*i-3],positions[3*i-2],positions[3*i-1]]
                 pos2 = [positions[3*i],positions[3*i+1],positions[3*i+2]]
                 cur_line_len = len_3d(pos1,pos2)
-                lengths[i] = lengths[i-1] + cur_line_len
-
-
-        
+                lengths[i] = lengths[i-1] + cur_line_len   
 
         line_start = 0
         line_end = min(MESH_LINE_CHUNK, len(lines))
@@ -1479,17 +1478,12 @@ class GCodeViewer(Widget):
                 if(color != last_color):
                     need_regenerate = True
 
-                
-
-            # else:
-
             lines.append(thisline)
 
             if len(lines) == MESH_LINE_CHUNK:
                 #create mesh and refresh display
                 [is_4_axis,mmeshes,vert_center,total_line_count,lengths,vertex_types,raw_linenumbers,raw_feed_rates,positions,position_scale,angles_of_vertices] = \
                     self.load_1data_display(lines)
-
 
                 if len(self.positions) == 0:
                     self.lines_center = vert_center
@@ -1572,7 +1566,6 @@ class GCodeViewer(Widget):
                 
             self.linemesh['center_offset'] = Matrix().translate(-self.lines_center[0],-self.lines_center[1],-self.lines_center[2])
 
-
             #rendering line meshes
             self.linemesh['display_count'] = -1.0
             #0 means display all thing
@@ -1589,7 +1582,6 @@ class GCodeViewer(Widget):
 
     def load(self, tmplines):
         self.clearDisplay()
-
 
         # Insert bridging segments when feed/rapid colors change
         lines = []
@@ -2062,11 +2054,6 @@ class GCodeViewer(Widget):
             else:
                 self.display_count = self.display_count + self.add_dir
 
-            
-
-
-        
-
         self.linemesh['display_count'] = float(self.display_count)
 
         #which segment we are located
@@ -2099,8 +2086,6 @@ class GCodeViewer(Widget):
             self.move_scale = 2.0
         else:
             self.move_scale = 1.0
-
-
 
         self.linemesh['rotation_mat'] = self._identity_mat
         
@@ -2147,9 +2132,6 @@ class GCodeViewer(Widget):
                         len_to_center = len_3d(last_pos,[-self.lines_center[0],-self.lines_center[1],0])
                         self.pointermesh['offset'] = [-self.lines_center[0],-self.lines_center[1],len_to_center -self.lines_center[2]]
 
-
-        
-        
         self.pointermesh['modelview_mat'] = self.m_viewMatrix
 
         #axis
@@ -2263,6 +2245,8 @@ class GCodeViewer(Widget):
         if visible == self._grid_visible:
             return
         self._grid_visible = visible
+        Config.set('carvera', CONFIG_GRID_VISIBLE_KEY, '1' if visible else '0')
+        Config.write()
         self._update_grid_uniforms()
         self._scene_dirty = True
 

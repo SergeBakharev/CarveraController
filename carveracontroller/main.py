@@ -2960,6 +2960,7 @@ class Makera(RelativeLayout):
         self.gcode_viewer.set_play_over_callback(self.gcode_play_over_call_back)
         self.gcode_viewer.set_error_popup_callback(self._on_gcode_cannot_visualise)
         self.gcode_viewer.time_estimate_progress_callback = self._on_time_estimate_progress
+        self.float_layout.tool_bar.show_grid = self.gcode_viewer.is_grid_visible()
 
         # init settings
         self.config = ConfigParser()
