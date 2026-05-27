@@ -9,6 +9,7 @@
 - Enhancement: Improve Gcode viewer toolbar buttons layout
 - Enhancement: Show current config probe tip diameter in probing panels
 - Enhancement: Add grid visualization and color schemes selector to the G-Code viewer
+- Enhancement: Detect WHB04 pendant permission errors instead of silently ignoring pendant
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
 - Fixed: Repeated firmware checks now happen just once
 - Fixed: UI widget updates from the SerialMonitor() now dispatched via the main thread. This should reduce the number of RecycleView related crashes
