@@ -11,6 +11,7 @@ from kivy.graphics.opengl import *
 from kivy.clock import Clock
 from kivy.config import Config
 from kivy.utils import platform
+from kivy.metrics import dp
 import logging
 import os
 import threading
@@ -30,6 +31,12 @@ def get_elapsed(str):
     print(f"{str} -> {elapsed_time}")
 
 from .Objloader import ObjFile
+from .ui.ViewCube import (
+    VERTEX_FORMAT as VIEW_CUBE_VERTEX_FORMAT,
+    apply_face_preset,
+    build_mesh as build_view_cube_mesh,
+    pick_face,
+)
 #arc camera
 import math
 from .arcball_from_cpp import *
@@ -215,6 +222,12 @@ def speed_colormap_rgb(t):
 
 GRID_QUAD_MIN_SIZE = 10.0
 CONFIG_GRID_VISIBLE_KEY = 'gcode_viewer_show_grid'
+VIEW_CUBE_SIZE = dp(80)
+VIEW_CUBE_MARGIN = dp(8)
+VIEW_CUBE_TOOLBAR_INSET = dp(48)
+VIEW_CUBE_TEXTURE_UNIT = 1
+VIEW_CUBE_WORLD_SCALE = 0.95
+VIEW_CUBE_ATLAS_PATH = os.path.join(os.path.dirname(__file__), 'data', 'view_cube_atlas.png')
 
 
 class MeshManager():
@@ -858,6 +871,9 @@ class GCodeViewer(Widget):
         self.axiszmesh = RenderContext()
         self.axiszmesh.shader.source = axis_shader
 
+        self.viewcubemesh = RenderContext()
+        self.viewcubemesh.shader.source = os.path.join(shader_dir, 'view_cube.glsl')
+        self._setup_view_cube_mesh()
 
         self.meshmanager = MeshManager()
 
@@ -876,6 +892,9 @@ class GCodeViewer(Widget):
         self._grid_visible = Config.getboolean('carvera', CONFIG_GRID_VISIBLE_KEY, fallback=True)
         self._viewer_meshes_active = False
 
+        self.viewcubemesh['texture0'] = VIEW_CUBE_TEXTURE_UNIT
+        self._view_cube_proj = Matrix()
+
         self.bind(size=self._on_size_change, pos=self._on_size_change)
 
         self._apply_color_scheme_uniform()
@@ -886,6 +905,117 @@ class GCodeViewer(Widget):
     def _on_size_change(self, *args):
         self._proj_dirty = True
         self._scene_dirty = True
+
+    def _view_cube_hud_proj(self):
+        """Square ortho projection for the HUD viewport (independent of zoom/pan)."""
+        proj = Matrix()
+        proj.view_clip(-1.0, 1.0, -1.0, 1.0, 0.1, self.m_distance * 4.0, 0)
+        return proj
+
+    def _view_cube_active(self):
+        return self._viewer_meshes_active
+
+    def _update_view_cube_uniforms(self):
+        if not self._view_cube_active():
+            return
+        self._view_cube_proj = self._view_cube_hud_proj()
+        self.viewcubemesh['view_mat'] = self.m_viewMatrix
+        self.viewcubemesh['proj_mat'] = self._view_cube_proj
+        self.viewcubemesh['cube_scale'] = float(VIEW_CUBE_WORLD_SCALE)
+        self.canvas.ask_update()
+
+    def _setup_view_cube_mesh(self):
+        verts, indices = build_view_cube_mesh()
+        self.viewcubemesh.clear()
+        with self.viewcubemesh:
+            self._view_cube_cb_setup = Callback(self._setup_view_cube_gl)
+            BindTexture(source=VIEW_CUBE_ATLAS_PATH, index=VIEW_CUBE_TEXTURE_UNIT)
+            Mesh(
+                fmt=VIEW_CUBE_VERTEX_FORMAT,
+                vertices=verts,
+                indices=indices,
+                mode='triangles',
+            )
+            self._view_cube_cb_reset = Callback(self._reset_view_cube_gl)
+
+    def _view_cube_gl_origin(self):
+        """Bottom-left of the GL drawable area (same origin as setup_gl_context)."""
+        return self.pos[0] + self.off_x, self.pos[1] + self.off_y
+
+    def _view_cube_widget_rect(self):
+        """Cube HUD bounds relative to the GL drawable area (origin bottom-left)."""
+        size = int(VIEW_CUBE_SIZE)
+        margin = int(VIEW_CUBE_MARGIN)
+        toolbar = int(VIEW_CUBE_TOOLBAR_INSET)
+        x = margin
+        y = self.size[1] - toolbar - margin - size
+        return x, y, size, size
+
+    def _view_cube_screen_rect(self):
+        """Cube HUD bounds in window coordinates for glViewport."""
+        ox, oy = self._view_cube_gl_origin()
+        x, y, size, _ = self._view_cube_widget_rect()
+        return int(ox + x), int(oy + y), size, size
+
+    def _view_cube_hit_screen_rect(self):
+        """Visible cube bounds — smaller than the HUD viewport (see cube_scale)."""
+        wx, wy, w, h = self._view_cube_screen_rect()
+        scale = float(VIEW_CUBE_WORLD_SCALE)
+        hit_w = w * scale
+        hit_h = h * scale
+        return wx + (w - hit_w) * 0.5, wy + (h - hit_h) * 0.5, hit_w, hit_h
+
+    def _view_cube_touch_ndc(self, touch):
+        """Map a touch to NDC inside the cube HUD, or None if outside."""
+        wx, wy, w, h = self._view_cube_screen_rect()
+        hit_x, hit_y, hit_w, hit_h = self._view_cube_hit_screen_rect()
+        if self.parent is not None:
+            touch_wx, touch_wy = self.parent.to_window(touch.pos[0], touch.pos[1])
+        else:
+            touch_wx, touch_wy = touch.x, touch.y
+        if not (hit_x <= touch_wx <= hit_x + hit_w and hit_y <= touch_wy <= hit_y + hit_h):
+            return None
+        ndc_x = 2.0 * (touch_wx - wx) / w - 1.0
+        ndc_y = 2.0 * (touch_wy - wy) / h - 1.0
+        return ndc_x, ndc_y
+
+    def _setup_view_cube_gl(self, *args):
+        x, y, w, h = self._view_cube_screen_rect()
+        glViewport(int(x), int(y), int(w), int(h))
+        glEnable(GL_DEPTH_TEST)
+        glClear(GL_DEPTH_BUFFER_BIT)
+        self._update_view_cube_uniforms()
+
+    def _reset_view_cube_gl(self, *args):
+        glDisable(GL_DEPTH_TEST)
+        glViewport(0, 0, int(Window.size[0]), int(Window.size[1]))
+
+    def _handle_view_cube_touch(self, touch):
+        if not self._view_cube_active():
+            return False
+        ndc = self._view_cube_touch_ndc(touch)
+        if ndc is None:
+            return False
+        ndc_x, ndc_y = ndc
+        face_id = pick_face(
+            ndc_x, ndc_y,
+            self.m_viewMatrix,
+            self._view_cube_hud_proj(),
+            VIEW_CUBE_WORLD_SCALE,
+        )
+        self.m_xRot, self.m_yRot = apply_face_preset(face_id, self.m_xRot, self.m_yRot)
+        self.update_view()
+        self._scene_dirty = True
+        return True
+
+    def _raise_view_cube_to_top(self):
+        if self.viewcubemesh in self.canvas.children:
+            self.canvas.remove(self.viewcubemesh)
+        self.canvas.add(self.viewcubemesh)
+
+    def _remove_view_cube_from_canvas(self):
+        if self.viewcubemesh in self.canvas.children:
+            self.canvas.remove(self.viewcubemesh)
 
     def _get_line_vertex_fmt(self):
         return [
@@ -923,6 +1053,8 @@ class GCodeViewer(Widget):
         self.canvas.add(self.axisxmesh)
         self.canvas.add(self.axisymesh)
         self.canvas.add(self.axiszmesh)
+        self._raise_view_cube_to_top()
+        self._update_view_cube_uniforms()
         self._viewer_meshes_active = True
 
     def _grid_quad_extent(self):
@@ -963,6 +1095,7 @@ class GCodeViewer(Widget):
         self.axisymesh.clear()
         self.canvas.remove(self.axiszmesh)
         self.axiszmesh.clear()
+        self._remove_view_cube_from_canvas()
         self.display_count = 0
         self._viewer_meshes_active = False
 
@@ -1749,6 +1882,7 @@ class GCodeViewer(Widget):
         up = normalize(up)
         self.m_viewMatrix=Matrix().look_at(eye[0],eye[1],eye[2], center[0],center[1],center[2],up[0],up[1],up[2])
         self._update_grid_uniforms()
+        self._update_view_cube_uniforms()
 
 
     def setup_gl_context(self, *args):
@@ -2038,8 +2172,9 @@ class GCodeViewer(Widget):
             self.update_proj()
             self._proj_dirty = False
 
+        self._update_view_cube_uniforms()
+
         if self.lengths is None or len(self.lengths) <= 1:
-            #data is not loaded yet
             return
         
         # Skip the entire frame when nothing has changed and playback is paused.
@@ -2161,6 +2296,9 @@ class GCodeViewer(Widget):
     def on_touch_down(self, touch):
         if self.collide_point(*touch.pos):
             try:
+                if self._handle_view_cube_touch(touch):
+                    return True
+
                 touchpos = [touch.pos[0], self.size[1] - touch.pos[1]]
                 self.m_lastPos = touchpos.copy()
                 self.m_xLastRot = self.m_xRot
