@@ -17,6 +17,7 @@
 - Fixed: Last character of the current file was sometimes missing in the file viewer
 - Fixed: Disable trackpad being treated as touchscreen on Linux
 - Fixed: Jogging was incorrectly blocked/allowed under certain conditions
+- Fixed: Fix incorrect "No Pendant" in UI when pendant is working
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file
 

@@ -5912,6 +5912,7 @@ class Makera(RelativeLayout):
     def handle_pendant_connected(self):
         self.ids.pendant_jogging_en_btn.disabled = False
         app =App.get_running_app()
+        app.jog_pendant_text = tr._('Pendant Jogging')
         self.update_pendant_jog_text()
         app.jog_pendant_enable = 'down' if self.pendant_jogging_default else 'normal'
         app.root.pendant_jog_control = self.pendant_jogging_default
