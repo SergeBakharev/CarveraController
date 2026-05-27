@@ -208,6 +208,7 @@ from . import custom_widgets
 from kivy.config import ConfigParser
 from .CNC import CNC, highlight_gcode_line, escape_gcode_markup, GCODE_DEFAULT_COLORS
 from .GcodeViewer import GCodeViewer
+from .ui.PlayProgressBar import play_percent_from_line, tool_change_markers_to_percents
 from .Controller import Controller, NOT_CONNECTED, STATECOLOR, STATECOLORDEF,\
     LOAD_DIR, LOAD_MV, LOAD_RM, LOAD_MKDIR, LOAD_WIFI, LOAD_CONN_WIFI, CONN_USB, CONN_WIFI, SEND_FILE
 from .__version__ import __version__
@@ -2784,7 +2785,8 @@ class Makera(RelativeLayout):
 
     used_tools = ListProperty()
     upcoming_tool = 0
-    
+    tool_change_markers = []
+
     # Custom property to monitor CNC light state
     light_state = LightProperty(False)
 
@@ -3018,6 +3020,7 @@ class Makera(RelativeLayout):
             App.get_running_app().active_color = self._parse_active_color(Config.get('carvera', 'active_color'))
 
         self._load_gcode_highlight_settings()
+        self._load_playbar_tool_change_marker_settings()
 
         # blink timer
         Clock.schedule_interval(self.blink_state, 0.5)
@@ -3048,6 +3051,15 @@ class Makera(RelativeLayout):
             return [parts[0]/255, parts[1]/255, parts[2]/255, parts[3]/255 if parts[3] > 1 else parts[3]]
         except Exception:
             return [0, 1, 1, 1]  # Default cyan
+
+    def _load_playbar_tool_change_marker_settings(self):
+        """Read playback bar tool-change marker visibility from config."""
+        raw_enabled = (
+            Config.get('carvera', 'show_playbar_tool_change_markers')
+            if Config.has_option('carvera', 'show_playbar_tool_change_markers')
+            else '1'
+        )
+        self.show_playbar_tool_change_markers = raw_enabled not in ('0', 'false', 'False')
 
     def _load_gcode_highlight_settings(self):
         """Read gcode highlighting config into cached attributes."""
@@ -3932,7 +3944,7 @@ class Makera(RelativeLayout):
         # Use playedlines if available, otherwise use the last tracked played_lines
         last_line = CNC.vars["playedlines"] if CNC.vars["playedlines"] > 0 else self.played_lines
         if last_line > 0:
-            self.update_resume_at_line_from_played_line(last_line, CNC.vars["playedpercent"])
+            self.update_resume_at_line_from_played_line(last_line, play_percent_from_line(last_line, self.selected_file_line_count))
 
         alarm_msg = CNC.vars.get("alarm_message", "")
 
@@ -5341,7 +5353,10 @@ class Makera(RelativeLayout):
                 # not playing - check if we were playing before (interrupted playback)
                 if self.played_lines > 0:
                     # Playback was interrupted, update resume at line with last executed line
-                    self.update_resume_at_line_from_played_line(self.played_lines, CNC.vars["playedpercent"])
+                    self.update_resume_at_line_from_played_line(
+                        self.played_lines,
+                        play_percent_from_line(self.played_lines, self.selected_file_line_count)
+                    )
                     self.played_lines = 0  # Reset after updating
                 
                 app.playing = False
@@ -5369,7 +5384,7 @@ class Makera(RelativeLayout):
                 app.playing = True
                 if self.played_lines != CNC.vars["playedlines"]:
                     self.played_lines = CNC.vars["playedlines"]
-                    self.wpb_play.value = CNC.vars["playedpercent"]
+                    self.wpb_play.value = play_percent_from_line(self.played_lines, self.selected_file_line_count)
                     if (app.selected_remote_filename != '' or app.selected_local_filename != '') and self.selected_file_line_count > 0:
                         self.gcode_rv.set_selected_line(self.played_lines)
                         self.gcode_viewer.set_distance_by_lineidx(self.played_lines, 0.5)
@@ -6149,6 +6164,11 @@ class Makera(RelativeLayout):
             if hasattr(self, 'gcode_rv') and self.gcode_rv.data:
                 self.load_page(app.curr_page)
 
+        if 'show_playbar_tool_change_markers' in self.controller_setting_change_list:
+            raw_enabled = self.controller_setting_change_list['show_playbar_tool_change_markers']
+            self.show_playbar_tool_change_markers = raw_enabled not in ('0', 'false', 'False')
+            self._apply_tool_change_markers()
+
         self.controller_setting_change_list.clear()
 
     # -----------------------------------------------------------------------
@@ -6313,14 +6333,33 @@ class Makera(RelativeLayout):
         self.wpb_play.value = 0
         self.used_tools = []
         self.upcoming_tool = 0
+        self._clear_tool_change_markers()
         app = App.get_running_app()
         app.curr_page = 1
         app.total_pages = 1
         self.updateStatus()
 
     # ------------------------------------------------------------------------
+    def _clear_play_bar_tool_markers(self, *args):
+        if hasattr(self, 'wpb_play') and self.wpb_play:
+            self.wpb_play.tool_markers = []
+
+    def _clear_tool_change_markers(self):
+        self.tool_change_markers = []
+        self._clear_play_bar_tool_markers()
+
+    def _apply_tool_change_markers(self):
+        if not hasattr(self, 'wpb_play') or not self.wpb_play:
+            return
+        if not getattr(self, 'show_playbar_tool_change_markers', True):
+            self.wpb_play.tool_markers = []
+            return
+        self.wpb_play.tool_markers = tool_change_markers_to_percents(self.tool_change_markers, self.selected_file_line_count)
+
+    # ------------------------------------------------------------------------
     def load_start(self, *args):
         self.loading_file = True
+        self._clear_play_bar_tool_markers()
         self.cmd_manager.transition.direction = 'right'
         self.cmd_manager.current = 'gcode_cmd_page'
         self.gcode_rv.data = []
@@ -6394,6 +6433,7 @@ class Makera(RelativeLayout):
 
     # ------------------------------------------------------------------------
     def load_error(self, error_msg, *args):
+        self._clear_tool_change_markers()
         self.progress_popup.dismiss()
         self.message_popup.lb_content.text = error_msg
         self.message_popup.open(self)
@@ -6447,6 +6487,7 @@ class Makera(RelativeLayout):
 
         self.updateStatus()
         self.loading_file = False
+        self._apply_tool_change_markers()
 
         # Scroll to top of program that we just loaded
         self.gcode_rv.scroll_y = 1
@@ -6471,6 +6512,7 @@ class Makera(RelativeLayout):
         self.load_event.set()
         self.upcoming_tool = 0
         self.used_tools = []
+        self.tool_change_markers = []
         Clock.schedule_once(self.load_start)
         f = None
         try:
@@ -6506,11 +6548,20 @@ class Makera(RelativeLayout):
             for line in self.lines:
                 if self.load_canceled:
                     break
+                prev_tool = self.cnc.tool
                 self.cnc.parseLine(line, line_no)
                 if self.upcoming_tool == 0:
                     self.upcoming_tool = self.cnc.tool
                 if self.cnc.tool not in self.used_tools:
                     self.used_tools.append(self.cnc.tool)
+                tool_change_label = None
+                if self.cnc.mval == 321:
+                    tool_change_label = 'L'
+                elif self.cnc.tool >= 1 and self.cnc.tool != prev_tool:
+                    tool_change_label = 'T%d' % self.cnc.tool
+                if tool_change_label is not None:
+                    if not (self.tool_change_markers and self.tool_change_markers[-1][1] == tool_change_label):
+                        self.tool_change_markers.append((line_no, tool_change_label))
 
                 if line_no % LOAD_INTERVAL == 0 or line_no == self.selected_file_line_count:
                     parsed_list = self.cnc.coordinates
@@ -6779,6 +6830,7 @@ def set_config_defaults(default_lang):
     if not Config.has_option('graphics', 'height'): Config.set('graphics', 'height', '1440')
     if not Config.has_option('graphics', 'width'): Config.set('graphics', 'width',  '900')
     if not Config.has_option('carvera', 'instantFSoverride'): Config.set('carvera','instantFSoverride','1')
+    if not Config.has_option('carvera', 'show_playbar_tool_change_markers'): Config.set('carvera', 'show_playbar_tool_change_markers', '1')
 
     # G-code viewer syntax highlighting defaults
     if not Config.has_option('carvera', 'gcode_highlight_enabled'): Config.set('carvera', 'gcode_highlight_enabled', '1')
