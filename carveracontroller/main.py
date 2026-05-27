@@ -363,12 +363,21 @@ class GcodePlaySlider(Slider):
 
 class FloatBox(FloatLayout):
     touch_interval = 0
+    color_scheme_panel = ObjectProperty(None)
+
+    def _viewer_chrome_hit(self, touch):
+        if self.gcode_ctl_bar.collide_point(*touch.pos):
+            return True
+        panel = self.color_scheme_panel
+        if panel is not None and panel.collide_point(*touch.pos):
+            return True
+        return False
 
     def on_touch_down(self, touch):
         if super(FloatBox, self).on_touch_down(touch):
             return True
 
-        if self.collide_point(*touch.pos) and not self.gcode_ctl_bar.collide_point(*touch.pos):
+        if self.collide_point(*touch.pos) and not self._viewer_chrome_hit(touch):
             if ('button' in touch.profile and touch.button == 'left') or not 'button' in touch.profile:
                     self.touch_interval =  time.time()
 
@@ -377,7 +386,7 @@ class FloatBox(FloatLayout):
             return True
 
         app = App.get_running_app()
-        if self.collide_point(*touch.pos) and not self.gcode_ctl_bar.collide_point(*touch.pos):
+        if self.collide_point(*touch.pos) and not self._viewer_chrome_hit(touch):
             if ('button' in touch.profile and touch.button == 'left') or not 'button' in touch.profile:
                 if time.time() - self.touch_interval < MAX_TOUCH_INTERVAL:
                     app.show_gcode_ctl_bar = not app.show_gcode_ctl_bar
@@ -2890,6 +2899,7 @@ class Makera(RelativeLayout):
         self.gcode_viewer.set_play_over_callback(self.gcode_play_over_call_back)
         self.gcode_viewer.set_error_popup_callback(self._on_gcode_cannot_visualise)
         self.gcode_viewer.time_estimate_progress_callback = self._on_time_estimate_progress
+        self.float_layout.tool_bar.show_grid = self.gcode_viewer.is_grid_visible()
 
         # init settings
         self.config = ConfigParser()
@@ -4070,7 +4080,7 @@ class Makera(RelativeLayout):
         filepath = self.file_popup.local_rv.curr_selected_file
         app = App.get_running_app()
         app.selected_local_filename = filepath
-
+        app.selected_remote_filename = ''
 
         self.file_popup.dismiss()
 
@@ -4210,14 +4220,16 @@ class Makera(RelativeLayout):
 
         # Preserve selected file only when reconnecting to the same machine.
         # finishLoadConfig() can be called on reconnect; resume-at-line depends on
-        # selected_local_filename (cached local file). If the user connects to a
-        # different machine (different IP/COM port), we must clear it.
+        # loaded self.lines matching selection (_last_loaded_file_key). If the user
+        # connects to a different machine (different IP/COM port), clear machine selection.
         app = App.get_running_app()
         current_key = self._get_current_machine_connection_key()
         if self._selected_file_machine_key is None:
             self._selected_file_machine_key = current_key
         elif current_key != self._selected_file_machine_key:
             app.selected_local_filename = ''
+            app.selected_remote_filename = ''
+            self._last_loaded_file_key = None
             self._selected_file_machine_key = current_key
         self.updateStatus()
 
@@ -6098,28 +6110,37 @@ class Makera(RelativeLayout):
         self.confirm_popup.open(self)
 
     # -----------------------------------------------------------------------
+    def _resume_gcode_lines_available(self):
+        app = App.get_running_app()
+        key = app.selected_remote_filename or app.selected_local_filename
+        return (
+            bool(key)
+            and bool(getattr(self, "lines", None))
+            and key == self._last_loaded_file_key
+            and not self.loading_file
+            and self.selected_file_line_count > 0
+        )
+
+    def _show_resume_gcode_not_loaded_popup(self):
+        self.show_message_popup(
+            tr._(
+                "The gcode for this job is not loaded in the controller, or a different file is loaded.\n"
+                "Open the file again from the file browser (download or upload as needed), then retry resume-at-line."
+            ),
+            False,
+        )
+
     def open_resume_playback_confirm_popup(self, file_name, start_line):
         if self.confirm_popup.showing:
             return
-        
-        app = App.get_running_app()
-        local_file_path = app.selected_local_filename if hasattr(app, 'selected_local_filename') else None
 
-        # If the cached temp file was deleted externally, fail with a UI popup.
-        if local_file_path and not os.path.exists(local_file_path):
-            logger.error(f"Resume-at-line: Cached gcode file is missing from local file system {local_file_path}\n")
-            self.show_message_popup(
-                tr._(f"Cached gcode file is missing from local file system\n"
-                    "Please select the file again in the file browser\n"
-                    "to re-download the file from the machine, then retry."),
-                False,
-            )
+        if not self._resume_gcode_lines_available():
+            self._show_resume_gcode_not_loaded_popup()
             return
-        
-        # Get command preview from Controller (fail closed if cached file is missing)
+
         try:
             commands = self.controller.playStartLineCommand(
-                file_name, start_line, preview=True, local_file_path=local_file_path
+                file_name, start_line, preview=True, lines=self.lines
             )
         except Exception as e:
             self.show_message_popup(tr._(f"Resume-at-line cannot run:\n\n{e}"), False)
@@ -6137,18 +6158,11 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def execute_play_with_start_line(self, file_name, start_line):
         """Execute play command with start_line after user confirmation"""
-        app = App.get_running_app()
-        local_file_path = app.selected_local_filename if hasattr(app, 'selected_local_filename') else None
-
-        # If the cached temp file was deleted externally, fail with a UI popup.
-        if local_file_path and not os.path.exists(local_file_path):
-            self.show_message_popup(
-                tr._('Cached file is missing.\n\nPlease re-open or re-download the file, then try resume-at-line again.'),
-                False,
-            )
+        if not self._resume_gcode_lines_available():
+            self._show_resume_gcode_not_loaded_popup()
             return
         try:
-            self.controller.playStartLineCommand(file_name, start_line, local_file_path=local_file_path)
+            self.controller.playStartLineCommand(file_name, start_line, lines=self.lines)
         except Exception as e:
             self.show_message_popup(tr._(f"Resume-at-line failed:\n\n{e}"), False)
     
@@ -6327,6 +6341,8 @@ class Makera(RelativeLayout):
             self.gcode_viewer_distance = self.gcode_viewer.get_total_distance()
             self.gcode_viewer.show_all()
 
+        self.refresh_gcode_color_legend()
+
         app = App.get_running_app()
 
         # Only clear resume-at-line when a different file is loaded.
@@ -6454,6 +6470,20 @@ class Makera(RelativeLayout):
             tool_button.min_active = True
         self.float_layout.hide_all.active = True
 
+
+    def refresh_gcode_color_legend(self, *_args):
+        panel = self.ids.get('color_scheme_panel')
+        if panel is not None:
+            panel.refresh(self)
+
+    def on_gcode_color_scheme_changed(self, text):
+        if text == tr._('Tool'):
+            self.gcode_viewer.set_color_scheme('by_tool')
+        elif text == tr._('Speed'):
+            self.gcode_viewer.set_color_scheme('by_speed')
+        else:
+            self.gcode_viewer.set_color_scheme('by_type')
+        self.refresh_gcode_color_legend()
 
     # -----------------------------------------------------------------------
     def filter_tool(self):
