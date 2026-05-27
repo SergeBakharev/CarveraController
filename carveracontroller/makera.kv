@@ -2,11 +2,18 @@
 #:import Factory kivy.factory.Factory
 #:import digitize_v carveracontroller.Utils.digitize_v
 #:import tr carveracontroller.__main__.tr
+#:import _ carveracontroller.ui.LocalFilePicker
+#:import _ carveracontroller.ui.DirectoryView
+#:import _ carveracontroller.ui.DropDownSplitter
 #:import play_progress_bar carveracontroller.ui.PlayProgressBar
 #:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
 #:include ui/GcodeColorSchemePanel.kv
 #:include addons/tooltips/Tooltips.kv
+#:include ui/LocalFilePicker.kv
+#:include ui/DirectoryView.kv
+#:include ui/DropDownSplitter.kv
 #:include addons/probing/ProbingPopup.kv
+#:include addons/probe_scan/ui/ProbeScanPopup.kv
 #:include addons/facing/FacingWizardPopup.kv
 
 <Label>:
@@ -309,20 +316,6 @@
     valign: 'middle'
     halign: 'center'
     color: 150/255, 150/255, 150/255, 1
-
-<DropDownSplitter>:
-    size_hint_y: None
-    height: '20dp'
-    font_size: '13sp'
-    text_size: self.size
-    valign: 'middle'
-    color: 150/255, 150/255, 150/255, 1
-    canvas.before:
-        Color:
-            rgba: 60/255, 60/255, 60/255, 1
-        Rectangle:
-            pos: self.pos
-            size: self.size
 
 <StatusContent@BoxLayout>:
     size_hint_y: None
@@ -1289,45 +1282,6 @@
             font_size: '11sp'
             text_size: self.size
             halign: "right"
-
-<DirectoryView>:
-    orientation: 'horizontal'
-    selected: False
-    data_text: ''
-    data_icon: 'data/folder-32.png'
-    full_path: ''
-    canvas.before:
-        Color:
-            rgba: 80/255, 80/255, 80/255, 1
-        Rectangle:
-            pos: self.pos
-            size: self.size
-    Label:
-        canvas.before:
-            Color:
-                rgba: 225/255, 225/255, 225/255, 1
-            Rectangle:
-                source: 'data/connected.png'
-                pos: self.center_x - dp(10), self.center_y - dp(10)
-                size: dp(20) if root.selected else dp(0), dp(20) if root.selected else dp(0)
-        text: ''
-        size_hint_x: 0.15
-    Label:
-        canvas.before:
-            Color:
-                rgba: root.color
-            Rectangle:
-                source: 'data/folder-32.png' if root.data_icon == '' else root.data_icon
-                pos: self.center_x - dp(10), self.center_y - dp(10)
-                size: dp(20), dp(20)
-        text: ''
-        size_hint_x: 0.2
-    Label:
-        text: root.data_text
-        color: 225/255, 225/255, 225/255, 1
-        text_size: self.size
-        valign: 'middle'
-        multiline: False
 
 <LanguagePopup>:
     sp_language: sp_language
@@ -3865,8 +3819,9 @@
                                                 height: '35dp'
                                                 disabled: not app.is_community_firmware or app.state != 'Idle'
                                                 text: tr._('Tools...')
-                                                values: [tr._('Facing...')]
+                                                values: [tr._('Probe scan...'), tr._('Facing...')]
                                                 on_text:
+                                                    if self.text == tr._('Probe scan...'): app.root.open_probe_scan_popup()
                                                     if self.text == tr._('Facing...'): app.root.open_facing_popup()
                                                     if self.text != tr._('Tools...'): self.text = tr._('Tools...')
 
