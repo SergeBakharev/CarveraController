@@ -938,9 +938,12 @@ class FacingWizardPopup(ModalView):
 
         def _do_load():
             path = self._write_temp_nc(text)
-            root = App.get_running_app().root
+            app = App.get_running_app()
+            root = app.root
             self.dismiss()
             self._switch_to_gcode_viewer_screen()
+            app.selected_local_filename = path
+            app.selected_remote_filename = ''
             root.progress_popup.progress_value = 0
             root.progress_popup.btn_cancel.disabled = True
             root.progress_popup.progress_text = tr._("Loading file") + "\n%s" % path
