@@ -5,6 +5,7 @@
 #:import _ carveracontroller.ui.LocalFilePicker
 #:import _ carveracontroller.ui.DirectoryView
 #:import _ carveracontroller.ui.DropDownSplitter
+#:import play_progress_bar carveracontroller.ui.PlayProgressBar
 #:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
 #:include ui/GcodeColorSchemePanel.kv
 #:include addons/tooltips/Tooltips.kv
@@ -13,6 +14,7 @@
 #:include ui/DropDownSplitter.kv
 #:include addons/probing/ProbingPopup.kv
 #:include addons/probe_scan/ui/ProbeScanPopup.kv
+#:include addons/facing/FacingWizardPopup.kv
 
 <Label>:
     font_name: 'ARIALUNI'
@@ -3817,9 +3819,10 @@
                                                 height: '35dp'
                                                 disabled: not app.is_community_firmware or app.state != 'Idle'
                                                 text: tr._('Tools...')
-                                                values: [tr._('Probe scan...')]
+                                                values: [tr._('Probe scan...'), tr._('Facing...')]
                                                 on_text:
                                                     if self.text == tr._('Probe scan...'): app.root.open_probe_scan_popup()
+                                                    if self.text == tr._('Facing...'): app.root.open_facing_popup()
                                                     if self.text != tr._('Tools...'): self.text = tr._('Tools...')
 
                             Widget:
@@ -4432,7 +4435,7 @@
                         size_hint_x: None
                         width: '25dp'
                         color: 244/255, 208/255, 63/255, 1
-                    WideProgressBar:
+                    PlayProgressBar:
                         id: wpb_play
                         Label:
                             size_hint_x: None

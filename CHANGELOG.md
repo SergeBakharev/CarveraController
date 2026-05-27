@@ -4,11 +4,13 @@
 - Enhancement: Improvements to saving changes in settings menu
 - Enhancement: Add syntax highlighting to the file viewer
 - Enhancement: Only re-render the G-Code viewer scene if something has changed
+- Enhancement: Add Facing wizard
 - Enhancement: Support gamepads as pendants
 - Enhancement: Added iPhone support
 - Enhancement: Improve Gcode viewer toolbar buttons layout
 - Enhancement: Show current config probe tip diameter in probing panels
 - Enhancement: Add Probe Scan tool
+- Enhancement: Show tool change markers on the playback progress bar
 - Enhancement: Add grid visualization and color schemes selector to the G-Code viewer
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
 - Fixed: Repeated firmware checks now happen just once
