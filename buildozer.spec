@@ -327,11 +327,10 @@ android.allow_backup = True
 #p4a.fork = kivy
 
 # (str) python-for-android branch to use, defaults to master
-p4a.branch = develop
+p4a.branch = v2026.05.09
 
 # (str) python-for-android specific commit to use, defaults to HEAD, must be within p4a.branch
-# Commits after 6b66944a2f51e0c848c7ac51e04a771324067ecc break the build
-p4a.commit = c02cf781a0d3d232eb4ffbeaf580cc82cf2bd65f
+#p4a.commit =
 
 # (str) python-for-android git clone directory (if empty, it will be automatically cloned from github)
 #p4a.source_dir =
