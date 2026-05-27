@@ -9,6 +9,7 @@ from kivy.graphics import Color, Rectangle
 from kivy.metrics import dp
 from kivy.properties import ListProperty
 
+from carveracontroller.CNC import LASER_TOOL_NUMBER, PROBE_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER
 from carveracontroller.translation import tr
 from carveracontroller.GcodeViewer import (
     COLOR_SCHEME_BY_TYPE,
@@ -26,6 +27,17 @@ LEGEND_ROW_SPACING = dp(2)
 LEGEND_GRID_PAD_Y = dp(4) + dp(2)
 
 
+def _tool_legend_label(tool):
+    tool_num = int(tool)
+    if tool_num == LASER_TOOL_NUMBER:
+        return tr._('Laser')
+    if tool_num == PROBE_TOOL_NUMBER:
+        return tr._('Probe')
+    if tool_num == PROBE_3D_TOOL_NUMBER:
+        return tr._('3D Probe')
+    return f'T{tool_num}'
+
+
 def build_legend_entries(color_scheme, gcode_viewer, used_tools):
     """Return list of {'label': str, 'color': (r,g,b,a)} for the active scheme."""
     entries = []
@@ -41,11 +53,11 @@ def build_legend_entries(color_scheme, gcode_viewer, used_tools):
         return entries
 
     if color_scheme == COLOR_SCHEME_BY_TOOL:
-        tools = sorted(t for t in set(used_tools or []) if int(t) >= 1)
+        tools = sorted(t for t in set(used_tools or []) if int(t) >= 0)
         if not tools:
             tools = list(range(1, 7))
         for tool in tools:
-            label = f'T{int(tool)}'
+            label = _tool_legend_label(tool)
             rgb = tool_palette_rgb(tool)
             entries.append({'label': label, 'color': (*rgb, 1.0)})
         return entries

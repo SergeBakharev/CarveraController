@@ -4,6 +4,9 @@
 #:import tr carveracontroller.__main__.tr
 #:import play_progress_bar carveracontroller.ui.PlayProgressBar
 #:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
+#:import LASER_TOOL_NUMBER carveracontroller.CNC.LASER_TOOL_NUMBER
+#:import PROBE_TOOL_NUMBER carveracontroller.CNC.PROBE_TOOL_NUMBER
+#:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
 #:include ui/GcodeColorSchemePanel.kv
 #:include addons/tooltips/Tooltips.kv
 #:include addons/probing/ProbingPopup.kv
@@ -847,7 +850,7 @@
         values: 'Probe', 'Tool: 1', 'Tool: 2', 'Tool: 3', 'Tool: 4', 'Tool: 5', 'Tool: 6', 'Custom'
         on_text:
             if self.text == 'Custom': app.root.coord_popup.change_tool_popup.open()
-            if self.text == '3D Probe': app.root.controller.changeToolCommand(999990)
+            if self.text == '3D Probe': app.root.controller.changeToolCommand(PROBE_3D_TOOL_NUMBER)
             elif self.text != tr._("Change..."): app.root.controller.changeToolCommand(self.text[-1])
             if self.text != tr._("Change..."): self.text = tr._('Change...')
             root.select('Third Item')
@@ -874,7 +877,7 @@
         values: 'Empty', 'Probe', 'Tool: 1', 'Tool: 2', 'Tool: 3', 'Tool: 4', 'Tool: 5', 'Tool: 6', 'Custom'
         on_text:
             if self.text == 'Custom': app.root.coord_popup.settool_popup.open()
-            if self.text == '3D Probe': app.root.controller.setToolCommand(999990)
+            if self.text == '3D Probe': app.root.controller.setToolCommand(PROBE_3D_TOOL_NUMBER)
             elif self.text != tr._("Set..."): app.root.controller.setToolCommand(self.text[-1])
             if self.text != tr._("Set..."): self.text = tr._('Set...')
             root.select('Third Item')
@@ -1537,12 +1540,12 @@
                 disabled: not app.is_community_firmware
                 on_release:
                     root.dismiss()
-                    app.root.controller.changeToolCommand(999990)
+                    app.root.controller.changeToolCommand(PROBE_3D_TOOL_NUMBER)
             Button:
                 text: tr._('Change to stock Makera probe')
                 on_release:
                     root.dismiss()
-                    app.root.controller.changeToolCommand(0)
+                    app.root.controller.changeToolCommand(PROBE_TOOL_NUMBER)
 
 <MessagePopup>:
     btn_ok: btn_ok
@@ -4298,7 +4301,7 @@
                                         valign: 'middle'
                                         icon: 'data/laser.png'
                                         active: app.lasering == True
-                                        disabled: 7 not in root.used_tools
+                                        disabled: LASER_TOOL_NUMBER not in root.used_tools
                                         min_icon: 'data/eye.png'
                                         on_release:
                                             self.min_active = not self.min_active

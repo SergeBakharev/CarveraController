@@ -5,21 +5,11 @@ from kivy.metrics import dp
 from kivy.properties import ListProperty, NumericProperty
 from kivy.uix.boxlayout import BoxLayout
 
+from carveracontroller.CNC import LASER_TOOL_NUMBER, PROBE_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER
+from carveracontroller.GcodeViewer import tool_marker_palette_rgb
+
 DEFAULT_MARKER_LABEL_BG_COLOR = (210 / 255, 210 / 255, 210 / 255, 1)
 MARKER_LABEL_TEXT_COLOR = (30 / 255, 30 / 255, 30 / 255, 1)
-LASER_MARKER_LABEL_BG_COLOR = (231 / 255, 76 / 255, 60 / 255, 1)
-TOOL_MARKER_LABEL_BG_PALETTE = (
-    (181 / 255, 206 / 255, 168 / 255, 1),
-    (86 / 255, 156 / 255, 214 / 255, 1),
-    (206 / 255, 145 / 255, 120 / 255, 1),
-    (197 / 255, 134 / 255, 192 / 255, 1),
-    (78 / 255, 201 / 255, 176 / 255, 1),
-    (209 / 255, 105 / 255, 105 / 255, 1),
-    (247 / 255, 220 / 255, 111 / 255, 1),
-    (133 / 255, 193 / 255, 233 / 255, 1),
-    (170 / 255, 150 / 255, 220 / 255, 1),
-    (152 / 255, 214 / 255, 170 / 255, 1),
-)
 
 def play_percent_from_line(line_no, line_count):
     if line_count <= 0 or line_no <= 0:
@@ -37,13 +27,19 @@ def tool_change_markers_to_percents(markers, line_count):
 
 
 def _marker_label_bg_color(label):
-    """Return an rgba background color for a tool marker label."""
+    """Return an rgba background color for a tool marker label (matches toolpath/legend palette)."""
     if label == 'L':
-        return LASER_MARKER_LABEL_BG_COLOR
-    if label.startswith('T') and label[1:].isdigit():
+        tool_num = LASER_TOOL_NUMBER
+    elif label == 'P':
+        tool_num = PROBE_TOOL_NUMBER
+    elif label == '3DP':
+        tool_num = PROBE_3D_TOOL_NUMBER
+    elif label.startswith('T') and label[1:].isdigit():
         tool_num = int(label[1:])
-        return TOOL_MARKER_LABEL_BG_PALETTE[(tool_num - 1) % len(TOOL_MARKER_LABEL_BG_PALETTE)]
-    return DEFAULT_MARKER_LABEL_BG_COLOR
+    else:
+        return DEFAULT_MARKER_LABEL_BG_COLOR
+    rgb = tool_marker_palette_rgb(tool_num)
+    return (rgb[0], rgb[1], rgb[2], 1.0)
 
 
 def _marker_label_intervals_overlap(left, width, intervals, gap):

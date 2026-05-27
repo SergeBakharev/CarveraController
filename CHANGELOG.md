@@ -19,6 +19,7 @@
 - Fixed: Last character of the current file was sometimes missing in the file viewer
 - Fixed: Disable trackpad being treated as touchscreen on Linux
 - Fixed: Jogging was incorrectly blocked/allowed under certain conditions
+- Fixed: GCode parser: Do not set tool number to 7 after M321
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file
 

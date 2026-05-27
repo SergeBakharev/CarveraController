@@ -207,7 +207,7 @@ import subprocess
 from . import Utils
 from . import custom_widgets
 from kivy.config import ConfigParser
-from .CNC import CNC, highlight_gcode_line, escape_gcode_markup, GCODE_DEFAULT_COLORS
+from .CNC import CNC, LASER_TOOL_NUMBER, PROBE_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER, highlight_gcode_line, escape_gcode_markup, GCODE_DEFAULT_COLORS
 from .GcodeViewer import GCodeViewer
 from .ui.PlayProgressBar import play_percent_from_line, tool_change_markers_to_percents
 from .Controller import Controller, NOT_CONNECTED, STATECOLOR, STATECOLORDEF,\
@@ -3233,7 +3233,7 @@ class Makera(RelativeLayout):
                 subprocess.Popen([opener, log_dir])
 
     def open_probing_popup(self):
-        if CNC.vars["tool"] == 0 or CNC.vars["tool"] >=999990:
+        if CNC.vars["tool"] == PROBE_TOOL_NUMBER or CNC.vars["tool"] >= PROBE_3D_TOOL_NUMBER:
             # Disable keyboard control to prevent accidents when opening the popup
             # But save the state to restore after probing is closed
             self._pre_modal_keyboard_jog = self.keyboard_jog_control
@@ -4023,11 +4023,11 @@ class Makera(RelativeLayout):
         target_tool = str(CNC.vars['target_tool'])
         target_collet_type = CNC.vars['target_collet_type']
         target_collet_type_text = ["Undefined","3mm", "1/8\"", "4mm", "6mm", "1/4\"","8mm"]
-        if CNC.vars['target_tool'] == 0:
+        if CNC.vars['target_tool'] == PROBE_TOOL_NUMBER:
             target_tool = 'Probe'
-        elif CNC.vars['target_tool'] == 8888:
+        elif CNC.vars['target_tool'] == LASER_TOOL_NUMBER:
             target_tool = 'Laser'
-        elif CNC.vars['target_tool'] >= 999990 and CNC.vars['target_tool'] <= 999999:
+        elif CNC.vars['target_tool'] >= PROBE_3D_TOOL_NUMBER and CNC.vars['target_tool'] <= 999999:
             target_tool = '3D Probe'
 
         app = App.get_running_app()
@@ -5263,7 +5263,7 @@ class Makera(RelativeLayout):
 
             # update tool data
             if CNC.vars["tool"] < 0:
-                if app.lasering or CNC.vars["tool"] == 8888:
+                if app.lasering or CNC.vars["tool"] == LASER_TOOL_NUMBER:
                     self.tool_data_view.main_text = tr._("Laser")
                     if self.status_index % 2 == 0:
                         self.tool_data_view.minr_text = "TLO: {:.3f}".format(CNC.vars["tlo"])
@@ -5282,9 +5282,9 @@ class Makera(RelativeLayout):
                 self.tool_drop_down.status_tlo.value = "{:.3f}".format(CNC.vars["tlo"])
                 if CNC.vars["tool"] == 0:
                     self.tool_data_view.main_text = tr._("Probe")
-                elif CNC.vars["tool"] == 8888:
+                elif CNC.vars["tool"] == LASER_TOOL_NUMBER:
                     self.tool_data_view.main_text = tr._("Laser")
-                elif CNC.vars["tool"] == 999990:
+                elif CNC.vars["tool"] == PROBE_3D_TOOL_NUMBER:
                     self.tool_data_view.main_text = tr._("3DProb")
                 else:
                     self.tool_data_view.main_text = "{:.0f}".format(CNC.vars["tool"])
@@ -6568,11 +6568,15 @@ class Makera(RelativeLayout):
                 self.cnc.parseLine(line, line_no)
                 if self.upcoming_tool == 0:
                     self.upcoming_tool = self.cnc.tool
-                if self.cnc.tool not in self.used_tools:
+                if (self.cnc.tool_cmd or self.cnc.tool != prev_tool) and self.cnc.tool not in self.used_tools:
                     self.used_tools.append(self.cnc.tool)
                 tool_change_label = None
-                if self.cnc.mval == 321:
+                if self.cnc.mval == 321 or self.cnc.tool == LASER_TOOL_NUMBER:
                     tool_change_label = 'L'
+                elif self.cnc.tool == PROBE_TOOL_NUMBER and (self.cnc.tool != prev_tool or self.cnc.tool_cmd):
+                    tool_change_label = 'P'
+                elif self.cnc.tool == PROBE_3D_TOOL_NUMBER and self.cnc.tool != prev_tool:
+                    tool_change_label = '3DP'
                 elif self.cnc.tool >= 1 and self.cnc.tool != prev_tool:
                     tool_change_label = 'T%d' % self.cnc.tool
                 if tool_change_label is not None:
