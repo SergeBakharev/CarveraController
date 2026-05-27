@@ -681,19 +681,19 @@ class Controller:
             logger.warning(f"Error getting line position from gcode_viewer for line {line_number}: {e}")
             return (None, None, None, None)
 
-    def _find_m3_spindle_speed(self, local_file_path, start_line):
+    def _find_m3_spindle_speed(self, lines, start_line):
         """
         Search backwards from start_line to find M3 commands and extract S (spindle speed) parameter.
         First checks the most recent M3 command, then searches backwards if no S parameter found.
         
         Args:
-            local_file_path: Path to the gcode file
+            lines: Gcode file lines (1-based line numbers index into this list)
             start_line: Line number to search backwards from (1-based)
         
         Returns:
             Spindle speed value as float, or None if not found
         """
-        if not local_file_path or not os.path.exists(local_file_path):
+        if not lines:
             return None
         
         try:
@@ -703,9 +703,6 @@ class Controller:
             except (ValueError, TypeError):
                 logger.warning(f"Invalid start_line value: {start_line}")
                 return None
-            
-            with open(local_file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = f.readlines()
             
             if start_line < 1 or start_line > len(lines):
                 return None
@@ -786,19 +783,19 @@ class Controller:
             return None
             
         except Exception as e:
-            logger.warning(f"Error finding M3 spindle speed before line {start_line} in {local_file_path}: {e}")
+            logger.warning(f"Error finding M3 spindle speed before line {start_line}: {e}")
             return None
 
-    def _find_last_feed_rate(self, local_file_path=None, start_line=None, feed_lookup=None):
+    def _find_last_feed_rate(self, lines=None, start_line=None, feed_lookup=None):
         """
         Return the feed rate (mm/min) in effect at start_line. Uses either pre-parsed
-        feed data from the CNC parser or reads the gcode file.
+        feed data from the CNC parser or scans gcode lines.
 
         Args:
-            local_file_path: Path to the gcode file (used when feed_lookup is None)
+            lines: Gcode file lines (used when feed_lookup is None)
             start_line: Line number to search backwards from (1-based)
             feed_lookup: Optional dict mapping line_no (int) -> feed (float) from CNC
-                         coordinates; when provided, file is not read.
+                         coordinates; when provided, lines is not scanned.
 
         Returns:
             Feed rate value as float, or None if not found
@@ -813,7 +810,7 @@ class Controller:
                     return feed_lookup[line_no]
             return None
 
-        if not local_file_path or not os.path.exists(local_file_path):
+        if not lines:
             return None
 
         try:
@@ -824,9 +821,6 @@ class Controller:
                 logger.warning(f"Invalid start_line value: {start_line}")
                 return None
 
-            with open(local_file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = f.readlines()
-            
             if start_line < 1 or start_line > len(lines):
                 return None
             
@@ -880,7 +874,7 @@ class Controller:
             return None
             
         except Exception as e:
-            logger.warning(f"Error finding feed rate before line {start_line} in {local_file_path}: {e}")
+            logger.warning(f"Error finding feed rate before line {start_line}: {e}")
             return None
 
     def _gcode_line_to_cmd_tokens(self, original_line):
@@ -934,12 +928,12 @@ class Controller:
             parts.append(tokens[m6_index + 1].upper())
         return " ".join(parts)
 
-    def _find_command_line_number(self, local_file_path, start_line, gcode_command):
+    def _find_command_line_number(self, lines, start_line, gcode_command):
         """
         Search backwards from start_line to find the last occurrence of a gcode command.
         
         Args:
-            local_file_path: Path to the gcode file
+            lines: Gcode file lines (1-based line numbers index into this list)
             start_line: Line number to search backwards from (1-based)
             gcode_command: Literal gcode command to search for (e.g., "G20", "G21", "M3", "M6")
                           Can include parameters (e.g., "M3 S1000", "M6 T1")
@@ -948,7 +942,7 @@ class Controller:
             Tuple of (command_string, line_number). For M6, includes adjacent T on the same line
             (e.g. 'T4 M6'). Otherwise the matched modal word (e.g. G90 from 'G90 G94').
         """
-        if not local_file_path or not os.path.exists(local_file_path):
+        if not lines:
             return (None, None)
         
         try:
@@ -958,9 +952,6 @@ class Controller:
             except (ValueError, TypeError):
                 logger.warning(f"Invalid start_line value: {start_line}")
                 return (None, None)
-            
-            with open(local_file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = f.readlines()
             
             if start_line < 1 or start_line > len(lines):
                 return (None, None)
@@ -978,11 +969,11 @@ class Controller:
                         return (token.upper(), i + 1)
                 
         except Exception as e:
-            logger.warning(f"Error finding command {gcode_command} before line {start_line} in {local_file_path}: {e}")
+            logger.warning(f"Error finding command {gcode_command} before line {start_line}: {e}")
         
         return (None, None)
 
-    def _get_last_movement_line_before(self, local_file_path, start_line):
+    def _get_last_movement_line_before(self, lines, start_line):
         """
         Return the 1-based line number of the last movement command (G0–G3) working backwards from start_line.
         Uses _find_command_line_number for each movement command and returns the highest line number.
@@ -990,33 +981,29 @@ class Controller:
         """
         last_line = None
         for cmd in ("G0", "G1", "G2", "G3"):
-            _, line_num = self._find_command_line_number(local_file_path, start_line, cmd)
+            _, line_num = self._find_command_line_number(lines, start_line, cmd)
             if line_num is not None and (last_line is None or line_num > last_line):
                 last_line = line_num
         return last_line
 
-    def playStartLineCommand(self, filename, start_line, preview=False, local_file_path=None):
+    def playStartLineCommand(self, filename, start_line, preview=False, lines=None):
         # Build the play command with proper formatting
         play_command = "play %s\n" % filename.replace(' ', '\x01')
         if '\\' in filename:
             play_command = "play %s" % '/'.join(filename.split('\\')).replace(' ', '\x01')
 
-        # Position to move to before start: last movement line before start_line (from file), then from GcodeViewer
+        # Position to move to before start: last movement line before start_line (from loaded lines), then from GcodeViewer
         try:
             start_line_int = int(start_line)
         except (ValueError, TypeError):
             raise ValueError(f"Invalid start line: {start_line!r}")
 
-        if local_file_path:
-            # Fail closed if we can't safely derive modal state from the file.
-            if not os.path.exists(local_file_path):
-                logger.error(f"Cached gcode file is missing from local file system: {local_file_path}\n")
-                raise FileNotFoundError(
-                    f"Cached gcode file is missing from local file system: {local_file_path}"
-                )
+        if not lines:
+            raise ValueError("Gcode lines required for resume-at-line")
+
         prev_line = None
-        if local_file_path and start_line_int is not None:
-            prev_line = self._get_last_movement_line_before(local_file_path, start_line_int)
+        if start_line_int is not None:
+            prev_line = self._get_last_movement_line_before(lines, start_line_int)
         if prev_line is None and start_line_int is not None:
             prev_line = max(1, start_line_int - 1)
         prev_line = max(1, prev_line) if prev_line else None
@@ -1030,10 +1017,10 @@ class Controller:
         additional_commands = []
         m6_line = None
         
-        if local_file_path:
+        if lines:
             # Search for G20 or G21 (unit mode) - take the last one found
-            _, g20_line = self._find_command_line_number(local_file_path, start_line, "G20")
-            _, g21_line = self._find_command_line_number(local_file_path, start_line, "G21")
+            _, g20_line = self._find_command_line_number(lines, start_line, "G20")
+            _, g21_line = self._find_command_line_number(lines, start_line, "G21")
             # Determine which was found last by checking which line number is higher
             if g20_line is not None and g21_line is not None:
                 # Both found, take the one with higher line number (more recent)
@@ -1047,8 +1034,8 @@ class Controller:
                 additional_commands.append("buffer G21")
 
             # Absolute vs incremental distance mode (G90 / G91), including on shared lines e.g. G90 G94
-            _, g90_line = self._find_command_line_number(local_file_path, start_line, "G90")
-            _, g91_line = self._find_command_line_number(local_file_path, start_line, "G91")
+            _, g90_line = self._find_command_line_number(lines, start_line, "G90")
+            _, g91_line = self._find_command_line_number(lines, start_line, "G91")
             if g90_line is not None and g91_line is not None:
                 if g90_line > g91_line:
                     additional_commands.append("buffer G90")
@@ -1058,19 +1045,17 @@ class Controller:
                     # Same line: last G90/G91 word wins (e.g. G91 G90)
                     last_mode = None
                     try:
-                        with open(local_file_path, "r", encoding="utf-8", errors="ignore") as f:
-                            joint_line = f.readlines()[g90_line - 1]
+                        joint_line = lines[g90_line - 1]
                         for tok in self._gcode_line_to_cmd_tokens(joint_line):
                             tu = tok.upper()
                             if tu == "G90":
                                 last_mode = "G90"
                             elif tu == "G91":
                                 last_mode = "G91"
-                    except (OSError, IndexError) as e:
+                    except IndexError as e:
                         logger.warning(
-                            "Could not read line %s for G90/G91 tie-break (%s): %s",
+                            "Could not read line %s for G90/G91 tie-break: %s",
                             g90_line,
-                            local_file_path,
                             e,
                         )
                     if last_mode:
@@ -1082,16 +1067,16 @@ class Controller:
 
             # Search for WCS coordinate space - find the last one used
             wcs_commands = [
-                ("G53", self._find_command_line_number(local_file_path, start_line, "G53")),
-                ("G54", self._find_command_line_number(local_file_path, start_line, "G54")),
-                ("G55", self._find_command_line_number(local_file_path, start_line, "G55")),
-                ("G56", self._find_command_line_number(local_file_path, start_line, "G56")),
-                ("G57", self._find_command_line_number(local_file_path, start_line, "G57")),
-                ("G58", self._find_command_line_number(local_file_path, start_line, "G58")),
-                ("G59", self._find_command_line_number(local_file_path, start_line, "G59")),
-                ("G59.1", self._find_command_line_number(local_file_path, start_line, "G59.1")),
-                ("G59.2", self._find_command_line_number(local_file_path, start_line, "G59.2")),
-                ("G59.3", self._find_command_line_number(local_file_path, start_line, "G59.3")),
+                ("G53", self._find_command_line_number(lines, start_line, "G53")),
+                ("G54", self._find_command_line_number(lines, start_line, "G54")),
+                ("G55", self._find_command_line_number(lines, start_line, "G55")),
+                ("G56", self._find_command_line_number(lines, start_line, "G56")),
+                ("G57", self._find_command_line_number(lines, start_line, "G57")),
+                ("G58", self._find_command_line_number(lines, start_line, "G58")),
+                ("G59", self._find_command_line_number(lines, start_line, "G59")),
+                ("G59.1", self._find_command_line_number(lines, start_line, "G59.1")),
+                ("G59.2", self._find_command_line_number(lines, start_line, "G59.2")),
+                ("G59.3", self._find_command_line_number(lines, start_line, "G59.3")),
             ]
             # Find the WCS command with the highest line number (most recent)
             last_wcs = None
@@ -1104,8 +1089,8 @@ class Controller:
                 additional_commands.append(f"buffer {last_wcs}")
 
             # Search for M7 (air assist on) and M9 (air assist off)
-            _, m7_line = self._find_command_line_number(local_file_path, start_line, "M7")
-            _, m9_line = self._find_command_line_number(local_file_path, start_line, "M9")
+            _, m7_line = self._find_command_line_number(lines, start_line, "M7")
+            _, m9_line = self._find_command_line_number(lines, start_line, "M9")
             if m7_line is not None and m9_line is not None:
                 if m7_line > m9_line:
                     additional_commands.append("buffer M7")
@@ -1116,15 +1101,15 @@ class Controller:
             # Search for M6 (tool change) 
             # +1 to start_line because would be silly to change to the previous tool only to change to something else
             # _find_command_line_number() only searchs backwards
-            m6_cmd, m6_line = self._find_command_line_number(local_file_path, start_line_int + 1, "M6")  
+            m6_cmd, m6_line = self._find_command_line_number(lines, start_line_int + 1, "M6")  
             if m6_cmd:
                 additional_commands.append(f"buffer {m6_cmd}")
 
             # Search for M3 (spindle on), M5 (spindle off), M321 (laser mode on), and M322 (laser mode off)
-            m3_cmd, m3_line = self._find_command_line_number(local_file_path, start_line, "M3")
-            _, m5_line = self._find_command_line_number(local_file_path, start_line, "M5")
-            _, m321_line = self._find_command_line_number(local_file_path, start_line, "M321")
-            _, m322_line = self._find_command_line_number(local_file_path, start_line, "M322")
+            m3_cmd, m3_line = self._find_command_line_number(lines, start_line, "M3")
+            _, m5_line = self._find_command_line_number(lines, start_line, "M5")
+            _, m321_line = self._find_command_line_number(lines, start_line, "M321")
+            _, m322_line = self._find_command_line_number(lines, start_line, "M322")
 
             if (m321_line or 0) > max(m322_line or 0, m5_line or 0, m3_line or 0):  # Yucky way to compare with vars that might be NoneType. Sorry
                 # Laser mode was last used
@@ -1132,7 +1117,7 @@ class Controller:
             elif (m3_line or 0) > max(m321_line or 0, m5_line or 0):
                 # Spindle mode was last used
                 # Need to search for last spindle speed since it could have been set in a different command
-                spindle_speed = self._find_m3_spindle_speed(local_file_path, start_line)
+                spindle_speed = self._find_m3_spindle_speed(lines, start_line)
                 if spindle_speed is not None:
                     additional_commands.append(f"buffer M3 S{spindle_speed:.0f}")
                 else:
@@ -1159,8 +1144,8 @@ class Controller:
             additional_commands.append(f"buffer G0 A{a_machine:.3f}")
         # Set the G1 feed modal
         feed_rate = None
-        if local_file_path:
-            feed_rate = self._find_last_feed_rate(local_file_path, start_line)
+        if lines:
+            feed_rate = self._find_last_feed_rate(lines, start_line)
         if feed_rate:
             additional_commands.append(f"buffer G1 F{feed_rate:.0f}")
 
@@ -1430,7 +1415,7 @@ class Controller:
         # init connection
         self.connection_type = conn_type
         # Persist the last connection target so callers can detect "same machine"
-        # reconnects (e.g. for resume-at-line cached file behavior).
+        # reconnects (e.g. for resume-at-line selection / loaded lines behavior).
         self.connection_address = address
         if conn_type == CONN_USB:
             self.stream = self.usb_stream

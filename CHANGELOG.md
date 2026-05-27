@@ -4,10 +4,13 @@
 - Enhancement: Improvements to saving changes in settings menu
 - Enhancement: Add syntax highlighting to the file viewer
 - Enhancement: Only re-render the G-Code viewer scene if something has changed
+- Enhancement: Add Facing wizard
 - Enhancement: Support gamepads as pendants
 - Enhancement: Added iPhone support
 - Enhancement: Improve Gcode viewer toolbar buttons layout
 - Enhancement: Show current config probe tip diameter in probing panels
+- Enhancement: Show tool change markers on the playback progress bar
+- Enhancement: Add grid visualization and color schemes selector to the G-Code viewer
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
 - Fixed: Repeated firmware checks now happen just once
 - Fixed: UI widget updates from the SerialMonitor() now dispatched via the main thread. This should reduce the number of RecycleView related crashes
@@ -17,6 +20,7 @@
 - Fixed: Disable trackpad being treated as touchscreen on Linux
 - Fixed: Jogging was incorrectly blocked/allowed under certain conditions
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
+- Change: Resume playback will now use gcode loaded in the controller instead of cached local file
 
 [2.1.0]
 - Enhancement: Add right-click menu option to clear resume-at-line setting
