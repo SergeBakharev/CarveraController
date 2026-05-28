@@ -467,7 +467,7 @@ class Controller:
     def unclampToolCommand(self):
         self.executeCommand("M490.2\n")
 
-    def changeToolCommand(self, tool):
+    def change_tool_command(self, tool):
         if tool == 'e':
             self.executeCommand("M6T0\n")
         elif tool == 'r':
@@ -478,7 +478,7 @@ class Controller:
         else:
             self.executeCommand("M6T%s\n" % tool)
 
-    def setToolCommand(self, tool):
+    def set_tool_command(self, tool):
         if tool == 'e':
             self.executeCommand("M493.2T0\n")
         elif tool == 'r':
@@ -1724,7 +1724,7 @@ class Controller:
         self.gotoSafeZ()
         self.sendGCode("G53 G0 X%g Y%g" % (CNC.vars['wcox'], CNC.vars['wcoy']))
 
-    def wcsSetA(self, a = None):
+    def wcs_set_a(self, a = None):
         cmd = "G10L20P0"
         if a is not None and abs(a) < 3600000.0: cmd += "A" + str(round(a, 5))
 
@@ -1733,14 +1733,14 @@ class Controller:
     def shrinkA(self):
         self.sendGCode("G92.4 A0 S0")
 
-    def RapMoveA(self, a = None):
+    def rapid_move_a(self, a = None):
         cmd = "G90G0"
         cmd += "X"  + str(round(a, 5))
         cmd = "G92.4"
         cmd += " A " + str(round(a, 5)) + " R0"
         if a is not None and abs(a) < 3600000.0: self.sendGCode(cmd)
 
-    def wcsSet(self, x = None, y = None, z = None, a = None):
+    def wcs_set(self, x = None, y = None, z = None, a = None):
         cmd = "G10L20P0"
 
         pos = ""

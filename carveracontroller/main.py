@@ -173,6 +173,16 @@ import subprocess
 
 from . import Utils
 from . import custom_widgets
+from .ui import widget_helpers
+from .ui.popups.set_position import (
+    ChangeToolPopup,
+    MoveAPopup,
+    SetAPopup,
+    SetToolPopup,
+    SetXPopup,
+    SetYPopup,
+    SetZPopup,
+)
 from kivy.config import ConfigParser
 from .CNC import CNC, highlight_gcode_line, escape_gcode_markup, GCODE_DEFAULT_COLORS
 from .GcodeViewer import GCodeViewer
@@ -591,9 +601,9 @@ class OriginPopup(ModalView):
                 x = 0
                 y = 0
         self.txt_x_offset.text = str(x)
-        Utils.bind_auto_select_to_text_input(self.txt_x_offset)
+        widget_helpers.bind_auto_select_to_text_input(self.txt_x_offset)
         self.txt_y_offset.text = str(y)
-        Utils.bind_auto_select_to_text_input(self.txt_y_offset)
+        widget_helpers.bind_auto_select_to_text_input(self.txt_y_offset)
 
     def selected_anchor(self):
         if self.cbx_anchor2.active:
@@ -1238,170 +1248,6 @@ class ConfigPopup(ModalView):
         makera.setting_change_list.clear()
         self.btn_apply.disabled = True
         self.dismiss(force=True)
-
-class SetXPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(SetXPopup, self).__init__(**kwargs)
-    
-    def validate_inputs(self):
-        """Validate that offset input is not empty and is a valid number."""
-        offset_text = self.ids.txt_offset.text.strip()
-        
-        if not offset_text:
-            return False, tr._("Please enter a value for X offset.")
-        
-        try:
-            float(offset_text)
-            return True, ""
-        except ValueError:
-            return False, tr._("Please enter a valid number for X offset.")
-    
-    def on_ok_pressed(self):
-        """Handle OK button press with validation."""
-        is_valid, error_message = self.validate_inputs()
-        if is_valid:
-            app = App.get_running_app()
-            app.root.controller.wcsSet(float(self.ids.txt_offset.text), None, None, None)
-            self.dismiss()
-        else:
-            app = App.get_running_app()
-            Clock.schedule_once(partial(app.root.show_message_popup, error_message, False), 0)
-
-class SetYPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(SetYPopup, self).__init__(**kwargs)
-    
-    def validate_inputs(self):
-        """Validate that offset input is not empty and is a valid number."""
-        offset_text = self.ids.txt_offset.text.strip()
-        
-        if not offset_text:
-            return False, tr._("Please enter a value for Y offset.")
-        
-        try:
-            float(offset_text)
-            return True, ""
-        except ValueError:
-            return False, tr._("Please enter a valid number for Y offset.")
-    
-    def on_ok_pressed(self):
-        """Handle OK button press with validation."""
-        is_valid, error_message = self.validate_inputs()
-        if is_valid:
-            app = App.get_running_app()
-            app.root.controller.wcsSet(None, float(self.ids.txt_offset.text), None, None)
-            self.dismiss()
-        else:
-            app = App.get_running_app()
-            Clock.schedule_once(partial(app.root.show_message_popup, error_message, False), 0)
-
-class SetZPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(SetZPopup, self).__init__(**kwargs)
-    
-    def validate_inputs(self):
-        """Validate that offset input is not empty and is a valid number."""
-        offset_text = self.ids.txt_offset.text.strip()
-        
-        if not offset_text:
-            return False, tr._("Please enter a value for Z offset.")
-        
-        try:
-            float(offset_text)
-            return True, ""
-        except ValueError:
-            return False, tr._("Please enter a valid number for Z offset.")
-    
-    def on_ok_pressed(self):
-        """Handle OK button press with validation."""
-        is_valid, error_message = self.validate_inputs()
-        if is_valid:
-            app = App.get_running_app()
-            app.root.controller.wcsSet(None, None, float(self.ids.txt_offset.text), None)
-            self.dismiss()
-        else:
-            app = App.get_running_app()
-            Clock.schedule_once(partial(app.root.show_message_popup, error_message, False), 0)
-
-class SetAPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(SetAPopup, self).__init__(**kwargs)
-    
-    def validate_inputs(self):
-        """Validate that offset input is not empty and is a valid number."""
-        offset_text = self.ids.txt_offset.text.strip()
-        
-        if not offset_text:
-            return False, tr._("Please enter a value for A offset.")
-        
-        try:
-            float(offset_text)
-            return True, ""
-        except ValueError:
-            return False, tr._("Please enter a valid number for A offset.")
-    
-    def on_ok_pressed(self):
-        """Handle OK button press with validation."""
-        is_valid, error_message = self.validate_inputs()
-        if is_valid:
-            app = App.get_running_app()
-            app.root.controller.wcsSetA(float(self.ids.txt_offset.text.strip()))
-            self.dismiss()
-        else:
-            app = App.get_running_app()
-            Clock.schedule_once(partial(app.root.show_message_popup, error_message, False), 0)
-
-class SetToolPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(SetToolPopup, self).__init__(**kwargs)
-
-    def on_open(self):
-        super().on_open()
-        Utils.bind_auto_select_to_text_input(self.txt_offset)
-
-
-class ChangeToolPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(ChangeToolPopup, self).__init__(**kwargs)
-
-    def on_open(self):
-        super().on_open()
-        Utils.bind_auto_select_to_text_input(self.txt_offset)
-
-class MoveAPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(MoveAPopup, self).__init__(**kwargs)
-    
-    def validate_inputs(self):
-        """Validate that A position input is not empty and is a valid number."""
-        offset_text = self.ids.txt_offset.text.strip()
-        
-        if not offset_text:
-            return False, tr._("Please enter a value for A position.")
-        
-        try:
-            float(offset_text)
-            return True, ""
-        except ValueError:
-            return False, tr._("Please enter a valid number for A position.")
-    
-    def on_ok_pressed(self):
-        """Handle OK button press with validation."""
-        is_valid, error_message = self.validate_inputs()
-        if is_valid:
-            app = App.get_running_app()
-            app.root.controller.RapMoveA(float(self.ids.txt_offset.text.strip()))
-            self.dismiss()
-        else:
-            app = App.get_running_app()
-            Clock.schedule_once(partial(app.root.show_message_popup, error_message, False), 0)
 
 class WCSSettingsPopup(ModalView):
     def __init__(self, controller, wcs_names, **kwargs):

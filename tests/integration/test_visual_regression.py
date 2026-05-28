@@ -141,3 +141,42 @@ class TestAlarmState:
             save_reference(name)
         else:
             compare_screenshots(name)
+
+
+class TestSetPositionPopups:
+    """Screenshots of the SetX/Y/Z/A, SetTool, ChangeTool, and MoveA popups."""
+
+    def _capture_popup(self, kivy_app, popup, name, update_references):
+        kivy_app.root.content.current = "Control"
+        popup.open()
+        pump_frames(20, sleep=0.05)
+        capture_screenshot(kivy_app, name)
+        popup.dismiss()
+        pump_frames(10, sleep=0.05)
+        if update_references:
+            save_reference(name)
+        else:
+            compare_screenshots(name)
+
+    def test_set_x_popup(self, kivy_app, update_references):
+        self._capture_popup(kivy_app, kivy_app.root.coord_popup.setx_popup, "set_x_popup", update_references)
+
+    def test_set_y_popup(self, kivy_app, update_references):
+        self._capture_popup(kivy_app, kivy_app.root.coord_popup.sety_popup, "set_y_popup", update_references)
+
+    def test_set_z_popup(self, kivy_app, update_references):
+        self._capture_popup(kivy_app, kivy_app.root.coord_popup.setz_popup, "set_z_popup", update_references)
+
+    def test_set_a_popup(self, kivy_app, update_references):
+        self._capture_popup(kivy_app, kivy_app.root.coord_popup.seta_popup, "set_a_popup", update_references)
+
+    def test_set_tool_popup(self, kivy_app, update_references):
+        self._capture_popup(kivy_app, kivy_app.root.coord_popup.settool_popup, "set_tool_popup", update_references)
+
+    def test_change_tool_popup(self, kivy_app, update_references):
+        self._capture_popup(
+            kivy_app, kivy_app.root.coord_popup.change_tool_popup, "change_tool_popup", update_references
+        )
+
+    def test_move_a_popup(self, kivy_app, update_references):
+        self._capture_popup(kivy_app, kivy_app.root.coord_popup.MoveA_popup, "move_a_popup", update_references)
