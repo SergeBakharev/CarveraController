@@ -117,7 +117,7 @@ class ProbeRunner:
 
     def _tick_status(self) -> None:
         frame = _PROBE_ANIM_FRAMES[self._anim_frame % len(_PROBE_ANIM_FRAMES)]
-        self._set_status_text(f"{frame}  {tr._('Probing in progress\u2026')}")
+        self._set_status_text(f"{frame}  {tr._('Probing in progress ...')}")
 
     def _on_timeout(self, _dt=None, run_token: int | None = None) -> None:
         if self._active_token is None:
