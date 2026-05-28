@@ -9,6 +9,7 @@
 - Enhancement: Added iPhone support
 - Enhancement: Improve Gcode viewer toolbar buttons layout
 - Enhancement: Show current config probe tip diameter in probing panels
+- Enhancement: Add Probe Scan tool
 - Enhancement: Show tool change markers on the playback progress bar
 - Enhancement: Add grid visualization and color schemes selector to the G-Code viewer
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed

@@ -1,0 +1,149 @@
+#:import tr carveracontroller.__main__.tr
+
+<LocalFilePickerDirButton>:
+    orientation: 'horizontal'
+    spacing: dp(4)
+    padding: dp(4), dp(6)
+    canvas.before:
+        Color:
+            rgba: 80/255, 80/255, 80/255, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+    Label:
+        size_hint_x: None
+        width: dp(16)
+        canvas.before:
+            Color:
+                rgba: 225/255, 225/255, 225/255, 1
+            Rectangle:
+                source: 'data/connected.png'
+                pos: self.center_x - dp(8), self.center_y - dp(8)
+                size: dp(16), dp(16)
+    Image:
+        size_hint_x: None
+        width: dp(18)
+        height: dp(18)
+        allow_stretch: True
+        keep_ratio: True
+        source: 'data/folder-32.png'
+    Label:
+        text: root.data_text
+        shorten: True
+        shorten_from: 'right'
+        halign: 'left'
+        valign: 'middle'
+        text_size: self.width, None
+        color: 225/255, 225/255, 225/255, 1
+
+<LocalFilePickerSheet>:
+    orientation: 'vertical'
+    padding: dp(8)
+    spacing: dp(8)
+    Label:
+        text: tr._('Choose folder and file name')
+        size_hint_y: None
+        height: dp(28)
+        font_size: dp(15)
+        text_size: self.width, None
+        halign: 'left'
+        color: 0.78, 0.79, 0.82, 1
+    BoxLayout:
+        size_hint_y: None
+        height: dp(40)
+        orientation: 'horizontal'
+        padding: dp(5)
+        spacing: dp(4)
+        canvas.before:
+            Color:
+                rgba: 56/255, 56/255, 56/255, 1
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        LocalFilePickerDirButton:
+            id: dir_btn
+            data_text: root.curr_dir_name
+            size_hint_x: None
+            width: dp(124)
+            on_release:
+                root.open_dir_dropdown(self)
+        Label:
+            size_hint_x: None
+            width: dp(8)
+        ButtonLabel:
+            id: lb_path1
+            text: root.curr_path_list[0] + ' ' if len(root.curr_path_list) > 0 else ''
+            size_hint_x: None
+            size: self.texture_size
+            bold: True
+            on_release:
+                root.goto_path(0)
+        ButtonLabel:
+            id: lb_path2
+            text: ' > ' + root.curr_path_list[1] + ' ' if len(root.curr_path_list) > 1 else ''
+            size_hint_x: None
+            size: self.texture_size
+            bold: True
+            on_release:
+                root.goto_path(1)
+        ButtonLabel:
+            id: lb_path3
+            text: ' > ' + root.curr_path_list[2] + ' ' if len(root.curr_path_list) > 2 else ''
+            size_hint_x: None
+            size: self.texture_size
+            bold: True
+            multiline: False
+            on_release:
+                root.goto_path(2)
+        ButtonLabel:
+            id: lb_path4
+            text: ' > ' + root.curr_path_list[3] + ' ' if len(root.curr_path_list) > 3 else ''
+            size_hint_x: None
+            size: self.texture_size
+            bold: True
+            on_release:
+                root.goto_path(3)
+        ButtonLabel:
+            id: lb_path5
+            text: ' > ' + root.curr_path_list[4] + ' ' if len(root.curr_path_list) > 4 else ''
+            size_hint_x: None
+            size: self.texture_size
+            bold: True
+            on_release:
+                root.goto_path(4)
+        ButtonLabel:
+            id: lb_path6
+            text: ' > ' + root.curr_path_list[5] + ' ' if len(root.curr_path_list) > 5 else ''
+            size_hint_x: None
+            size: self.texture_size
+            bold: True
+            on_release:
+                root.goto_path(5)
+        Label:
+            id: lb_path_placeholder
+            size_hint_x: 1
+    FileChooserListView:
+        id: fc
+        size_hint_y: 0.6
+    Label:
+        text: tr._('File name')
+        size_hint_y: None
+        height: dp(24)
+        font_size: dp(15)
+        halign: 'left'
+        text_size: self.width, None
+    TextInput:
+        id: ti_filename
+        multiline: False
+        size_hint_y: None
+        height: dp(36)
+    BoxLayout:
+        size_hint_y: None
+        height: dp(44)
+        spacing: dp(8)
+        Button:
+            id: btn_cancel
+            text: tr._('Cancel')
+        Button:
+            id: btn_confirm
+            text: tr._('Save')

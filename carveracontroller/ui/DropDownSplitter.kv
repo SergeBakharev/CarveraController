@@ -1,0 +1,13 @@
+<DropDownSplitter>:
+    size_hint_y: None
+    height: '20dp'
+    font_size: '13sp'
+    text_size: self.size
+    valign: 'middle'
+    color: 150/255, 150/255, 150/255, 1
+    canvas.before:
+        Color:
+            rgba: 60/255, 60/255, 60/255, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
