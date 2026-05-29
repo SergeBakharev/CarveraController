@@ -67,6 +67,9 @@ def normalize_angle(angle):
 
 ZOOMSTEP = 1.1
 DEFAULT_ZOOM = 0.65
+PROJ_NEAR = 2.0
+MIN_ZOOM = 0.1
+MAX_ZOOM = 10.0
 M_PI = 3.141592653
 MESH_LINE_CHUNK = 65500 # Max G-code lines per line_strip mesh (65500 vertices)
 
@@ -844,6 +847,7 @@ class GCodeViewer(Widget):
 
     orbit = True
     _grid_visible = True
+    _ortho_projection = False
     color_scheme = COLOR_SCHEME_BY_TYPE
     feed_min = 0.0
     feed_max = DEFAULT_FEED_MM_MIN
@@ -1858,7 +1862,16 @@ class GCodeViewer(Widget):
         asp = self.size[0] / max(self.size[1], 1.0)
         proj = Matrix()
         zoomidx = self.m_zoom
-        proj.view_clip((-0.5 + self.m_xPan) * asp * zoomidx, (0.5 + self.m_xPan) * asp * zoomidx, (-0.5 + self.m_yPan)*zoomidx, (0.5 + self.m_yPan)*zoomidx, 2, self.m_distance * 2,1)
+        persp = 0 if self._ortho_projection else 1
+        proj.view_clip(
+            (-0.5 + self.m_xPan) * asp * zoomidx,
+            (0.5 + self.m_xPan) * asp * zoomidx,
+            (-0.5 + self.m_yPan) * zoomidx,
+            (0.5 + self.m_yPan) * zoomidx,
+            PROJ_NEAR,
+            self.m_distance * 2,
+            persp,
+        )
         self._proj_matrix = proj
         self.linemesh['proj_mat'] = proj
         self.gridmesh['proj_mat'] = proj
@@ -2362,14 +2375,14 @@ class GCodeViewer(Widget):
                 print(sys.exc_info()[1])
 
     def zoom_in(self):
-        if (self.m_zoom > 0.1):
+        if self.m_zoom > MIN_ZOOM:
             self.m_zoom /= ZOOMSTEP
             self.update_proj()
             self.update_view()
             self._scene_dirty = True
 
     def zoom_out(self):
-        if (self.m_zoom < 10):
+        if self.m_zoom < MAX_ZOOM:
             self.m_zoom *= ZOOMSTEP
             self.update_proj()
             self.update_view()
@@ -2390,6 +2403,29 @@ class GCodeViewer(Widget):
 
     def is_grid_visible(self):
         return self._grid_visible
+
+    def _clamp_zoom(self):
+        self.m_zoom = max(MIN_ZOOM, min(MAX_ZOOM, self.m_zoom))
+
+    def _zoom_for_projection_switch(self, to_ortho):
+        """Match apparent scale at the look-at distance when toggling projection."""
+        r = max(self.m_distance, PROJ_NEAR + 1e-6)
+        if to_ortho:
+            return self.m_zoom * r / PROJ_NEAR
+        return self.m_zoom * PROJ_NEAR / r
+
+    def set_ortho_projection(self, ortho=True):
+        ortho = bool(ortho)
+        if ortho == self._ortho_projection:
+            return
+        self.m_zoom = self._zoom_for_projection_switch(ortho)
+        self._clamp_zoom()
+        self._ortho_projection = ortho
+        self.update_proj()
+        self._scene_dirty = True
+
+    def is_ortho_projection(self):
+        return self._ortho_projection
 
 
 def _compute_line_times_worker(raw_positions, raw_linenumbers, raw_feed_rates, progress_callback, progress_interval):
