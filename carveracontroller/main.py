@@ -6391,6 +6391,8 @@ class Makera(RelativeLayout):
             self.gcode_viewer.set_color_scheme('by_tool')
         elif text == tr._('Speed'):
             self.gcode_viewer.set_color_scheme('by_speed')
+        elif text == tr._('Height'):
+            self.gcode_viewer.set_color_scheme('by_z')
         else:
             self.gcode_viewer.set_color_scheme('by_type')
         self.refresh_gcode_color_legend()

@@ -14,6 +14,7 @@ from carveracontroller.GcodeViewer import (
     COLOR_SCHEME_BY_TYPE,
     COLOR_SCHEME_BY_TOOL,
     COLOR_SCHEME_BY_SPEED,
+    COLOR_SCHEME_BY_Z,
     speed_colormap_rgb,
     tool_palette_rgb,
 )
@@ -50,25 +51,45 @@ def build_legend_entries(color_scheme, gcode_viewer, used_tools):
             entries.append({'label': label, 'color': (*rgb, 1.0)})
         return entries
 
-    # Speed
-    feed_min = float(getattr(gcode_viewer, 'feed_min', 0.0) or 0.0)
-    feed_max = float(getattr(gcode_viewer, 'feed_max', 0.0) or 0.0)
-    if feed_max <= feed_min:
-        feed_max = feed_min + 1.0
+    if color_scheme == COLOR_SCHEME_BY_SPEED:
+        feed_min = float(getattr(gcode_viewer, 'feed_min', 0.0) or 0.0)
+        feed_max = float(getattr(gcode_viewer, 'feed_max', 0.0) or 0.0)
+        if feed_max <= feed_min:
+            feed_max = feed_min + 1.0
 
-    for step in range(0, 11):
-        t = step / 10.0
-        feed = feed_min + t * (feed_max - feed_min)
-        rgb = speed_colormap_rgb(t)
+        for step in range(0, 11):
+            t = step / 10.0
+            feed = feed_min + t * (feed_max - feed_min)
+            rgb = speed_colormap_rgb(t)
+            entries.append({
+                'label': f'{feed:.0f} mm/min',
+                'color': (*rgb, 1.0),
+            })
         entries.append({
-            'label': f'{feed:.0f} mm/min',
-            'color': (*rgb, 1.0),
+            'label': tr._('Rapid (G0)'),
+            'color': (1.0, 0.0, 0.0, 1.0),
         })
-    entries.append({
-        'label': tr._('Rapid (G0)'),
-        'color': (1.0, 0.0, 0.0, 1.0),
-    })
-    return entries
+        return entries
+
+    if color_scheme == COLOR_SCHEME_BY_Z:
+        z_min = float(getattr(gcode_viewer, 'z_min_mm', 0.0) or 0.0)
+        z_max = float(getattr(gcode_viewer, 'z_max_mm', 0.0) or 0.0)
+        if z_max <= z_min:
+            z_max = z_min + 1.0
+
+        # Top = higher Z (shallower); bottom = lower Z (deeper).
+        # Color t matches toolpath.glsl; labels use the same t mapped to mm.
+        for step in range(0, 11):
+            t = 1.0 - step / 10.0
+            z_val = z_min + t * (z_max - z_min)
+            rgb = speed_colormap_rgb(t)
+            entries.append({
+                'label': f'Z {z_val:.3f} mm',
+                'color': (*rgb, 1.0),
+            })
+        return entries
+
+    raise ValueError(f'Invalid color scheme: {color_scheme}')
 
 
 class _ColorSwatch(Widget):
