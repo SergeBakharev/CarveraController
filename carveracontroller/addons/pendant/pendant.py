@@ -140,6 +140,7 @@ if WHB04_SUPPORTED:
             self._daemon.on_jog = self._handle_jogging
             self._daemon.on_button_press = self._handle_button_press
             self._daemon.on_stop_jog = self._handle_stop_jog
+            self._daemon.on_permission_error = self._handle_permission_error
 
             self._daemon.start()
 
@@ -319,6 +320,38 @@ if WHB04_SUPPORTED:
                 self._controller.stopContinuousJog()
                 if self._update_ui_on_jog_stop:
                     self._update_ui_on_jog_stop()
+
+        def _handle_permission_error(self, daemon: whb04.Daemon) -> None:
+            message = (
+                "The WHB04 pendant was found but cannot be opened due to\n"
+                "insufficient permissions on the USB HID device.\n\n"
+                "See the documentation on how to fix these permissions on Linux:\n"
+                "https://carvera-community.gitbook.io/docs/controller/features/pendant-support#linux"
+            )
+            print(f"\nERROR: {message}\n", flush=True)
+
+            scroll = ScrollView(size_hint=(1, 1))
+            lbl = Label(text=message, halign='left', valign='top', size_hint_y=None)
+            lbl.bind(
+                width=lambda w, v: setattr(w, 'text_size', (v, None)),
+                texture_size=lambda w, v: setattr(w, 'height', v[1]),
+            )
+            scroll.add_widget(lbl)
+
+            btn = Button(text="Exit", size_hint_y=None, height=dp(44))
+
+            content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(10))
+            content.add_widget(scroll)
+            content.add_widget(btn)
+
+            popup = Popup(
+                title="Pendant Permission Error",
+                content=content,
+                size_hint=(0.85, 0.65),
+                auto_dismiss=False,
+            )
+            btn.bind(on_release=lambda *_: App.get_running_app().stop())
+            popup.open()
 
 
 class GamepadPendant(Pendant):

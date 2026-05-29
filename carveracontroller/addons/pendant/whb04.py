@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from enum import Enum
+import logging
+import os
 import struct
 import threading
 import time
@@ -8,6 +10,12 @@ from typing import Callable, List, Optional
 import platform
 
 import hid
+
+logger = logging.getLogger(__name__)
+
+
+class _PendantPermissionError(Exception):
+    """Raised when the pendant device is found but cannot be opened due to permissions."""
 
 # On Windows, the pendant is represented by two devices, meanwhile on Linux
 # the pendant is a single device. Let's abstract this away into the PendantHid class:
@@ -153,6 +161,7 @@ class Daemon:
         self.on_step_size_change: Optional[Callable[[Daemon, StepSize], None]] = None
         self.on_update: Optional[Callable[[Daemon], None]] = None
         self.on_stop_jog: Optional[Callable[[Daemon], None]] = None
+        self.on_permission_error: Optional[Callable[[Daemon], None]] = None
 
     def start(self) -> None:
         self._daemon_thread = threading.Thread(target=self._thread_loop, daemon=True)
@@ -329,28 +338,41 @@ class Daemon:
 
     def _thread_loop(self) -> None:
         while self._is_running:
+            connected = False
             try:
                 device = self._connect()
                 if device is None:
                     continue
 
                 with device as guarded_device:
+                    connected = True
                     if self.on_connect is not None:
                         self.callback_executor(lambda: self.on_connect(self))
                     self._device_loop(guarded_device)
-            except Exception:
-                # Exception means the device was disconnected or an error occurred.
-                # Let's just try again
-                pass
+            except _PendantPermissionError as e:
+                logger.error("Pendant found but cannot be opened: permission denied on %s", e)
+                self._is_running = False
+                if self.on_permission_error is not None:
+                    self.callback_executor(lambda: self.on_permission_error(self))
+            except Exception as e:
+                logger.warning("Pendant error (will retry): %s", e)
             finally:
-                if self.on_disconnect is not None:
-                        self.callback_executor(lambda: self.on_disconnect(self))
+                if connected and self.on_disconnect is not None:
+                    self.callback_executor(lambda: self.on_disconnect(self))
 
     def _connect(self, poll_interval: float = 0.1) -> Optional[PendantHid]:
         while self._is_running:
             devices = [d for d in hid.enumerate() if (d["vendor_id"], d["product_id"]) in self.DEVICE_IDS]
-            if len(devices) > 0:
-                return PendantHid(devices)
+            if devices:
+                try:
+                    return PendantHid(devices)
+                except Exception as e:
+                    path = devices[0].get("path", b"")
+                    if isinstance(path, bytes):
+                        path = path.decode("utf-8", errors="replace")
+                    if path and not os.access(path, os.R_OK | os.W_OK):
+                        raise _PendantPermissionError(path) from e
+                    raise
             time.sleep(poll_interval)
 
         return None
