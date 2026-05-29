@@ -485,12 +485,14 @@ class FacingWizardPopup(ModalView):
             self._m6_collet_pairs_list = _m6_collet_pairs()
             spc = self.ids.spn_m6_collet
             spc.values = [p[0] for p in self._m6_collet_pairs_list]
-            spc.text = self._m6_collet_pairs_list[0][0]
+            if spc.text not in spc.values:
+                spc.text = self._m6_collet_pairs_list[0][0]
 
             self._probe_tool_pairs_list = _probe_tool_pairs()
             spp = self.ids.spn_probe_tool
             spp.values = [p[0] for p in self._probe_tool_pairs_list]
-            spp.text = self._probe_tool_pairs_list[0][0]
+            if spp.text not in spp.values:
+                spp.text = self._probe_tool_pairs_list[0][0]
 
             self._stock_corner_pairs_list = _stock_corner_pairs()
             spcorner = self.ids.spn_stock_corner
