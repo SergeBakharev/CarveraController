@@ -227,7 +227,7 @@ def speed_colormap_rgb(t):
 
 GRID_QUAD_MIN_SIZE = 10.0
 CONFIG_GRID_VISIBLE_KEY = 'gcode_viewer_show_grid'
-VIEW_CUBE_SIZE = dp(80)
+VIEW_CUBE_SIZE = dp(96)
 VIEW_CUBE_MARGIN = dp(8)
 VIEW_CUBE_TOOLBAR_INSET = dp(48)
 VIEW_CUBE_TEXTURE_UNIT = 1
@@ -739,7 +739,6 @@ class GCodeViewer(Widget):
         self.viewcubemesh['view_mat'] = self.m_viewMatrix
         self.viewcubemesh['proj_mat'] = self._view_cube_proj
         self.viewcubemesh['cube_scale'] = float(VIEW_CUBE_WORLD_SCALE)
-        self.canvas.ask_update()
 
     def _setup_view_cube_mesh(self):
         verts, indices = build_view_cube_mesh()
@@ -1436,8 +1435,6 @@ class GCodeViewer(Widget):
         if self._proj_dirty:
             self.update_proj()
             self._proj_dirty = False
-
-        self._update_view_cube_uniforms()
 
         if self.lengths is None or len(self.lengths) <= 1:
             return
