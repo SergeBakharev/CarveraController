@@ -5,7 +5,7 @@
 #:import play_progress_bar carveracontroller.ui.PlayProgressBar
 #:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
 #:import LASER_TOOL_NUMBER carveracontroller.CNC.LASER_TOOL_NUMBER
-#:import PROBE_TOOL_NUMBER carveracontroller.CNC.PROBE_TOOL_NUMBER
+#:import ZPROBE_TOOL_NUMBER carveracontroller.CNC.ZPROBE_TOOL_NUMBER
 #:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
 #:include ui/GcodeColorSchemePanel.kv
 #:include addons/tooltips/Tooltips.kv
@@ -1545,7 +1545,7 @@
                 text: tr._('Change to stock Makera probe')
                 on_release:
                     root.dismiss()
-                    app.root.controller.changeToolCommand(PROBE_TOOL_NUMBER)
+                    app.root.controller.changeToolCommand(ZPROBE_TOOL_NUMBER)
 
 <MessagePopup>:
     btn_ok: btn_ok

@@ -9,7 +9,7 @@ from kivy.graphics import Color, Rectangle
 from kivy.metrics import dp
 from kivy.properties import ListProperty
 
-from carveracontroller.CNC import LASER_TOOL_NUMBER, PROBE_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER
+from carveracontroller.CNC import LASER_TOOL_NUMBER, ZPROBE_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER
 from carveracontroller.translation import tr
 from carveracontroller.GcodeViewer import (
     COLOR_SCHEME_BY_TYPE,
@@ -31,7 +31,7 @@ def _tool_legend_label(tool):
     tool_num = int(tool)
     if tool_num == LASER_TOOL_NUMBER:
         return tr._('Laser')
-    if tool_num == PROBE_TOOL_NUMBER:
+    if tool_num == ZPROBE_TOOL_NUMBER:
         return tr._('Probe')
     if tool_num == PROBE_3D_TOOL_NUMBER:
         return tr._('3D Probe')

@@ -5,7 +5,7 @@ from kivy.metrics import dp
 from kivy.properties import ListProperty, NumericProperty
 from kivy.uix.boxlayout import BoxLayout
 
-from carveracontroller.CNC import LASER_TOOL_NUMBER, PROBE_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER
+from carveracontroller.CNC import LASER_TOOL_NUMBER, ZPROBE_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER
 from carveracontroller.GcodeViewer import tool_marker_palette_rgb
 
 DEFAULT_MARKER_LABEL_BG_COLOR = (210 / 255, 210 / 255, 210 / 255, 1)
@@ -31,7 +31,7 @@ def _marker_label_bg_color(label):
     if label == 'L':
         tool_num = LASER_TOOL_NUMBER
     elif label == 'P':
-        tool_num = PROBE_TOOL_NUMBER
+        tool_num = ZPROBE_TOOL_NUMBER
     elif label == '3DP':
         tool_num = PROBE_3D_TOOL_NUMBER
     elif label.startswith('T') and label[1:].isdigit():

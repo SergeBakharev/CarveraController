@@ -207,7 +207,7 @@ import subprocess
 from . import Utils
 from . import custom_widgets
 from kivy.config import ConfigParser
-from .CNC import CNC, LASER_TOOL_NUMBER, PROBE_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER, highlight_gcode_line, escape_gcode_markup, GCODE_DEFAULT_COLORS
+from .CNC import CNC, LASER_TOOL_NUMBER, ZPROBE_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER, is_probe_tools_range, highlight_gcode_line, escape_gcode_markup, GCODE_DEFAULT_COLORS
 from .GcodeViewer import GCodeViewer
 from .ui.PlayProgressBar import play_percent_from_line, tool_change_markers_to_percents
 from .Controller import Controller, NOT_CONNECTED, STATECOLOR, STATECOLORDEF,\
@@ -3233,7 +3233,7 @@ class Makera(RelativeLayout):
                 subprocess.Popen([opener, log_dir])
 
     def open_probing_popup(self):
-        if CNC.vars["tool"] == PROBE_TOOL_NUMBER or CNC.vars["tool"] >= PROBE_3D_TOOL_NUMBER:
+        if CNC.vars["tool"] == ZPROBE_TOOL_NUMBER or is_probe_tools_range(CNC.vars["tool"]):
             # Disable keyboard control to prevent accidents when opening the popup
             # But save the state to restore after probing is closed
             self._pre_modal_keyboard_jog = self.keyboard_jog_control
@@ -4023,12 +4023,14 @@ class Makera(RelativeLayout):
         target_tool = str(CNC.vars['target_tool'])
         target_collet_type = CNC.vars['target_collet_type']
         target_collet_type_text = ["Undefined","3mm", "1/8\"", "4mm", "6mm", "1/4\"","8mm"]
-        if CNC.vars['target_tool'] == PROBE_TOOL_NUMBER:
+        if CNC.vars['target_tool'] == ZPROBE_TOOL_NUMBER:
             target_tool = 'Probe'
         elif CNC.vars['target_tool'] == LASER_TOOL_NUMBER:
             target_tool = 'Laser'
-        elif CNC.vars['target_tool'] >= PROBE_3D_TOOL_NUMBER and CNC.vars['target_tool'] <= 999999:
+        elif CNC.vars['target_tool'] == PROBE_3D_TOOL_NUMBER:
             target_tool = '3D Probe'
+        elif is_probe_tools_range(CNC.vars['target_tool']):
+            target_tool = 'Custom Probe'
 
         app = App.get_running_app()
         if app.has_atc:
@@ -6573,9 +6575,9 @@ class Makera(RelativeLayout):
                 tool_change_label = None
                 if self.cnc.mval == 321 or self.cnc.tool == LASER_TOOL_NUMBER:
                     tool_change_label = 'L'
-                elif self.cnc.tool == PROBE_TOOL_NUMBER and (self.cnc.tool != prev_tool or self.cnc.tool_cmd):
+                elif self.cnc.tool == ZPROBE_TOOL_NUMBER and (self.cnc.tool != prev_tool or self.cnc.tool_cmd):
                     tool_change_label = 'P'
-                elif self.cnc.tool == PROBE_3D_TOOL_NUMBER and self.cnc.tool != prev_tool:
+                elif self.cnc.tool == PROBE_3D_TOOL_NUMBER and (self.cnc.tool != prev_tool or self.cnc.tool_cmd):
                     tool_change_label = '3DP'
                 elif self.cnc.tool >= 1 and self.cnc.tool != prev_tool:
                     tool_change_label = 'T%d' % self.cnc.tool
