@@ -66,43 +66,10 @@ import threading
 import logging
 logger = logging.getLogger(__name__)
 
-# Add Android imports
-if kivy_platform == 'android':
-    from android import mActivity
-    from android.storage import primary_external_storage_path
-    from android.permissions import request_permissions, Permission, check_permission
-    from jnius import autoclass
-    Intent = autoclass('android.content.Intent')
-    Settings = autoclass('android.provider.Settings')
-    Environment = autoclass('android.os.Environment')
-
-def has_all_files_access():
-    if kivy_platform == 'android':
-        try:
-            return Environment.isExternalStorageManager()
-        except Exception as e:
-            logger.error(f"Error checking storage manager status: {e}")
-            return False
-    return True
-
-def request_android_permissions():
-    if kivy_platform == 'android':
-        try:
-            # Check if we already have all files access
-            if has_all_files_access():
-                logger.info("Already have all files access permission")
-                return
-
-            # Request all files access permission
-            intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-            mActivity.startActivity(intent)
-        except Exception as e:
-            logger.error(f"Error requesting permissions: {e}")
-
-from .addons.probing.ProbingPopup import ProbingPopup
 from carveracontroller.addons.probing.ProbingPopup import ProbingPopup
 from carveracontroller.addons.facing.FacingWizardPopup import FacingWizardPopup
 from carveracontroller.addons.pendant import SettingPendantSelector, SUPPORTED_PENDANTS, OverrideController, SettingGamepadBindings
+from carveracontroller.serial_listeners import dispatch_serial_line
 
 import json
 import re
@@ -206,6 +173,16 @@ import subprocess
 
 from . import Utils
 from . import custom_widgets
+from .ui import widget_helpers
+from .ui.popups.set_position import (
+    ChangeToolPopup,
+    MoveAPopup,
+    SetAPopup,
+    SetToolPopup,
+    SetXPopup,
+    SetYPopup,
+    SetZPopup,
+)
 from kivy.config import ConfigParser
 from .CNC import CNC, LASER_TOOL_NUMBER, ZPROBE_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER, is_probe_tools_range, highlight_gcode_line, escape_gcode_markup, GCODE_DEFAULT_COLORS
 from .GcodeViewer import GCodeViewer
@@ -624,9 +601,9 @@ class OriginPopup(ModalView):
                 x = 0
                 y = 0
         self.txt_x_offset.text = str(x)
-        Utils.bind_auto_select_to_text_input(self.txt_x_offset)
+        widget_helpers.bind_auto_select_to_text_input(self.txt_x_offset)
         self.txt_y_offset.text = str(y)
-        Utils.bind_auto_select_to_text_input(self.txt_y_offset)
+        widget_helpers.bind_auto_select_to_text_input(self.txt_y_offset)
 
     def selected_anchor(self):
         if self.cbx_anchor2.active:
@@ -1272,170 +1249,6 @@ class ConfigPopup(ModalView):
         self.btn_apply.disabled = True
         self.dismiss(force=True)
 
-class SetXPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(SetXPopup, self).__init__(**kwargs)
-    
-    def validate_inputs(self):
-        """Validate that offset input is not empty and is a valid number."""
-        offset_text = self.ids.txt_offset.text.strip()
-        
-        if not offset_text:
-            return False, tr._("Please enter a value for X offset.")
-        
-        try:
-            float(offset_text)
-            return True, ""
-        except ValueError:
-            return False, tr._("Please enter a valid number for X offset.")
-    
-    def on_ok_pressed(self):
-        """Handle OK button press with validation."""
-        is_valid, error_message = self.validate_inputs()
-        if is_valid:
-            app = App.get_running_app()
-            app.root.controller.wcsSet(float(self.ids.txt_offset.text), None, None, None)
-            self.dismiss()
-        else:
-            app = App.get_running_app()
-            Clock.schedule_once(partial(app.root.show_message_popup, error_message, False), 0)
-
-class SetYPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(SetYPopup, self).__init__(**kwargs)
-    
-    def validate_inputs(self):
-        """Validate that offset input is not empty and is a valid number."""
-        offset_text = self.ids.txt_offset.text.strip()
-        
-        if not offset_text:
-            return False, tr._("Please enter a value for Y offset.")
-        
-        try:
-            float(offset_text)
-            return True, ""
-        except ValueError:
-            return False, tr._("Please enter a valid number for Y offset.")
-    
-    def on_ok_pressed(self):
-        """Handle OK button press with validation."""
-        is_valid, error_message = self.validate_inputs()
-        if is_valid:
-            app = App.get_running_app()
-            app.root.controller.wcsSet(None, float(self.ids.txt_offset.text), None, None)
-            self.dismiss()
-        else:
-            app = App.get_running_app()
-            Clock.schedule_once(partial(app.root.show_message_popup, error_message, False), 0)
-
-class SetZPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(SetZPopup, self).__init__(**kwargs)
-    
-    def validate_inputs(self):
-        """Validate that offset input is not empty and is a valid number."""
-        offset_text = self.ids.txt_offset.text.strip()
-        
-        if not offset_text:
-            return False, tr._("Please enter a value for Z offset.")
-        
-        try:
-            float(offset_text)
-            return True, ""
-        except ValueError:
-            return False, tr._("Please enter a valid number for Z offset.")
-    
-    def on_ok_pressed(self):
-        """Handle OK button press with validation."""
-        is_valid, error_message = self.validate_inputs()
-        if is_valid:
-            app = App.get_running_app()
-            app.root.controller.wcsSet(None, None, float(self.ids.txt_offset.text), None)
-            self.dismiss()
-        else:
-            app = App.get_running_app()
-            Clock.schedule_once(partial(app.root.show_message_popup, error_message, False), 0)
-
-class SetAPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(SetAPopup, self).__init__(**kwargs)
-    
-    def validate_inputs(self):
-        """Validate that offset input is not empty and is a valid number."""
-        offset_text = self.ids.txt_offset.text.strip()
-        
-        if not offset_text:
-            return False, tr._("Please enter a value for A offset.")
-        
-        try:
-            float(offset_text)
-            return True, ""
-        except ValueError:
-            return False, tr._("Please enter a valid number for A offset.")
-    
-    def on_ok_pressed(self):
-        """Handle OK button press with validation."""
-        is_valid, error_message = self.validate_inputs()
-        if is_valid:
-            app = App.get_running_app()
-            app.root.controller.wcsSetA(float(self.ids.txt_offset.text.strip()))
-            self.dismiss()
-        else:
-            app = App.get_running_app()
-            Clock.schedule_once(partial(app.root.show_message_popup, error_message, False), 0)
-
-class SetToolPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(SetToolPopup, self).__init__(**kwargs)
-
-    def on_open(self):
-        super().on_open()
-        Utils.bind_auto_select_to_text_input(self.txt_offset)
-
-
-class ChangeToolPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(ChangeToolPopup, self).__init__(**kwargs)
-
-    def on_open(self):
-        super().on_open()
-        Utils.bind_auto_select_to_text_input(self.txt_offset)
-
-class MoveAPopup(ModalView):
-    def __init__(self, coord_popup, **kwargs):
-        self.coord_popup = coord_popup
-        super(MoveAPopup, self).__init__(**kwargs)
-    
-    def validate_inputs(self):
-        """Validate that A position input is not empty and is a valid number."""
-        offset_text = self.ids.txt_offset.text.strip()
-        
-        if not offset_text:
-            return False, tr._("Please enter a value for A position.")
-        
-        try:
-            float(offset_text)
-            return True, ""
-        except ValueError:
-            return False, tr._("Please enter a valid number for A position.")
-    
-    def on_ok_pressed(self):
-        """Handle OK button press with validation."""
-        is_valid, error_message = self.validate_inputs()
-        if is_valid:
-            app = App.get_running_app()
-            app.root.controller.RapMoveA(float(self.ids.txt_offset.text.strip()))
-            self.dismiss()
-        else:
-            app = App.get_running_app()
-            Clock.schedule_once(partial(app.root.show_message_popup, error_message, False), 0)
-
 class WCSSettingsPopup(ModalView):
     def __init__(self, controller, wcs_names, **kwargs):
         super(WCSSettingsPopup, self).__init__(**kwargs)
@@ -2022,13 +1835,7 @@ class SelectableRecycleBoxLayout(FocusBehavior, LayoutSelectionBehavior,
 class TopDataView(BoxLayout, ToolTipButton):
     pass
 
-class DirectoryView(BoxLayout, ToolTipButton):
-    pass
-
 class DropDownHint(Label):
-    pass
-
-class DropDownSplitter(Label):
     pass
 
 class SelectableLabel(RecycleDataViewBehavior, Label):
@@ -2577,35 +2384,12 @@ class LocalRV(DataRV):
         self.fill_dir(switch_reverse = False)
 
         self.curr_dir = os.path.normpath(new_dir)
-        win_drivers = ['%s:' % d for d in string.ascii_uppercase]
-        win_drivers_slash = ['%s:\\' % d for d in string.ascii_uppercase]
-        if self.curr_dir in win_drivers or self.curr_dir in win_drivers_slash:
-            self.curr_dir_name = self.curr_dir
-        else:
-            self.curr_dir_name = os.path.basename(self.curr_dir)
-
-        if self.curr_dir_name == self.base_dir:
-            self.curr_dir_name = 'root'
-
-        self.curr_full_path_list = [self.curr_dir]
-        self.curr_path_list = [self.curr_dir_name]
-        last_parent_dir = self.curr_dir
-
-        for loop in range(5):
-            # parent_dir = os.path.abspath(os.path.join(last_parent_dir, os.pardir))
-            parent_dir = os.path.dirname(last_parent_dir)
-            if last_parent_dir == parent_dir:
-                break
-            else:
-                self.curr_full_path_list.insert(0, parent_dir)
-                if parent_dir in win_drivers or parent_dir in win_drivers_slash:
-                    self.curr_path_list.insert(0, parent_dir)
-                else:
-                    self.curr_path_list.insert(0, os.path.basename(parent_dir))
-                last_parent_dir = parent_dir
-
-        if self.curr_path_list[0] == self.base_dir:
-            self.curr_path_list[0] = 'root'
+        self.curr_full_path_list, path_labels = Utils.directory_breadcrumb_paths(
+            self.curr_dir,
+            root_label_markers=(self.base_dir,),
+        )
+        self.curr_path_list = path_labels
+        self.curr_dir_name = path_labels[-1] if path_labels else ''
     
     def on_double_tap(self):
         app = App.get_running_app()
@@ -2940,6 +2724,7 @@ class Makera(RelativeLayout):
         self.manual_wifi_popup = ManualWifiPopup()
 
         self.probing_popup = ProbingPopup(self.controller)
+        self.probe_scan_popup = None
         self.facing_popup = FacingWizardPopup()
         self.wcs_settings_popup = WCSSettingsPopup(self.controller, self.wcs_names)
         self.set_rotation_popup = SetRotationPopup(self.controller, self.cnc)
@@ -3243,6 +3028,31 @@ class Makera(RelativeLayout):
             self.select_probe_popup = SelectAndCalibrateProbePopup()
             self.select_probe_popup.open()
 
+    def _ensure_probe_scan_popup(self):
+        if self.probe_scan_popup is None:
+            from carveracontroller.addons.probe_scan.ui.ProbeScanPopup import (
+                ProbeScanPopup,
+            )
+
+            self.probe_scan_popup = ProbeScanPopup(self.controller)
+        return self.probe_scan_popup
+
+    def open_probe_scan_popup(self):
+        app = App.get_running_app()
+        if not app.is_community_firmware:
+            self.show_message_popup(
+                tr._("Probe scan requires the Community firmware."),
+                False,
+            )
+            return
+        if CNC.vars["tool"] == 0 or CNC.vars["tool"] >= 999990:
+            self._pre_modal_keyboard_jog = self.keyboard_jog_control
+            self.toggle_keyboard_jog_control(True)
+            self._ensure_probe_scan_popup().open()
+        else:
+            self.select_probe_popup = SelectAndCalibrateProbePopup()
+            self.select_probe_popup.open()
+
     def open_facing_popup(self):
         app = App.get_running_app()
         if not app.is_community_firmware:
@@ -3524,89 +3334,31 @@ class Makera(RelativeLayout):
             self.spindle_drop_down.opened = True
 
     def fetch_common_local_dir_list(self):
-        home_path = Path.home()
-        if home_path.exists():
-            self.common_local_dir_list.append({'name': os.path.basename(home_path), 'path': str(home_path), 'icon': 'data/folder-home.png'})
-        if home_path.joinpath('Documents').exists():
-            self.common_local_dir_list.append({'name': tr._('Documents'), 'path': str(home_path.joinpath('Documents')), 'icon': 'data/folder-documents.png'})
-        if home_path.joinpath('Downloads').exists():
-            self.common_local_dir_list.append({'name': tr._('Downloads'), 'path': str(home_path.joinpath('Downloads')), 'icon': 'data/folder-downloads.png'})
-        if home_path.joinpath('Desktop').exists():
-            self.common_local_dir_list.append({'name': tr._('Desktop'), 'path': str(home_path.joinpath('Desktop')), 'icon': 'data/folder-desktop.png'})
-
-        # android storage
-        if kivy_platform == 'android':
-            logger.info('Android storage permission check')
-            try:
-                # Request permissions first
-                request_android_permissions()
-
-                # Add primary storage path
-                android_storage_path = primary_external_storage_path()
-                if android_storage_path and os.path.exists(android_storage_path):
-                    self.common_local_dir_list.append(
-                        {'name': tr._('Storage'), 'path': str(android_storage_path), 'icon': 'data/folder-home.png'})
-            except Exception as e:
-                logger.error(f'Get Android Storage Error: {e}')
-
-        # windows disks
-        available_drives = ['%s:' % d for d in string.ascii_uppercase if os.path.exists('%s:' % d)]
-        for drive in available_drives:
-            self.common_local_dir_list.append(
-                {'name': drive, 'path': drive, 'icon': ''})
+        self.common_local_dir_list = Utils.common_local_directories()
 
     def fetch_recent_local_dir_list(self):
-        if Config.has_section('carvera'):
-            for index in range(5):
-                if Config.has_option('carvera', 'local_folder_' + str(index + 1)):
-                    folder = Config.get('carvera', 'local_folder_' + str(index + 1))
-                    if folder:
-                        self.recent_local_dir_list.append(folder)
-            if kivy_platform == 'android':
-                if len(self.recent_local_dir_list) == 0:
-                    self.update_recent_local_dir_list(str(os.path.abspath('carveracontroller/gcodes')))
-            else:
-                if len(self.recent_local_dir_list) == 0:
-                    self.update_recent_local_dir_list(str(os.path.abspath('./gcodes')))
+        self.recent_local_dir_list = Utils.load_recent_local_directories()
 
     def update_recent_local_dir_list(self, new_dir):
-        if new_dir in self.recent_local_dir_list:
-            if self.recent_local_dir_list[0] == new_dir:
-                return
-            self.recent_local_dir_list.remove(new_dir)
-        self.recent_local_dir_list.insert(0, new_dir)
-        del self.recent_local_dir_list[5:]
-        # save config
-        for index in range(5):
-            if index < len(self.recent_local_dir_list):
-                Config.set('carvera', 'local_folder_' + str(index + 1), self.recent_local_dir_list[index])
-            else:
-                Config.set('carvera', 'local_folder_' + str(index + 1), '')
-        Config.write()
+        self.recent_local_dir_list = Utils.update_recent_local_directory_list(
+            self.recent_local_dir_list, new_dir,
+        )
+        Utils.persist_recent_local_directories(self.recent_local_dir_list)
 
     # -----------------------------------------------------------------------
     def open_local_dir_drop_down(self, button):
         if len(self.common_local_dir_list) == 0:
             self.fetch_common_local_dir_list()
 
-        if len(self.recent_local_dir_list) == 0:
-            self.fetch_recent_local_dir_list()
+        self.recent_local_dir_list = Utils.load_recent_local_directories(
+            seed_if_empty=len(self.recent_local_dir_list) == 0,
+        )
 
-        self.local_dir_drop_down.clear_widgets()
-
-        for common_dir in self.common_local_dir_list:
-            btn = DirectoryView(full_path = common_dir['path'], data_text = common_dir['name'], data_icon = common_dir['icon'], size_hint_y=None, height='30dp')
-            btn.bind(on_release=lambda btn: self.local_dir_drop_down.select(btn.full_path))
-            self.local_dir_drop_down.add_widget(btn)
-
-        splitter = DropDownSplitter(text='       ' + tr._('Recent Places'))
-        self.local_dir_drop_down.add_widget(splitter)
-
-        for recent_dir in self.recent_local_dir_list:
-            btn = DirectoryView(full_path = recent_dir, data_text = os.path.basename(recent_dir), data_icon = '', size_hint_y=None, height='30dp')
-            btn.bind(on_release=lambda btn: self.local_dir_drop_down.select(btn.full_path))
-            self.local_dir_drop_down.add_widget(btn)
-
+        Utils.fill_local_dir_dropdown(
+            self.local_dir_drop_down,
+            self.common_local_dir_list,
+            self.recent_local_dir_list,
+        )
         self.local_dir_drop_down.open(button)
 
     # -----------------------------------------------------------------------
@@ -3638,6 +3390,9 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def open_remote_dir_drop_down(self, button):
+        from carveracontroller.ui.DirectoryView import DirectoryView
+        from carveracontroller.ui.DropDownSplitter import DropDownSplitter
+
         if len(self.recent_remote_dir_list) == 0:
             self.fetch_recent_remote_dir_list()
 
@@ -3788,6 +3543,7 @@ class Makera(RelativeLayout):
                     msg, line = self.controller.log.get_nowait()
                     line = line.rstrip("\n")
                     line = line.rstrip("\r")
+                    dispatch_serial_line(msg, line)
 
                     remote_time = re.search('time = [0-9]+', line)
                     if remote_time != None:
@@ -5839,16 +5595,26 @@ class Makera(RelativeLayout):
         self.probing_popup.ids.step_z.disabled = True
         self.update_pendant_jog_text()
 
+    def _popup_prevents_jogging(self):
+        modals = [self.probing_popup]
+        if self.probe_scan_popup is not None:
+            modals.append(self.probe_scan_popup)
+        return self._is_popup_open() and not any(m.allows_external_jog() for m in modals)
+
     def is_jogging_enabled(self):
         app = App.get_running_app()
 
+        # Keyboard/pendant jogging is normally blocked whenever a modal popup is open,
+        # except for probing and the probe-scan jog overlay (see allows_external_jog).
+        popup_prevents_jogging = self._popup_prevents_jogging()
+
         return (
-            (not app.playing or app.state == 'Pause')
+            (not app.playing or app.state == "Pause")
             and (
-                app.state in ['Idle', 'Pause']
-                or (app.state == 'Run' and self.allow_jogging_while_machine_running == '1')
+                app.state in ["Idle", "Pause"]
+                or (app.state == "Run" and self.allow_jogging_while_machine_running == "1")
             )
-            and not (self._is_popup_open() and not self.probing_popup._is_open)
+            and not popup_prevents_jogging
         )
 
     def is_pendant_jogging_enabled(self):
@@ -5858,7 +5624,7 @@ class Makera(RelativeLayout):
         # ...otherwise behave as any other jogging except when probing screen is
         # open. We want to use the pendant as a convenient way to get to the
         # initial probing location
-        return (self.is_jogging_enabled())# or self.probing_popup._is_open)
+        return self.is_jogging_enabled()
 
     def restore_keyboard_jog_control(self):
         prev = getattr(self, '_pre_modal_keyboard_jog', None)
@@ -5944,6 +5710,7 @@ class Makera(RelativeLayout):
     def handle_pendant_connected(self):
         self.ids.pendant_jogging_en_btn.disabled = False
         app =App.get_running_app()
+        app.jog_pendant_text = tr._('Pendant Jogging')
         self.update_pendant_jog_text()
         app.jog_pendant_enable = 'down' if self.pendant_jogging_default else 'normal'
         app.root.pendant_jog_control = self.pendant_jogging_default
@@ -6018,6 +5785,7 @@ class Makera(RelativeLayout):
                            self.confirm_popup._is_open, self.unlock_popup._is_open,
                            self.message_popup._is_open, self.progress_popup._is_open, self.input_popup._is_open,
                            self.config_popup._is_open, self.probing_popup._is_open,
+                           (self.probe_scan_popup._is_open if self.probe_scan_popup is not None else False),
                            self.facing_popup._is_open]
 
         return any(popups_to_check)

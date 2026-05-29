@@ -25,6 +25,7 @@ certifi = ">=2017.4.17"
 pyserial = "^3.5"
 pyquicklz = "^1.4.1"
 hid = "^1.0.7"
+ezdxf = "^1.3.0"
 
 [tool.poetry.group.dev.dependencies]
 pyinstaller = "^6.11.0"
@@ -146,7 +147,8 @@ strict = true
 [[tool.mypy.overrides]]
 module = "carveracontroller.ui.*"
 disallow_untyped_defs = true
-# Not full strict — Kivy's dynamic attrs and .kv id-bindings fight strict mode.
+# Kivy widgets are untyped, so subclassing them is fundamental to anything in /ui/.
+disallow_subclassing_any = false
 
 [tool.importlinter]
 root_packages = ["carveracontroller"]

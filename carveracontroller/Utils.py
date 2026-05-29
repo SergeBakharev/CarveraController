@@ -32,7 +32,6 @@ except:
 	serial = None
 
 from datetime import datetime
-from kivy.clock import Clock
 
 __prg__     = "bCNC"
 __tool__    = "TOOL"
@@ -422,6 +421,236 @@ def to_config(type, value_string):
     else:
         return value_string
 
+def directory_breadcrumb_paths(
+	directory,
+	*,
+	root_label_markers=("",),
+	root_label="root",
+	max_ancestors=5,
+):
+	"""Build (full_paths, labels) for a clickable directory breadcrumb bar."""
+	import string
+
+	directory = os.path.normpath(directory) if directory else ""
+	if not directory:
+		return [], []
+
+	win_drivers = ["%s:" % d for d in string.ascii_uppercase]
+	win_drivers_slash = ["%s:\\" % d for d in string.ascii_uppercase]
+	markers = tuple(root_label_markers)
+
+	def segment_label(path):
+		if path in win_drivers or path in win_drivers_slash:
+			return path
+		name = os.path.basename(path) if path else ""
+		if name in markers:
+			return root_label
+		return name
+
+	full_paths = [directory]
+	path_labels = [segment_label(directory)]
+	last_parent_dir = directory
+
+	for _ in range(max_ancestors):
+		parent_dir = os.path.dirname(last_parent_dir)
+		if not last_parent_dir or last_parent_dir == parent_dir:
+			break
+		full_paths.insert(0, parent_dir)
+		if parent_dir in win_drivers or parent_dir in win_drivers_slash:
+			path_labels.insert(0, parent_dir)
+		else:
+			path_labels.insert(0, segment_label(parent_dir))
+		last_parent_dir = parent_dir
+
+	if path_labels and path_labels[0] in markers:
+		path_labels[0] = root_label
+
+	return full_paths, path_labels
+
+
+RECENT_LOCAL_DIR_SLOTS = 5
+
+
+def has_all_files_access():
+	"""Return whether Android all-files access is granted (always True elsewhere)."""
+	from kivy.utils import platform as kivy_platform
+	import logging
+
+	if kivy_platform != 'android':
+		return True
+	try:
+		from jnius import autoclass
+		Environment = autoclass('android.os.Environment')
+		return Environment.isExternalStorageManager()
+	except Exception as e:
+		logging.getLogger(__name__).error('Error checking storage manager status: %s', e)
+		return False
+
+
+def request_android_permissions():
+	"""On Android, open system UI to grant all-files access if missing."""
+	from kivy.utils import platform as kivy_platform
+	import logging
+
+	if kivy_platform != 'android':
+		return
+	logger = logging.getLogger(__name__)
+	try:
+		if has_all_files_access():
+			logger.info('Already have all files access permission')
+			return
+		from android import mActivity
+		from jnius import autoclass
+		Intent = autoclass('android.content.Intent')
+		Settings = autoclass('android.provider.Settings')
+		intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+		mActivity.startActivity(intent)
+	except Exception as e:
+		logger.error('Error requesting permissions: %s', e)
+
+
+def common_local_directories():
+	"""Return standard local folder shortcuts (home, Documents, drives, ...)."""
+	from pathlib import Path
+	import logging
+	import string
+
+	from kivy.utils import platform as kivy_platform
+
+	from carveracontroller.translation import tr
+
+	logger = logging.getLogger(__name__)
+	entries = []
+	home_path = Path.home()
+	if home_path.exists():
+		entries.append({
+			'name': os.path.basename(home_path),
+			'path': str(home_path),
+			'icon': 'data/folder-home.png',
+		})
+	for sub, icon in (
+		('Documents', 'data/folder-documents.png'),
+		('Downloads', 'data/folder-downloads.png'),
+		('Desktop', 'data/folder-desktop.png'),
+	):
+		folder = home_path.joinpath(sub)
+		if folder.exists():
+			entries.append({'name': tr._(sub), 'path': str(folder), 'icon': icon})
+
+	if kivy_platform == 'android':
+		logger.info('Android storage permission check')
+		try:
+			from android.storage import primary_external_storage_path
+
+			request_android_permissions()
+			android_storage_path = primary_external_storage_path()
+			if android_storage_path and os.path.exists(android_storage_path):
+				entries.append({
+					'name': tr._('Storage'),
+					'path': str(android_storage_path),
+					'icon': 'data/folder-home.png',
+				})
+		except Exception as e:
+			logger.error('Get Android Storage Error: %s', e)
+
+	for drive in ['%s:' % d for d in string.ascii_uppercase if os.path.exists('%s:' % d)]:
+		entries.append({'name': drive, 'path': drive, 'icon': ''})
+
+	return entries
+
+
+def load_recent_local_directories(*, seed_if_empty=True):
+	"""Load recent local directories from Kivy Config (optionally seed defaults)."""
+	from kivy.config import Config
+	from kivy.utils import platform as kivy_platform
+
+	dirs = []
+	if Config.has_section('carvera'):
+		for index in range(RECENT_LOCAL_DIR_SLOTS):
+			key = 'local_folder_' + str(index + 1)
+			if Config.has_option('carvera', key):
+				folder = Config.get('carvera', key)
+				if folder:
+					dirs.append(folder)
+
+	if seed_if_empty and not dirs:
+		if kivy_platform == 'android':
+			default = str(os.path.abspath('carveracontroller/gcodes'))
+		else:
+			default = str(os.path.abspath('./gcodes'))
+		dirs = update_recent_local_directory_list(dirs, default)
+		persist_recent_local_directories(dirs)
+
+	return dirs
+
+
+def update_recent_local_directory_list(dirs, new_dir):
+	"""Return dirs with new_dir moved to the front (max RECENT_LOCAL_DIR_SLOTS)."""
+	dirs = list(dirs)
+	if new_dir in dirs:
+		if dirs[0] == new_dir:
+			return dirs
+		dirs.remove(new_dir)
+	dirs.insert(0, new_dir)
+	del dirs[RECENT_LOCAL_DIR_SLOTS:]
+	return dirs
+
+
+def persist_recent_local_directories(dirs):
+	"""Write recent local directories to Kivy Config."""
+	from kivy.config import Config
+
+	for index in range(RECENT_LOCAL_DIR_SLOTS):
+		key = 'local_folder_' + str(index + 1)
+		if index < len(dirs):
+			Config.set('carvera', key, dirs[index])
+		else:
+			Config.set('carvera', key, '')
+	Config.write()
+
+
+def record_recent_local_directory(new_dir):
+	"""Promote a directory to the top of the shared recent-local list."""
+	dirs = load_recent_local_directories(seed_if_empty=True)
+	dirs = update_recent_local_directory_list(dirs, new_dir)
+	persist_recent_local_directories(dirs)
+	return dirs
+
+
+def fill_local_dir_dropdown(dropdown, common_dirs, recent_dirs):
+	"""Populate a DropDown with common and recent local directories."""
+	from carveracontroller.translation import tr
+	from carveracontroller.ui.DirectoryView import DirectoryView
+	from carveracontroller.ui.DropDownSplitter import DropDownSplitter
+
+	dropdown.clear_widgets()
+
+	for common_dir in common_dirs:
+		btn = DirectoryView(
+			full_path=common_dir['path'],
+			data_text=common_dir['name'],
+			data_icon=common_dir['icon'],
+			size_hint_y=None,
+			height='30dp',
+		)
+		path = common_dir['path']
+		btn.bind(on_release=lambda _btn, p=path: dropdown.select(p))
+		dropdown.add_widget(btn)
+
+	dropdown.add_widget(DropDownSplitter(text='       ' + tr._('Recent Places')))
+
+	for recent_dir in recent_dirs:
+		btn = DirectoryView(
+			full_path=recent_dir,
+			data_text=os.path.basename(recent_dir),
+			data_icon='',
+			size_hint_y=None,
+			height='30dp',
+		)
+		btn.bind(on_release=lambda _btn, p=recent_dir: dropdown.select(p))
+		dropdown.add_widget(btn)
+
+
 def digitize_v(version):
     # Clean version string by removing non-numeric suffixes like 'c', 'rc', etc.
     v_list = version.split('.')
@@ -441,12 +670,3 @@ def digitize_v(version):
         cleaned_parts.append(0)
 
     return cleaned_parts[0] * 1000 * 1000 + cleaned_parts[1] * 1000 + cleaned_parts[2]
-
-#------------------------------------------------------------------------------
-# Auto selection for text inputs
-#------------------------------------------------------------------------------
-def bind_auto_select_to_text_input(widget):
-	def focus_handler(input, value):
-		if value:
-			Clock.schedule_once(lambda _: widget.select_all(), 0.1)
-	widget.bind(focus=focus_handler)

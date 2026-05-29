@@ -2,6 +2,9 @@
 #:import Factory kivy.factory.Factory
 #:import digitize_v carveracontroller.Utils.digitize_v
 #:import tr carveracontroller.__main__.tr
+#:import _ carveracontroller.ui.LocalFilePicker
+#:import _ carveracontroller.ui.DirectoryView
+#:import _ carveracontroller.ui.DropDownSplitter
 #:import play_progress_bar carveracontroller.ui.PlayProgressBar
 #:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
 #:import LASER_TOOL_NUMBER carveracontroller.CNC.LASER_TOOL_NUMBER
@@ -9,7 +12,12 @@
 #:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
 #:include ui/GcodeColorSchemePanel.kv
 #:include addons/tooltips/Tooltips.kv
+#:include ui/LocalFilePicker.kv
+#:include ui/DirectoryView.kv
+#:include ui/DropDownSplitter.kv
 #:include addons/probing/ProbingPopup.kv
+#:include ui/popups/set_position/set_position.kv
+#:include addons/probe_scan/ui/ProbeScanPopup.kv
 #:include addons/facing/FacingWizardPopup.kv
 
 <Label>:
@@ -313,20 +321,6 @@
     halign: 'center'
     color: 150/255, 150/255, 150/255, 1
 
-<DropDownSplitter>:
-    size_hint_y: None
-    height: '20dp'
-    font_size: '13sp'
-    text_size: self.size
-    valign: 'middle'
-    color: 150/255, 150/255, 150/255, 1
-    canvas.before:
-        Color:
-            rgba: 60/255, 60/255, 60/255, 1
-        Rectangle:
-            pos: self.pos
-            size: self.size
-
 <StatusContent@BoxLayout>:
     size_hint_y: None
     height: '20dp'
@@ -425,7 +419,7 @@
         disabled: app.state != 'Idle'
         on_release:
             root.select('Third Item')
-            app.root.controller.wcsSet(0, None, None, None)
+            app.root.controller.wcs_set(0, None, None, None)
     Button:
         text: tr._('Set X')
         size_hint_y: None
@@ -453,7 +447,7 @@
         disabled: app.state != 'Idle'
         on_release:
             root.select('Third Item')
-            app.root.controller.wcsSet(None, 0, None, None)
+            app.root.controller.wcs_set(None, 0, None, None)
     Button:
         text: tr._('Set Y')
         size_hint_y: None
@@ -482,7 +476,7 @@
         disabled: app.state != 'Idle'
         on_release:
             root.select('Third Item')
-            app.root.controller.wcsSet(None, None, 0, None)
+            app.root.controller.wcs_set(None, None, 0, None)
     Button:
         text: tr._('Set Z')
         size_hint_y: None
@@ -538,7 +532,7 @@
         disabled: app.state != 'Idle'
         on_release:
             root.select('Third Item')
-            app.root.controller.wcsSet(None, None, None, 0)
+            app.root.controller.wcs_set(None, None, None, 0)
     Button:
         text: tr._('Set A')
         size_hint_y: None
@@ -850,8 +844,8 @@
         values: 'Probe', 'Tool: 1', 'Tool: 2', 'Tool: 3', 'Tool: 4', 'Tool: 5', 'Tool: 6', 'Custom'
         on_text:
             if self.text == 'Custom': app.root.coord_popup.change_tool_popup.open()
-            if self.text == '3D Probe': app.root.controller.changeToolCommand(PROBE_3D_TOOL_NUMBER)
-            elif self.text != tr._("Change..."): app.root.controller.changeToolCommand(self.text[-1])
+            if self.text == '3D Probe': app.root.controller.change_tool_command(PROBE_3D_TOOL_NUMBER)
+            elif self.text != tr._("Change..."): app.root.controller.change_tool_command(self.text[-1])
             if self.text != tr._("Change..."): self.text = tr._('Change...')
             root.select('Third Item')
     Button:
@@ -877,8 +871,8 @@
         values: 'Empty', 'Probe', 'Tool: 1', 'Tool: 2', 'Tool: 3', 'Tool: 4', 'Tool: 5', 'Tool: 6', 'Custom'
         on_text:
             if self.text == 'Custom': app.root.coord_popup.settool_popup.open()
-            if self.text == '3D Probe': app.root.controller.setToolCommand(PROBE_3D_TOOL_NUMBER)
-            elif self.text != tr._("Set..."): app.root.controller.setToolCommand(self.text[-1])
+            if self.text == '3D Probe': app.root.controller.set_tool_command(PROBE_3D_TOOL_NUMBER)
+            elif self.text != tr._("Set..."): app.root.controller.set_tool_command(self.text[-1])
             if self.text != tr._("Set..."): self.text = tr._('Set...')
             root.select('Third Item')
     Button:
@@ -1293,45 +1287,6 @@
             text_size: self.size
             halign: "right"
 
-<DirectoryView>:
-    orientation: 'horizontal'
-    selected: False
-    data_text: ''
-    data_icon: 'data/folder-32.png'
-    full_path: ''
-    canvas.before:
-        Color:
-            rgba: 80/255, 80/255, 80/255, 1
-        Rectangle:
-            pos: self.pos
-            size: self.size
-    Label:
-        canvas.before:
-            Color:
-                rgba: 225/255, 225/255, 225/255, 1
-            Rectangle:
-                source: 'data/connected.png'
-                pos: self.center_x - dp(10), self.center_y - dp(10)
-                size: dp(20) if root.selected else dp(0), dp(20) if root.selected else dp(0)
-        text: ''
-        size_hint_x: 0.15
-    Label:
-        canvas.before:
-            Color:
-                rgba: root.color
-            Rectangle:
-                source: 'data/folder-32.png' if root.data_icon == '' else root.data_icon
-                pos: self.center_x - dp(10), self.center_y - dp(10)
-                size: dp(20), dp(20)
-        text: ''
-        size_hint_x: 0.2
-    Label:
-        text: root.data_text
-        color: 225/255, 225/255, 225/255, 1
-        text_size: self.size
-        valign: 'middle'
-        multiline: False
-
 <LanguagePopup>:
     sp_language: sp_language
     size_hint: 0.5, 0.4
@@ -1540,12 +1495,12 @@
                 disabled: not app.is_community_firmware
                 on_release:
                     root.dismiss()
-                    app.root.controller.changeToolCommand(PROBE_3D_TOOL_NUMBER)
+                    app.root.controller.change_tool_command(PROBE_3D_TOOL_NUMBER)
             Button:
                 text: tr._('Change to stock Makera probe')
                 on_release:
                     root.dismiss()
-                    app.root.controller.changeToolCommand(ZPROBE_TOOL_NUMBER)
+                    app.root.controller.change_tool_command(ZPROBE_TOOL_NUMBER)
 
 <MessagePopup>:
     btn_ok: btn_ok
@@ -3868,8 +3823,9 @@
                                                 height: '35dp'
                                                 disabled: not app.is_community_firmware or app.state != 'Idle'
                                                 text: tr._('Tools...')
-                                                values: [tr._('Facing...')]
+                                                values: [tr._('Probe scan...'), tr._('Facing...')]
                                                 on_text:
+                                                    if self.text == tr._('Probe scan...'): app.root.open_probe_scan_popup()
                                                     if self.text == tr._('Facing...'): app.root.open_facing_popup()
                                                     if self.text != tr._('Tools...'): self.text = tr._('Tools...')
 
@@ -4517,394 +4473,6 @@
             else:\
             app.root.content.transition.direction = 'right';\
             app.root.content.current = 'File'
-
-<SetXPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Set X Current Pos')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('Enter X Pos')
-                multiline: False
-                text: '0.0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'float'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release: root.on_ok_pressed()
-
-<SetYPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Set Y Current Pos')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('Enter Y Pos')
-                multiline: False
-                text: '0.0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'float'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release: root.on_ok_pressed()
-
-<SetZPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Set Z Current Pos')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('Enter Z Pos')
-                multiline: False
-                text: '0.0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'float'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release: root.on_ok_pressed()
-
-<SetAPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Set A Current Pos')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('Enter A Pos')
-                multiline: False
-                text: '0.0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'float'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release: root.on_ok_pressed()
-
-<SetToolPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Set Current Tool Number')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('Enter New Tool Number')
-                multiline: False
-                text: '0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'int'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release:
-                    app.root.controller.setToolCommand(txt_offset.text)
-                    root.dismiss()
-<ChangeToolPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Change Current Tool')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('New Tool Number')
-                multiline: False
-                text: '0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'int'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release:
-                    app.root.controller.changeToolCommand(txt_offset.text)
-                    root.dismiss()
-
-<MoveAPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Rapidly move the A to')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('Enter A Pos')
-                multiline: False
-                text: '0.0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'float'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release: root.on_ok_pressed()
 
 <WCSSettingsPopup>:
     size_hint: 0.95, 0.95

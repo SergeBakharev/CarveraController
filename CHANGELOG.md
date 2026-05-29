@@ -9,8 +9,10 @@
 - Enhancement: Added iPhone support
 - Enhancement: Improve Gcode viewer toolbar buttons layout
 - Enhancement: Show current config probe tip diameter in probing panels
+- Enhancement: Add Probe Scan tool
 - Enhancement: Show tool change markers on the playback progress bar
 - Enhancement: Add grid visualization and color schemes selector to the G-Code viewer
+- Enhancement: Detect WHB04 pendant permission errors instead of silently ignoring pendant
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
 - Fixed: Repeated firmware checks now happen just once
 - Fixed: UI widget updates from the SerialMonitor() now dispatched via the main thread. This should reduce the number of RecycleView related crashes
@@ -20,6 +22,7 @@
 - Fixed: Disable trackpad being treated as touchscreen on Linux
 - Fixed: Jogging was incorrectly blocked/allowed under certain conditions
 - Fixed: GCode parser: Do not set tool number to 7 after M321
+- Fixed: Fix incorrect "No Pendant" in UI when pendant is working
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file
 
