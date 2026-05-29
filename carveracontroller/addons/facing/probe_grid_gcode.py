@@ -8,6 +8,7 @@ We then emit ``G10`` so work Z0 matches that peak.
 
 from dataclasses import dataclass
 
+from carveracontroller.CNC import PROBE_3D_TOOL_NUMBER
 from carveracontroller.translation import tr
 
 from .stock_geometry import stock_rect_from_origin_corner
@@ -27,7 +28,7 @@ class ProbeGridParams:
     grid_nx: int
     grid_ny: int
     inset_mm: float
-    probe_tool_t: int = 999990
+    probe_tool_t: int = PROBE_3D_TOOL_NUMBER
 
 
 @dataclass(frozen=True)

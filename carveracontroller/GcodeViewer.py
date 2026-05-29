@@ -190,9 +190,16 @@ def feed_mm_min_for_move(is_rapid, feed_value=None):
 
 
 def tool_palette_rgb(tool_number):
-    """RGB for a 1-based tool number (wraps palette like the shader)."""
-    idx = (max(int(tool_number), 1) - 1) % len(TOOL_PALETTE)
+    """RGB from tool number, wrapping through TOOL_PALETTE (matches toolpath.glsl)."""
+    idx = (int(tool_number) - 1) % len(TOOL_PALETTE)
     return TOOL_PALETTE[idx][:3]
+
+
+def tool_marker_palette_rgb(tool_number):
+    """Pastel RGB for progress-bar tool labels, derived from tool_palette_rgb."""
+    r, g, b = tool_palette_rgb(tool_number)
+    t = 0.4
+    return (r * (1 - t) + t, g * (1 - t) + t, b * (1 - t) + t)
 
 
 def speed_colormap_rgb(t):

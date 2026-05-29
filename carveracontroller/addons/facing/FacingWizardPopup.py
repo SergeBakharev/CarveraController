@@ -18,7 +18,14 @@ from kivy.uix.modalview import ModalView
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 
-from carveracontroller.CNC import CNC, escape_gcode_markup, highlight_gcode_line
+from carveracontroller.CNC import (
+    CNC,
+    PROBE_3D_TOOL_NUMBER,
+    ZPROBE_TOOL_NUMBER,
+    escape_gcode_markup,
+    highlight_gcode_line,
+    is_probe_tools_range,
+)
 from carveracontroller.translation import tr
 
 from .facing_gcode import (
@@ -105,8 +112,8 @@ def _m6_collet_pairs():
 
 def _probe_tool_pairs():
     return [
-        (tr._("3D probe"), 999990),
-        (tr._("Z probe"), 0),
+        (tr._("3D probe"), PROBE_3D_TOOL_NUMBER),
+        (tr._("Z probe"), ZPROBE_TOOL_NUMBER),
     ]
 
 
@@ -478,12 +485,14 @@ class FacingWizardPopup(ModalView):
             self._m6_collet_pairs_list = _m6_collet_pairs()
             spc = self.ids.spn_m6_collet
             spc.values = [p[0] for p in self._m6_collet_pairs_list]
-            spc.text = self._m6_collet_pairs_list[0][0]
+            if spc.text not in spc.values:
+                spc.text = self._m6_collet_pairs_list[0][0]
 
             self._probe_tool_pairs_list = _probe_tool_pairs()
             spp = self.ids.spn_probe_tool
             spp.values = [p[0] for p in self._probe_tool_pairs_list]
-            spp.text = self._probe_tool_pairs_list[0][0]
+            if spp.text not in spp.values:
+                spp.text = self._probe_tool_pairs_list[0][0]
 
             self._stock_corner_pairs_list = _stock_corner_pairs()
             spcorner = self.ids.spn_stock_corner
@@ -513,7 +522,7 @@ class FacingWizardPopup(ModalView):
                 t_int = int(float(t))
             except (TypeError, ValueError):
                 t_int = 0
-            if t_int == 0 or t_int >= 999990:
+            if t_int == ZPROBE_TOOL_NUMBER or is_probe_tools_range(t_int):
                 self.ids.txt_m6_t.text = "1"
             else:
                 self.ids.txt_m6_t.text = str(t_int)
@@ -526,7 +535,7 @@ class FacingWizardPopup(ModalView):
         for label, val in self._probe_tool_pairs_list:
             if text == label:
                 return int(val)
-        return 999990
+        return PROBE_3D_TOOL_NUMBER
 
     def _stock_origin_corner_from_ui(self) -> str:
         self._ensure_wizard_lists()
@@ -938,9 +947,12 @@ class FacingWizardPopup(ModalView):
 
         def _do_load():
             path = self._write_temp_nc(text)
-            root = App.get_running_app().root
+            app = App.get_running_app()
+            root = app.root
             self.dismiss()
             self._switch_to_gcode_viewer_screen()
+            app.selected_local_filename = path
+            app.selected_remote_filename = ''
             root.progress_popup.progress_value = 0
             root.progress_popup.btn_cancel.disabled = True
             root.progress_popup.progress_text = tr._("Loading file") + "\n%s" % path

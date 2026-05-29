@@ -104,7 +104,7 @@ bool is_vertex_type_enabled(float vertex_type, float type_mask)
     if (abs(vtype - 4.0) < 0.5 && mask_digit(mask, 1000.0) >= 1.0) return true;
     if (abs(vtype - 5.0) < 0.5 && mask_digit(mask, 10000.0) >= 1.0) return true;
     if (abs(vtype - 6.0) < 0.5 && mask_digit(mask, 100000.0) >= 1.0) return true;
-    if (abs(vtype - 7.0) < 0.5 && mask_digit(mask, 1000000.0) >= 1.0) return true;
+    if (abs(vtype - 8888.0) < 0.5 && mask_digit(mask, 1000000.0) >= 1.0) return true;
     return false;
 }
 
@@ -127,7 +127,7 @@ void main()
         }
     } else if (color_scheme < 1.5) {
         float tool_num = floor(vs_vertex_type + 0.5);
-        float palette_idx = mod(max(tool_num, 1.0) - 1.0, 10.0);
+        float palette_idx = mod(tool_num - 1.0, 10.0);
         color = tool_palette_color(palette_idx);
     } else {
         if (vs_vertex_feed < 0.5) {

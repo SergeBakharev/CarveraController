@@ -4,10 +4,12 @@ Initial facing wizard values.
 
 from typing import Any
 
+from carveracontroller.CNC import PROBE_3D_TOOL_NUMBER
+
 from .facing_gcode import MILLING_CLIMB, PATTERN_RASTER_X
 from .stock_geometry import CORNER_BL
 
-DEFAULT_PROBE_TOOL_T = 999990
+DEFAULT_PROBE_TOOL_T = PROBE_3D_TOOL_NUMBER
 DEFAULT_M6_COLLET = None
 
 DEFAULT_STOCK_ORIGIN_CORNER = CORNER_BL

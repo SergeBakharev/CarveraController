@@ -66,6 +66,21 @@ XY   = 0
 XZ   = 1
 YZ   = 2
 
+LASER_TOOL_NUMBER = 8888
+ZPROBE_TOOL_NUMBER = 0
+PROBE_TOOLS_RANGE_START = 999990
+PROBE_TOOLS_RANGE_END = 999999
+PROBE_3D_TOOL_NUMBER = PROBE_TOOLS_RANGE_START
+
+
+def is_probe_tools_range(tool_num):
+    """True if *tool_num* is in the firmware probe tool number range."""
+    try:
+        n = int(tool_num)
+    except (TypeError, ValueError):
+        return False
+    return PROBE_TOOLS_RANGE_START <= n <= PROBE_TOOLS_RANGE_END
+
 #===============================================================================
 # Command operations on a CNC
 #===============================================================================
@@ -258,6 +273,7 @@ class CNC:
         self.mval = 0
         self.lval = 1
         self.tool = 0
+        self.tool_cmd = False
 
         self.absolute    = True		# G90/G91     absolute/relative motion
         self.arcabsolute = False	# G90.1/G91.1 absolute/relative arc
@@ -326,6 +342,7 @@ class CNC:
     #----------------------------------------------------------------------
     def motionStart(self, cmds):
         self.mval = 0	# reset m command
+        self.tool_cmd = False
         for cmd in cmds:
             c = cmd[0].upper()
             try:
@@ -432,7 +449,7 @@ class CNC:
             elif c == "M":
                 self.mval = int(value)
                 if self.mval == 321:
-                    self.tool = 7 # laser is 7
+                    self.tool = LASER_TOOL_NUMBER
 
             elif c == "N":
                 pass
@@ -448,6 +465,7 @@ class CNC:
 
             elif c == "T":
                 self.tool = int(value)
+                self.tool_cmd = True
 
             elif c == "U":
                 self.uval = value * self.unit

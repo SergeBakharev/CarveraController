@@ -20,7 +20,7 @@ try:
 except ImportError:
     from queue import *
 
-from .CNC import CNC, CMDPAT, PARENPAT, SEMIPAT
+from .CNC import CNC, LASER_TOOL_NUMBER, ZPROBE_TOOL_NUMBER, CMDPAT, PARENPAT, SEMIPAT
 from .USBStream import USBStream
 from .WIFIStream import WIFIStream
 from .XMODEM import EOT, CAN
@@ -469,9 +469,9 @@ class Controller:
 
     def change_tool_command(self, tool):
         if tool == 'e':
-            self.executeCommand("M6T0\n")
+            self.executeCommand("M6T%d\n" % ZPROBE_TOOL_NUMBER)
         elif tool == 'r':
-            self.executeCommand("M6T8888\n")
+            self.executeCommand("M6T%d\n" % LASER_TOOL_NUMBER)
         elif tool == 'm':
             #custom tool number
             pass
@@ -480,9 +480,9 @@ class Controller:
 
     def set_tool_command(self, tool):
         if tool == 'e':
-            self.executeCommand("M493.2T0\n")
+            self.executeCommand("M493.2T%d\n" % ZPROBE_TOOL_NUMBER)
         elif tool == 'r':
-            self.executeCommand("M493.2T8888\n")
+            self.executeCommand("M493.2T%d\n" % LASER_TOOL_NUMBER)
         elif tool == 'm':
             #custom tool number
             pass
