@@ -78,13 +78,19 @@ def build_legend_entries(color_scheme, gcode_viewer, used_tools):
             z_max = z_min + 1.0
 
         # Top = higher Z (shallower); bottom = lower Z (deeper).
-        # Color t matches toolpath.glsl; labels use the same t mapped to mm.
         for step in range(0, 11):
             t = 1.0 - step / 10.0
             z_val = z_min + t * (z_max - z_min)
             rgb = speed_colormap_rgb(t)
+            z_str = f'{z_val:.3f}'
+            if step == 0:
+                label = tr._('≥ Z {} mm').format(z_str)
+            elif step == 10:
+                label = tr._('≤ Z {} mm').format(z_str)
+            else:
+                label = f'Z {z_str} mm'
             entries.append({
-                'label': f'Z {z_val:.3f} mm',
+                'label': label,
                 'color': (*rgb, 1.0),
             })
         return entries

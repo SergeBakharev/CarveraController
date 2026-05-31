@@ -143,7 +143,11 @@ void main()
             color = speed_colormap(t);
         }
     } else {
-        float span = max(z_max - z_min, 1.0);
+        // z_min/z_max are in scaled display units (mm * position_scale), not mm
+        float span = z_max - z_min;
+        if (span < 1e-6) {
+            span = 1e-6;
+        }
         float t = clamp((vs_vertex_z - z_min) / span, 0.0, 1.0);
         color = speed_colormap(t);
     }

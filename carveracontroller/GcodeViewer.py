@@ -186,6 +186,10 @@ COLOR_SCHEME_UI_BY_TOOL = 'Tool'
 COLOR_SCHEME_UI_BY_SPEED = 'Speed'
 COLOR_SCHEME_UI_BY_Z = 'Height'
 
+# Height colormap: range from feed-move Z percentiles (ignores G0 and outlier G1).
+Z_HEIGHT_PERCENTILE_LOW = 5.0
+Z_HEIGHT_PERCENTILE_HIGH = 95.0
+
 
 def feed_mm_min_for_move(is_rapid, feed_value=None):
     """Feed rate (mm/min) stored per vertex; 0 for rapid moves."""
@@ -199,6 +203,54 @@ def feed_mm_min_for_move(is_rapid, feed_value=None):
         except (TypeError, ValueError):
             pass
     return DEFAULT_FEED_MM_MIN
+
+
+def _percentile_from_sorted(sorted_vals, percentile):
+    """Linear-interpolation percentile; percentile in 0..100."""
+    n = len(sorted_vals)
+    if n == 0:
+        return 0.0
+    if n == 1:
+        return float(sorted_vals[0])
+    k = (n - 1) * (float(percentile) / 100.0)
+    f = int(k)
+    c = min(f + 1, n - 1)
+    if f == c:
+        return float(sorted_vals[f])
+    return float(sorted_vals[f] + (k - f) * (sorted_vals[c] - sorted_vals[f]))
+
+
+def feed_z_height_range_mm(
+    positions,
+    raw_feed_rates,
+    low_pct=Z_HEIGHT_PERCENTILE_LOW,
+    high_pct=Z_HEIGHT_PERCENTILE_HIGH,
+):
+    """Z range (mm) for height coloring: percentiles of feed-move vertices only."""
+    if not positions or len(positions) < 3:
+        return 0.0, 1.0
+
+    feeds = raw_feed_rates or []
+    vertex_count = len(positions) // 3
+    zs = []
+    for i in range(vertex_count):
+        if i < len(feeds) and float(feeds[i]) > 0.0:
+            zs.append(float(positions[3 * i + 2]))
+
+    if not zs:
+        zs = [float(positions[i]) for i in range(2, len(positions), 3)]
+    if not zs:
+        return 0.0, 1.0
+
+    zs.sort()
+    z_min = _percentile_from_sorted(zs, low_pct)
+    z_max = _percentile_from_sorted(zs, high_pct)
+    if z_max <= z_min:
+        z_min = zs[0]
+        z_max = zs[-1]
+    if z_max <= z_min:
+        z_max = z_min + 1.0
+    return z_min, z_max
 
 
 def tool_palette_rgb(tool_number):
@@ -1399,23 +1451,16 @@ class GCodeViewer(Widget):
         self._update_z_range_uniforms()
 
     def _update_z_range_uniforms(self):
-        """Height scheme: positions are mm; shader uses display Z = mm * move_scale_by_positon."""
+        """Height scheme: P5–P95 of feed-move Z (mm); shader uses Z * move_scale_by_positon."""
         scale = float(getattr(self, 'move_scale_by_positon', 1.0) or 1.0)
         positions = getattr(self, 'positions', None) or []
-        if len(positions) >= 3:
-            zs_mm = [float(positions[i]) for i in range(2, len(positions), 3)]
-            self.z_min_mm = min(zs_mm)
-            self.z_max_mm = max(zs_mm)
-        else:
-            self.z_min_mm = 0.0
-            self.z_max_mm = 1.0
-        if self.z_max_mm <= self.z_min_mm:
-            self.z_max_mm = self.z_min_mm + 1.0
+        feeds = getattr(self, 'raw_feed_rates', None) or []
+        self.z_min_mm, self.z_max_mm = feed_z_height_range_mm(positions, feeds)
 
         self.z_min = self.z_min_mm * scale
         self.z_max = self.z_max_mm * scale
         if self.z_max <= self.z_min:
-            self.z_max = self.z_min + 1.0
+            self.z_max = self.z_min + max(scale, 1e-6)
 
         self.linemesh['z_min'] = float(self.z_min)
         self.linemesh['z_max'] = float(self.z_max)
