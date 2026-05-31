@@ -34,7 +34,7 @@ from .Objloader import ObjFile
 from .ui.ViewCube import (
     VERTEX_FORMAT as VIEW_CUBE_VERTEX_FORMAT,
     apply_face_preset,
-    build_mesh as build_view_cube_mesh,
+    load_mesh as load_view_cube_mesh,
     pick_face,
 )
 #arc camera
@@ -228,11 +228,19 @@ def speed_colormap_rgb(t):
 GRID_QUAD_MIN_SIZE = 10.0
 CONFIG_GRID_VISIBLE_KEY = 'gcode_viewer_show_grid'
 VIEW_CUBE_SIZE = dp(96)
-VIEW_CUBE_MARGIN = dp(8)
+VIEW_CUBE_MARGIN = dp(10)
 VIEW_CUBE_TOOLBAR_INSET = dp(48)
 VIEW_CUBE_TEXTURE_UNIT = 1
-VIEW_CUBE_WORLD_SCALE = 0.95
-VIEW_CUBE_ATLAS_PATH = os.path.join(os.path.dirname(__file__), 'data', 'view_cube_atlas.png')
+VIEW_CUBE_WORLD_SCALE = 0.5
+
+# Assets (3D models / textures)
+def _gcode_viewer_asset(name):
+    return os.path.join(os.path.dirname(__file__), 'data', 'GcodeViewer', name)
+
+VIEW_CUBE_ATLAS_PATH = _gcode_viewer_asset('view_cube_atlas.png')
+VIEW_CUBE_MODEL_PATH = _gcode_viewer_asset('view_cube_model.obj')
+POINTER_OBJ_PATH = _gcode_viewer_asset('pointer.obj')
+AXIS_OBJ_PATH = _gcode_viewer_asset('axis.obj')
 
 
 class MeshManager():
@@ -741,7 +749,7 @@ class GCodeViewer(Widget):
         self.viewcubemesh['cube_scale'] = float(VIEW_CUBE_WORLD_SCALE)
 
     def _setup_view_cube_mesh(self):
-        verts, indices = build_view_cube_mesh()
+        verts, indices = load_view_cube_mesh(VIEW_CUBE_MODEL_PATH)
         self.viewcubemesh.clear()
         with self.viewcubemesh:
             self._view_cube_cb_setup = Callback(self._setup_view_cube_gl)
@@ -800,6 +808,9 @@ class GCodeViewer(Widget):
         glViewport(int(x), int(y), int(w), int(h))
         glEnable(GL_DEPTH_TEST)
         glClear(GL_DEPTH_BUFFER_BIT)
+        glActiveTexture(GL_TEXTURE0 + VIEW_CUBE_TEXTURE_UNIT)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
         self._update_view_cube_uniforms()
 
     def _reset_view_cube_gl(self, *args):
@@ -996,14 +1007,8 @@ class GCodeViewer(Widget):
 
             self._update_feed_range_uniforms()
 
-            obj1 = 'pointer.obj'
-            obj2 = 'axis.obj'
-            if not os.path.exists(obj1):
-                obj1 = os.path.join(os.path.dirname(__file__), obj1)
-                obj2 = os.path.join(os.path.dirname(__file__), obj2)
-
-            self.pointer = ObjFile(obj1)
-            self.axis_obj = ObjFile(obj2)
+            self.pointer = ObjFile(POINTER_OBJ_PATH)
+            self.axis_obj = ObjFile(AXIS_OBJ_PATH)
 
 
             # 4-axis: rotate toolhead mesh instead of the toolpath

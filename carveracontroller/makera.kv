@@ -4141,7 +4141,7 @@
                                     GcodeViewerToolBarButton:
                                         width: '50dp'
                                         active: tool_bar.orbit
-                                        icon: 'data/orbit.png'
+                                        icon: 'data/GcodeViewer/orbit.png'
                                         disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
                                         on_release:
                                             tool_bar.orbit = True
@@ -4149,33 +4149,33 @@
                                     GcodeViewerToolBarButton:
                                         width: '50dp'
                                         active: not tool_bar.orbit
-                                        icon: 'data/pan.png'
+                                        icon: 'data/GcodeViewer/pan.png'
                                         disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
                                         on_release:
                                             tool_bar.orbit = False
                                             root.gcode_viewer.set_orbit(False)
                                     GcodeViewerToolBarButton:
                                         width: '50dp'
-                                        icon: 'data/zoom_in.png'
+                                        icon: 'data/GcodeViewer/zoom_in.png'
                                         disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
                                         on_release:
                                             root.gcode_viewer.zoom_in()
                                     GcodeViewerToolBarButton:
                                         width: '50dp'
-                                        icon: 'data/zoom_out.png'
+                                        icon: 'data/GcodeViewer/zoom_out.png'
                                         disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
                                         on_release:
                                             root.gcode_viewer.zoom_out()
                                     GcodeViewerToolBarButton:
                                         width: '50dp'
-                                        icon: 'data/zoom_fit.png'
+                                        icon: 'data/GcodeViewer/zoom_fit.png'
                                         disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
                                         on_release:
                                             root.gcode_viewer.restore_default_view()
                                     GcodeViewerToolBarButton:
                                         width: '50dp'
                                         active: tool_bar.show_grid
-                                        icon: 'data/grid.png'
+                                        icon: 'data/GcodeViewer/grid.png'
                                         disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
                                         on_release:
                                             tool_bar.show_grid = not tool_bar.show_grid
