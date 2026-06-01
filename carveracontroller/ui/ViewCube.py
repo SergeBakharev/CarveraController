@@ -205,7 +205,9 @@ def pick_face(ndc_x, ndc_y, view_mat, proj_mat, cube_scale):
     Casts a ray through the click and returns the nearest axis-aligned face
     hit within the cube bounds (same transform chain as the draw shader).
     """
-    half = float(cube_scale)
+    # We undo cube_scale below, so the ray ends up in the cube's own coordinates
+    # where each face is 1.0 away from the center.
+    half_extent = 1.0
     model = _model_matrix(cube_scale)
     mvp = proj_mat.multiply(view_mat).multiply(model)
     inv = mvp.inverse()
@@ -222,12 +224,12 @@ def pick_face(ndc_x, ndc_y, view_mat, proj_mat, cube_scale):
     dx, dy, dz = dx / length, dy / length, dz / length
 
     planes = (
-        (FACE_POS_X, 0, half),
-        (FACE_NEG_X, 0, -half),
-        (FACE_POS_Y, 1, half),
-        (FACE_NEG_Y, 1, -half),
-        (FACE_POS_Z, 2, half),
-        (FACE_NEG_Z, 2, -half),
+        (FACE_POS_X, 0, half_extent),
+        (FACE_NEG_X, 0, -half_extent),
+        (FACE_POS_Y, 1, half_extent),
+        (FACE_NEG_Y, 1, -half_extent),
+        (FACE_POS_Z, 2, half_extent),
+        (FACE_NEG_Z, 2, -half_extent),
     )
 
     best_t = float('inf')
@@ -248,7 +250,7 @@ def pick_face(ndc_x, ndc_y, view_mat, proj_mat, cube_scale):
         coords = (px, py, pz)
         u = (axis + 1) % 3
         v = (axis + 2) % 3
-        if abs(coords[u]) > half + 1e-5 or abs(coords[v]) > half + 1e-5:
+        if abs(coords[u]) > half_extent + 1e-5 or abs(coords[v]) > half_extent + 1e-5:
             continue
 
         nx, ny, nz = FACE_NORMALS[face_id]
