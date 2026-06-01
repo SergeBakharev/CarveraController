@@ -1132,7 +1132,8 @@ class GCodeViewer(Widget):
 
             self.pointermesh['offset'] = (-self.lines_center[0], -self.lines_center[1], -self.lines_center[2])
 
-            self.m_zoom = DEFAULT_ZOOM
+            self.m_zoom = self._default_zoom_for_projection()
+            self._clamp_zoom()
             self.update_proj()
             self.update_view()
             self._scene_dirty = True
@@ -1418,7 +1419,8 @@ class GCodeViewer(Widget):
         self.m_zLookAt = 0
         self.m_xRot = 30
         self.m_yRot = 180
-        self.m_zoom = DEFAULT_ZOOM
+        self.m_zoom = self._default_zoom_for_projection()
+        self._clamp_zoom()
         self.m_xPan = 0
         self.m_yPan = 0
         self.update_proj()
@@ -1705,6 +1707,14 @@ class GCodeViewer(Widget):
 
     def _clamp_zoom(self):
         self.m_zoom = max(MIN_ZOOM, min(MAX_ZOOM, self.m_zoom))
+
+    def _default_zoom_for_projection(self):
+        """DEFAULT_ZOOM adjusted for the active projection so resets keep the same
+        apparent scale as the perspective default (ortho needs r/PROJ_NEAR more zoom)."""
+        if self._ortho_projection:
+            r = max(self.m_distance, PROJ_NEAR + 1e-6)
+            return DEFAULT_ZOOM * r / PROJ_NEAR
+        return DEFAULT_ZOOM
 
     def _zoom_for_projection_switch(self, to_ortho):
         """Match apparent scale at the look-at distance when toggling projection."""
