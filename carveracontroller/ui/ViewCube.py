@@ -261,8 +261,3 @@ def pick_face(ndc_x, ndc_y, view_mat, proj_mat, cube_scale):
         best_face = face_id
 
     return best_face
-
-
-def apply_face_preset(face_id, current_x_rot, current_y_rot):
-    """Return (m_xRot, m_yRot) after snapping to a face preset."""
-    return VIEW_FACE_PRESETS[face_id]

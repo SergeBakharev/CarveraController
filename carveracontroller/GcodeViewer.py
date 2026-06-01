@@ -33,7 +33,7 @@ def get_elapsed(str):
 from .Objloader import ObjFile
 from .ui.ViewCube import (
     VERTEX_FORMAT as VIEW_CUBE_VERTEX_FORMAT,
-    apply_face_preset,
+    VIEW_FACE_PRESETS,
     load_mesh as load_view_cube_mesh,
     pick_face,
 )
@@ -220,7 +220,7 @@ def _percentile_from_sorted(sorted_vals, percentile):
     return float(sorted_vals[f] + (k - f) * (sorted_vals[c] - sorted_vals[f]))
 
 
-def feed_z_height_range_mm(
+def _feed_z_height_range_mm(
     positions,
     raw_feed_rates,
     low_pct=Z_HEIGHT_PERCENTILE_LOW,
@@ -882,7 +882,7 @@ class GCodeViewer(Widget):
             self._view_cube_hud_proj(),
             VIEW_CUBE_WORLD_SCALE,
         )
-        self.m_xRot, self.m_yRot = apply_face_preset(face_id, self.m_xRot, self.m_yRot)
+        self.m_xRot, self.m_yRot = VIEW_FACE_PRESETS[face_id]
         self.update_view()
         self._scene_dirty = True
         return True
@@ -1457,7 +1457,7 @@ class GCodeViewer(Widget):
         scale = float(getattr(self, 'move_scale_by_positon', 1.0) or 1.0)
         positions = getattr(self, 'positions', None) or []
         feeds = getattr(self, 'raw_feed_rates', None) or []
-        self.z_min_mm, self.z_max_mm = feed_z_height_range_mm(positions, feeds)
+        self.z_min_mm, self.z_max_mm = _feed_z_height_range_mm(positions, feeds)
 
         self.z_min = self.z_min_mm * scale
         self.z_max = self.z_max_mm * scale
@@ -1676,14 +1676,16 @@ class GCodeViewer(Widget):
                 print(sys.exc_info()[1])
 
     def zoom_in(self):
-        if self.m_zoom > MIN_ZOOM:
+        lo, _ = self._zoom_bounds()
+        if self.m_zoom > lo:
             self.m_zoom /= ZOOMSTEP
             self.update_proj()
             self.update_view()
             self._scene_dirty = True
 
     def zoom_out(self):
-        if self.m_zoom < MAX_ZOOM:
+        _, hi = self._zoom_bounds()
+        if self.m_zoom < hi:
             self.m_zoom *= ZOOMSTEP
             self.update_proj()
             self.update_view()
@@ -1705,16 +1707,28 @@ class GCodeViewer(Widget):
     def is_grid_visible(self):
         return self._grid_visible
 
+    def _ortho_zoom_factor(self):
+        """Ortho zoom is r/PROJ_NEAR larger than perspective for the same apparent
+        scale at the look-at distance; perspective factor is 1."""
+        if not self._ortho_projection:
+            return 1.0
+        r = max(self.m_distance, PROJ_NEAR + 1e-6)
+        return r / PROJ_NEAR
+
+    def _zoom_bounds(self):
+        """Zoom clamp scaled by the projection factor so the usable zoom range is
+        equivalent in ortho and perspective (raw MIN/MAX_ZOOM are perspective units)."""
+        factor = self._ortho_zoom_factor()
+        return MIN_ZOOM * factor, MAX_ZOOM * factor
+
     def _clamp_zoom(self):
-        self.m_zoom = max(MIN_ZOOM, min(MAX_ZOOM, self.m_zoom))
+        lo, hi = self._zoom_bounds()
+        self.m_zoom = max(lo, min(hi, self.m_zoom))
 
     def _default_zoom_for_projection(self):
         """DEFAULT_ZOOM adjusted for the active projection so resets keep the same
         apparent scale as the perspective default (ortho needs r/PROJ_NEAR more zoom)."""
-        if self._ortho_projection:
-            r = max(self.m_distance, PROJ_NEAR + 1e-6)
-            return DEFAULT_ZOOM * r / PROJ_NEAR
-        return DEFAULT_ZOOM
+        return DEFAULT_ZOOM * self._ortho_zoom_factor()
 
     def _zoom_for_projection_switch(self, to_ortho):
         """Match apparent scale at the look-at distance when toggling projection."""
@@ -1728,13 +1742,10 @@ class GCodeViewer(Widget):
         if ortho == self._ortho_projection:
             return
         self.m_zoom = self._zoom_for_projection_switch(ortho)
-        self._clamp_zoom()
         self._ortho_projection = ortho
+        self._clamp_zoom()
         self.update_proj()
         self._scene_dirty = True
-
-    def is_ortho_projection(self):
-        return self._ortho_projection
 
 
 def _compute_line_times_worker(raw_positions, raw_linenumbers, raw_feed_rates, progress_callback, progress_interval):
