@@ -20,6 +20,7 @@ varying float vs_vertex_id;
 varying float vs_distance_id;
 varying float vs_vertex_type;
 varying float vs_vertex_feed;
+varying float vs_vertex_z;
 
 void main()
 {
@@ -27,6 +28,7 @@ void main()
     vs_vertex_id = vertex_id;
     vs_vertex_type = vertex_tool;
     vs_vertex_feed = vertex_feed;
+    vs_vertex_z = position.z;
     vs_distance_id = distance_id;
 
     tex_coord0 = vec2(0.0);
@@ -46,15 +48,18 @@ varying float vs_vertex_id;
 varying float vs_distance_id;
 varying float vs_vertex_type;
 varying float vs_vertex_feed;
+varying float vs_vertex_z;
 
 // Kivy uniforms are float-only; -1 means show the full toolpath
 uniform float display_count;
 // Decimal-encoded type filter from set_display_mask (e.g. 1=type1, 10=type2, 11=types1+2)
 uniform float vertex_type_display;
-// 0 = move type, 1 = tool, 2 = feed speed
+// 0 = move type, 1 = tool, 2 = feed speed, 3 = Z height
 uniform float color_scheme;
 uniform float feed_min;
 uniform float feed_max;
+uniform float z_min;
+uniform float z_max;
 
 vec3 tool_palette_color(float idx)
 {
@@ -129,7 +134,7 @@ void main()
         float tool_num = floor(vs_vertex_type + 0.5);
         float palette_idx = mod(tool_num - 1.0, 10.0);
         color = tool_palette_color(palette_idx);
-    } else {
+    } else if (color_scheme < 2.5) {
         if (vs_vertex_feed < 0.5) {
             color = vec3(1.0, 0.0, 0.0);
         } else {
@@ -137,6 +142,14 @@ void main()
             float t = clamp((vs_vertex_feed - feed_min) / span, 0.0, 1.0);
             color = speed_colormap(t);
         }
+    } else {
+        // z_min/z_max are in scaled display units (mm * position_scale), not mm
+        float span = z_max - z_min;
+        if (span < 1e-6) {
+            span = 1e-6;
+        }
+        float t = clamp((vs_vertex_z - z_min) / span, 0.0, 1.0);
+        color = speed_colormap(t);
     }
     gl_FragColor = vec4(color, 1.0) * texture2D(texture0, tex_coord0);
 }

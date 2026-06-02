@@ -4123,6 +4123,7 @@
                                 id: tool_bar
                                 orbit: True
                                 show_grid: True
+                                ortho_projection: False
                                 size_hint_x: 1
                                 size_hint_y: None
                                 height: dp(48) if app.show_gcode_ctl_bar else 0
@@ -4143,7 +4144,7 @@
                                     GcodeViewerToolBarButton:
                                         width: '50dp'
                                         active: tool_bar.orbit
-                                        icon: 'data/orbit.png'
+                                        icon: 'data/GcodeViewer/orbit.png'
                                         disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
                                         on_release:
                                             tool_bar.orbit = True
@@ -4151,37 +4152,46 @@
                                     GcodeViewerToolBarButton:
                                         width: '50dp'
                                         active: not tool_bar.orbit
-                                        icon: 'data/pan.png'
+                                        icon: 'data/GcodeViewer/pan.png'
                                         disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
                                         on_release:
                                             tool_bar.orbit = False
                                             root.gcode_viewer.set_orbit(False)
                                     GcodeViewerToolBarButton:
                                         width: '50dp'
-                                        icon: 'data/zoom_in.png'
+                                        icon: 'data/GcodeViewer/zoom_in.png'
                                         disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
                                         on_release:
                                             root.gcode_viewer.zoom_in()
                                     GcodeViewerToolBarButton:
                                         width: '50dp'
-                                        icon: 'data/zoom_out.png'
+                                        icon: 'data/GcodeViewer/zoom_out.png'
                                         disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
                                         on_release:
                                             root.gcode_viewer.zoom_out()
                                     GcodeViewerToolBarButton:
                                         width: '50dp'
-                                        icon: 'data/zoom_fit.png'
+                                        icon: 'data/GcodeViewer/zoom_fit.png'
                                         disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
                                         on_release:
                                             root.gcode_viewer.restore_default_view()
                                     GcodeViewerToolBarButton:
                                         width: '50dp'
                                         active: tool_bar.show_grid
-                                        icon: 'data/grid.png'
+                                        icon: 'data/GcodeViewer/grid.png'
                                         disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
                                         on_release:
                                             tool_bar.show_grid = not tool_bar.show_grid
                                             root.gcode_viewer.set_grid_visible(tool_bar.show_grid)
+                                    GcodeViewerToolBarButton:
+                                        width: '44dp'
+                                        valign: 'middle'
+                                        text: 'Ortho'
+                                        active: tool_bar.ortho_projection
+                                        disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                        on_release:
+                                            tool_bar.ortho_projection = not tool_bar.ortho_projection
+                                            root.gcode_viewer.set_ortho_projection(tool_bar.ortho_projection)
                                     Widget:
 
                                     # tools

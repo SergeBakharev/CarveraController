@@ -39,7 +39,7 @@
         Spinner:
             id: gcode_color_scheme_spinner
             text: tr._('Move type')
-            values: tr._('Move type'), tr._('Tool'), tr._('Speed')
+            values: tr._('Move type'), tr._('Tool'), tr._('Speed'), tr._('Height')
             size_hint_x: 0.7
             on_text:
                 app.root.on_gcode_color_scheme_changed(self.text)
