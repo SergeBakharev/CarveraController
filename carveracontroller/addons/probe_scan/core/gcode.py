@@ -240,6 +240,7 @@ def _build_probe_cmd(
     *,
     f_probe: float = 300.0,
     k_rapid: float = 800.0,
+    d_tip: str = "",
     l_repeat: str = "",
     r_retract: str = "",
     result_vars: list[str] | None = None,
@@ -248,6 +249,9 @@ def _build_probe_cmd(
     parts.extend(w for w in axis_words if w)
     parts.append(f"F{_fmt(f_probe)}")
     parts.append(f"K{_fmt(k_rapid)}")
+    dw = _word("D", d_tip)
+    if dw:
+        parts.append(dw)
     lw = _word("L", l_repeat)
     if lw:
         parts.append(lw)
@@ -265,6 +269,7 @@ def build_m466(
     e: str = "",
     h: str = "",
     c: str = "",
+    d_tip: str = "",
     f_probe: float = 300.0,
     k_rapid: float = 800.0,
     l_repeat: str = "",
@@ -280,7 +285,7 @@ def build_m466(
         "M466",
         [xw, yw, _word("E", e), _word("H", h), _word("C", c)],
         f_probe=f_probe, k_rapid=k_rapid,
-        l_repeat=l_repeat, r_retract=r_retract,
+        d_tip=d_tip, l_repeat=l_repeat, r_retract=r_retract,
         result_vars=result_vars or list(VAR_SETS["M466"]),
     )
 
@@ -292,6 +297,7 @@ def build_m461(
     e: str = "",
     h: str = "",
     c: str = "",
+    d_tip: str = "",
     f_probe: float = 300.0,
     k_rapid: float = 800.0,
     l_repeat: str = "",
@@ -307,7 +313,7 @@ def build_m461(
         "M461",
         [xw, yw, _word("E", e), _word("H", h), _word("C", c)],
         f_probe=f_probe, k_rapid=k_rapid,
-        l_repeat=l_repeat, r_retract=r_retract,
+        d_tip=d_tip, l_repeat=l_repeat, r_retract=r_retract,
         result_vars=result_vars or list(VAR_SETS["M461"]),
     )
 
@@ -320,6 +326,7 @@ def build_m462(
     j_clearance: str = "",
     h: str = "",
     c: str = "",
+    d_tip: str = "",
     f_probe: float = 300.0,
     k_rapid: float = 800.0,
     l_repeat: str = "",
@@ -336,7 +343,7 @@ def build_m462(
         [xw, yw, _word("J", j_clearance),
          _word("E", e_depth), _word("H", h), _word("C", c)],
         f_probe=f_probe, k_rapid=k_rapid,
-        l_repeat=l_repeat, r_retract=r_retract,
+        d_tip=d_tip, l_repeat=l_repeat, r_retract=r_retract,
         result_vars=result_vars or list(VAR_SETS["M462"]),
     )
 
@@ -348,6 +355,7 @@ def build_m463(
     e: str = "",
     h: str = "",
     c: str = "",
+    d_tip: str = "",
     f_probe: float = 300.0,
     k_rapid: float = 800.0,
     l_repeat: str = "",
@@ -358,7 +366,7 @@ def build_m463(
         [f"X{_fmt(x)}", f"Y{_fmt(y)}",
          _word("E", e), _word("H", h), _word("C", c)],
         f_probe=f_probe, k_rapid=k_rapid,
-        l_repeat=l_repeat, r_retract=r_retract,
+        d_tip=d_tip, l_repeat=l_repeat, r_retract=r_retract,
     )
 
 
@@ -369,6 +377,7 @@ def build_m464(
     e: str = "",
     h: str = "",
     c: str = "",
+    d_tip: str = "",
     f_probe: float = 300.0,
     k_rapid: float = 800.0,
     l_repeat: str = "",
@@ -379,7 +388,7 @@ def build_m464(
         [f"X{_fmt(x)}", f"Y{_fmt(y)}",
          _word("E", e), _word("H", h), _word("C", c)],
         f_probe=f_probe, k_rapid=k_rapid,
-        l_repeat=l_repeat, r_retract=r_retract,
+        d_tip=d_tip, l_repeat=l_repeat, r_retract=r_retract,
     )
 
 
@@ -390,6 +399,7 @@ def build_m465(
     *,
     h: str = "",
     c: str = "",
+    d_tip: str = "",
     f_probe: float = 300.0,
     k_rapid: float = 800.0,
     l_repeat: str = "",
@@ -400,7 +410,7 @@ def build_m465(
         [_word("X", x), _word("Y", y), _word("E", e),
          _word("H", h), _word("C", c)],
         f_probe=f_probe, k_rapid=k_rapid,
-        l_repeat=l_repeat, r_retract=r_retract,
+        d_tip=d_tip, l_repeat=l_repeat, r_retract=r_retract,
     )
 
 

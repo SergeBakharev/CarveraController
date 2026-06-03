@@ -24,6 +24,7 @@ from kivy.factory import Factory
 from carveracontroller.CNC import CNC
 from carveracontroller.Controller import Controller
 from carveracontroller.main import is_ios
+from carveracontroller.addons.probing.operations.ConfigUtils import get_machine_config_hint
 from carveracontroller.serial_listeners import (
     register_serial_listener,
     unregister_serial_listener,
@@ -405,6 +406,7 @@ class ProbeScanPopup(ModalView):
         Clock.schedule_once(lambda _dt: self._tick_wcs_live(), 0.05)
         Clock.schedule_once(lambda _dt: self._sync_manual_wcs_fields_from_machine(), 0.08)
         Clock.schedule_once(lambda _dt: self._refresh_feature_ui(), 0)
+        Clock.schedule_once(lambda _dt: self._refresh_probe_tip_diameter_hints(), 0)
 
     def dismiss(self, *args, **kwargs):
         if self.is_probing:
@@ -1184,6 +1186,14 @@ class ProbeScanPopup(ModalView):
     def on_angle_axis_hint(self, which: str):
         self._angle_variant = which
 
+    def _refresh_probe_tip_diameter_hints(self) -> None:
+        hint = get_machine_config_hint("zprobe.probe_tip_diameter") or tr._("config")
+        for prefix in ("466", "461", "462", "463", "464", "465"):
+            try:
+                self.ids[f"t{prefix}_d"].hint_text = hint
+            except Exception:
+                logger.debug("Could not update tip diameter hint for t%s_d", prefix)
+
     def _read_common_probe_opts(self, prefix: str) -> dict:
         return dict(
             h=_parse_optional_float_text(self.ids[f"t{prefix}_h"]) or "",
@@ -1192,6 +1202,7 @@ class ProbeScanPopup(ModalView):
             k_rapid=_parse_float_field(self.ids[f"t{prefix}_k"], 800.0),
             l_repeat=_parse_optional_float_text(self.ids[f"t{prefix}_l"]) or "",
             r_retract=_parse_optional_float_text(self.ids[f"t{prefix}_r"]) or "",
+            d_tip=_parse_optional_float_text(self.ids[f"t{prefix}_d"]) or "",
         )
 
     def on_probe_axis466(self):
