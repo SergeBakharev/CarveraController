@@ -156,7 +156,15 @@ if WHB04_SUPPORTED:
             daemon.set_display_position(whb04.Axis.Y, self._cnc.vars["wy"])
             daemon.set_display_position(whb04.Axis.Z, self._cnc.vars["wz"])
             daemon.set_display_position(whb04.Axis.A, self._cnc.vars["wa"])
-            daemon.set_display_feedrate(self._cnc.vars["curfeed"])
+            # daemon.set_display_feedrate(self._cnc.vars["curfeed"])
+            # rbeard-ewa fix unhandled exception for bad feedrate
+            try:
+              raw_feed = float(self._cnc.vars.get("curfeed", 0))
+              safe_feed = max(0.0, min(raw_feed, 9999.0))
+              daemon.set_display_feedrate(safe_feed)
+            except ValueError:
+              pass
+            # end of feedrate fix
             daemon.set_display_spindle_speed(self._cnc.vars["curspindle"])
             
             # Update the step indicator to reflect current jog mode
