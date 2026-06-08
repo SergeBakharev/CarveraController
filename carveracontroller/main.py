@@ -6635,6 +6635,10 @@ def set_config_defaults(default_lang):
     if not Config.has_option('carvera', 'gcode_color_tool'): Config.set('carvera', 'gcode_color_tool', '181,206,168,255')
     if not Config.has_option('carvera', 'gcode_color_line_number'): Config.set('carvera', 'gcode_color_line_number', '133,133,133,255')
     if not Config.has_option('carvera', 'gcode_color_parameter'): Config.set('carvera', 'gcode_color_parameter', '156,220,254,255')
+    if not Config.has_option('carvera', 'gcode_color_o_label'): Config.set('carvera', 'gcode_color_o_label', '86,156,214,255')
+    if not Config.has_option('carvera', 'gcode_color_o_keyword'): Config.set('carvera', 'gcode_color_o_keyword', '220,220,170,255')
+    if not Config.has_option('carvera', 'gcode_color_param_ref'): Config.set('carvera', 'gcode_color_param_ref', '181,206,168,255')
+    if not Config.has_option('carvera', 'gcode_color_math_keyword'): Config.set('carvera', 'gcode_color_math_keyword', '215,186,125,255')
 
     Config.write()
 
