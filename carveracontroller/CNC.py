@@ -7,8 +7,41 @@ PARENPAT = re.compile(r"(\(.*?\))")
 SEMIPAT  = re.compile(r"(;.*)")
 CMDPAT   = re.compile(r"([A-Za-z]+)")
 
+_O_KEYWORDS = (
+    r'elseif|endwhile|endrepeat|endsub|endif|continue|'
+    r'repeat|while|break|call|else|sub|do|if'
+)
+
+_MATH_KEYWORDS_COMPACT = (
+    r'xor|and|nor|mod|eq|ne|gt|ge|lt|le|or'
+)
+_MATH_KEYWORDS_FUNCTIONS = (
+    r'sqrt|round|asin|acos|atan|sin|cos|tan|abs|fix|fup|ln|exp'
+)
+_MATH_KEYWORDS_SPACED = (
+    r'sqrt|round|asin|acos|atan|xor|and|nor|mod|'
+    r'sin|cos|tan|abs|fix|fup|exp|'
+    r'eq|ne|gt|ge|lt|le|ln|or'
+)
+
 GCODE_TOKEN_RE = re.compile(
     r'(?P<comment>\(.*?\)|;.*)'                              # paren or semicolon comment
+    r'|(?:^|\s)(?P<o_label>[Oo]\d+)(?=\s+(?:'
+    + _O_KEYWORDS
+    + r')\b)'                                                # O-codes labels
+    r'|(?P<o_keyword>\b(?:'
+    + _O_KEYWORDS
+    + r')\b)'                                                # O-codes keywords
+    r'|(?P<param_ref>#\d+)'                                  # parameter variables
+    r'|(?P<math_keyword>(?:(?<=[\d#\]%\)])(?:'
+    + _MATH_KEYWORDS_COMPACT
+    + r')(?=[\d#\[\(])'                                      # compact form keywords (ex: 5eq5, 1and1)
+    r'|(?<![A-Za-z])(?:'
+    + _MATH_KEYWORDS_FUNCTIONS
+    + r')(?=\[)'                                             # functions keywords (ex: sin[45])
+    r'|\b(?:'
+    + _MATH_KEYWORDS_SPACED
+    + r')\b))'                                               # spaced keywords (ex: #100 gt 5)
     r'|(?P<g_command>[Gg]\d+\.?\d*)'                         # G command
     r'|(?P<m_command>[Mm]\d+\.?\d*)'                         # M command
     r'|(?P<coordinate>[XYZAxyza][-+]?\d*\.?\d*)'             # coordinate axis
@@ -19,16 +52,22 @@ GCODE_TOKEN_RE = re.compile(
     r'|(?P<parameter>[IJKPRHLDQEijkprhldqe][-+]?\d*\.?\d*)' # other parameters
 )
 
+M118_HIGHLIGHT_STOP = re.compile(r'[Mm]118(?!\.\d)\b')
+
 GCODE_DEFAULT_COLORS = {
-    'comment':     '#6A9955',
-    'g_command':   '#569CD6',
-    'm_command':   '#C586C0',
-    'coordinate':  '#CE9178',
-    'feedrate':    '#4EC9B0',
-    'spindle':     '#D16969',
-    'tool':        '#B5CEA8',
-    'line_number': '#858585',
-    'parameter':   '#9CDCFE',
+    'comment':      '#6A9955',
+    'g_command':    '#569CD6',
+    'm_command':    '#C586C0',
+    'coordinate':   '#CE9178',
+    'feedrate':     '#4EC9B0',
+    'spindle':      '#D16969',
+    'tool':         '#B5CEA8',
+    'line_number':  '#858585',
+    'parameter':    '#9CDCFE',
+    'o_label':      '#569CD6',
+    'o_keyword':    '#DCDCAA',
+    'param_ref':    '#B5CEA8',
+    'math_keyword': '#D7BA7D',
 }
 
 def escape_gcode_markup(text):
@@ -48,18 +87,31 @@ def highlight_gcode_line(line, colors=None):
     else:
         effective = {**GCODE_DEFAULT_COLORS, **colors}
 
+    highlight_end = len(line)
+    m118 = M118_HIGHLIGHT_STOP.search(line)
+    if m118:
+        highlight_end = m118.end()
+
     result = []
     pos = 0
-    for m in GCODE_TOKEN_RE.finditer(line):
+    for m in GCODE_TOKEN_RE.finditer(line, 0, highlight_end):
         if m.start() > pos:
             result.append(escape_gcode_markup(line[pos:m.start()]))
 
-        hex_color = effective.get(m.lastgroup, '#C8C8C8')
-        result.append(f'[color={hex_color}]{escape_gcode_markup(m.group())}[/color]')
+        group_name = m.lastgroup
+        if group_name and m.start(group_name) != -1:
+            token_text = m.group(group_name)
+        else:
+            token_text = m.group()
+
+        hex_color = effective.get(group_name, '#C8C8C8')
+        result.append(f'[color={hex_color}]{escape_gcode_markup(token_text)}[/color]')
         pos = m.end()
 
-    if pos < len(line):
-        result.append(escape_gcode_markup(line[pos:]))
+    if pos < highlight_end:
+        result.append(escape_gcode_markup(line[pos:highlight_end]))
+    if highlight_end < len(line):
+        result.append(escape_gcode_markup(line[highlight_end:]))
     return ''.join(result)
 
 XY   = 0
@@ -302,6 +354,10 @@ class CNC:
         # remove comments
         line = PARENPAT.sub("", line)
         line = SEMIPAT.sub("", line)
+        # M118 prints the remainder of the line as text; do not parse it as G-code
+        m118 = M118_HIGHLIGHT_STOP.search(line)
+        if m118:
+            line = line[:m118.end()]
         # remove spaces
         line = line.replace(" ", "")
         # Insert space before each command
