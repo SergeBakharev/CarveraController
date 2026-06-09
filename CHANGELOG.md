@@ -1,5 +1,5 @@
 [unreleased]
-- Enhancement: Add multi-select deletion to the remote file browser
+- Enhancement: Add multi-select to the remote file browser
 - Enhancement: Display error message in halt popup. Requires halt errors to start with "ERROR: " in the firmware
 - Enhancement: Add popup notice when using stock firmware instead of the Community Firmware
 - Enhancement: Improvements to saving changes in settings menu
