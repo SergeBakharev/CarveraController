@@ -1,5 +1,5 @@
 [unreleased]
-- Enhancement: Display alarm message in halt popup
+- Enhancement: Display error message in halt popup. Requires halt errors to start with "ERROR: " in the firmware
 - Enhancement: Add popup notice when using stock firmware instead of the Community Firmware
 - Enhancement: Improvements to saving changes in settings menu
 - Enhancement: Add syntax highlighting to the file viewer

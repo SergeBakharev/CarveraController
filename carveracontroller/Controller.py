@@ -1839,8 +1839,8 @@ class Controller:
                     self.continuous_jog_active = False
             elif "error" in line.lower() or "alarm" in line.lower():
                 self.log.put((self.MSG_ERROR, line))
-                if line.upper().startswith("ALARM:"):
-                    msg = line[len("ALARM:"):].strip()
+                if line.upper().startswith("ERROR:"):
+                    msg = line[len("ERROR:"):].strip()
                     if msg:
                         CNC.vars["alarm_message"] = msg
             else:
