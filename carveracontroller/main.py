@@ -2864,6 +2864,8 @@ class Makera(RelativeLayout):
         self.setting_list = {}
         self.setting_type_list = {}
         self.setting_default_list = {}
+        self.machine_config_data = None
+        self.machine_config_data_model = None
         self.controller_setting_change_list = {}
         self.load_controller_config()
         self.load_gcode_viewer_config()
@@ -4183,6 +4185,7 @@ class Makera(RelativeLayout):
     def finishLoadConfig(self, success, *args):
         if success:
             self.setting_list.clear()
+            self.load_machine_config_defaults()
             # caching config file
             config_path = os.path.join(self.temp_dir, 'config.txt')
             with open(config_path, 'r') as f:
@@ -4479,6 +4482,44 @@ class Makera(RelativeLayout):
         while self.controller.load_buffer.qsize() > 0:
             self.message_popup.lb_content.text = self.controller.load_buffer.get_nowait()
         self.message_popup.btn_ok.disabled = False
+
+    def load_machine_config_defaults(self):
+        self.setting_default_list.clear()
+        data = self.load_machine_config_data()
+        if data is None:
+            return
+
+        for setting in data:
+            if 'key' in setting and 'default' in setting:
+                key = setting['key']
+                value = setting['default']
+                self.setting_default_list[key] = value
+                self.setting_list[key] = value
+
+    def load_machine_config_data(self):
+        app = App.get_running_app()
+        if not app.model or app.model == "":
+            return None
+
+        if self.machine_config_data_model == app.model:
+            return self.machine_config_data
+
+        config_files = {
+            'C1': "config_c1.json",
+            'CA1': "config_ca1.json",
+        }
+        config_file = config_files.get(app.model)
+        if config_file is None:
+            return None
+
+        config_path = os.path.join(os.path.dirname(__file__), config_file)
+        if not os.path.exists(config_path):
+            return None
+
+        with open(config_path, 'r') as fd:
+            self.machine_config_data = json.loads(fd.read())
+        self.machine_config_data_model = app.model
+        return self.machine_config_data
 
     def load_coordinates(self):
         for coord_name in CNC.coord_names:
@@ -5618,25 +5659,9 @@ class Makera(RelativeLayout):
                             self.updateStatus()
                             return False
         else:
-            app = App.get_running_app()
-            data = None
-            
-            # If model is not set yet, don't load any config
-            if not app.model or app.model == "":
+            data = self.load_machine_config_data()
+            if data is None:
                 return True
-            
-            if app.model == 'C1':
-                # Load C1 specific config
-                c1_config_file = os.path.join(os.path.dirname(__file__), "config_c1.json")
-                if os.path.exists(c1_config_file):
-                    with open(c1_config_file, 'r') as fd:
-                        data = json.loads(fd.read())
-            elif app.model == 'CA1':
-                # Load CA1 specific config
-                ca1_config_file = os.path.join(os.path.dirname(__file__), "config_ca1.json")
-                if os.path.exists(ca1_config_file):
-                    with open(ca1_config_file, 'r') as fd:
-                        data = json.loads(fd.read())
 
             basic_config = []
             advanced_config = []
