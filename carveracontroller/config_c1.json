@@ -1,17 +1,17 @@
 [
-   {
+    {
         "type": "title",
         "title": "Vacuum",
         "section": "Basic"
-   },
+    },
     {
         "type": "numeric",
         "title": "Vacuum power",
         "desc": "Default vacuum power when open (50 - 100)",
         "section": "Basic",
-        "key": "switch.vacuum.default_on_value"
+        "key": "switch.vacuum.default_on_value",
+        "default": "80"
     },
-	
     {
         "type": "title",
         "title": "Light",
@@ -22,16 +22,17 @@
         "title": "Light on",
         "desc": "Whether to turn on light by default",
         "section": "Basic",
-        "key": "switch.light.startup_state"
+        "key": "switch.light.startup_state",
+        "default": "true"
     },
     {
         "type": "numeric",
         "title": "Light off minutes",
         "desc": "Turn off the light when idle for these minutes (0 means never)",
         "section": "Basic",
-        "key": "light.turn_off_min"
-    },	
-	
+        "key": "light.turn_off_min",
+        "default": "0.0"
+    },
     {
         "type": "title",
         "title": "Safety",
@@ -42,9 +43,9 @@
         "title": "Stop on open",
         "desc": "Stop when open the cover during machining",
         "section": "Basic",
-        "key": "stop_on_cover_open"
+        "key": "stop_on_cover_open",
+        "default": "false"
     },
-
     {
         "type": "title",
         "title": "Power management",
@@ -55,16 +56,17 @@
         "title": "Auto sleep",
         "desc": "Allow machine to enter sleep mode automatically",
         "section": "Basic",
-        "key": "power.auto_sleep"
+        "key": "power.auto_sleep",
+        "default": "false"
     },
     {
         "type": "numeric",
         "title": "Auto sleep minutes",
         "desc": "Enter sleep mode after these minutes (1 - 30)",
         "section": "Basic",
-        "key": "power.auto_sleep_min"
+        "key": "power.auto_sleep_min",
+        "default": "5"
     },
-
     {
         "type": "title",
         "title": "Main button",
@@ -76,10 +78,14 @@
         "desc": "Triggered after 3 seconds when pressing\nNone   ------Do Nothing\nSleep  ------Enter sleep mode\nRepeat------Repeat Last Job\nTool Change------Clamp/Unclamp Collet for Tool Changes (Community Firmware Only)",
         "section": "Basic",
         "key": "main_button_long_press_enable",
-        "options": ["None", "Sleep", "Repeat", "ToolChange"],
+        "options": [
+            "None",
+            "Sleep",
+            "Repeat",
+            "ToolChange"
+        ],
         "default": "None"
     },
-
     {
         "type": "title",
         "title": "Coordinates",
@@ -90,119 +96,136 @@
         "title": "Anchor1 X",
         "desc": "X Machine coordinates of anchor1",
         "section": "Advanced",
-        "key": "coordinate.anchor1_x"
-    },	
+        "key": "coordinate.anchor1_x",
+        "default": "-360.158"
+    },
     {
         "type": "numeric",
         "title": "Anchor1 Y",
         "desc": "Y Machine coordinates of anchor1",
         "section": "Advanced",
-        "key": "coordinate.anchor1_y"
-    },	
+        "key": "coordinate.anchor1_y",
+        "default": "-234.568"
+    },
     {
         "type": "numeric",
         "title": "Anchor2 X Offset",
         "desc": "Anchor2 X Offset relative to anchor1",
         "section": "Advanced",
-        "key": "coordinate.anchor2_offset_x"
-    },	
+        "key": "coordinate.anchor2_offset_x",
+        "default": "90.0"
+    },
     {
         "type": "numeric",
         "title": "Anchor2 Y Offset",
         "desc": "Anchor2 Y Offset relative to anchor1",
         "section": "Advanced",
-        "key": "coordinate.anchor2_offset_y"
+        "key": "coordinate.anchor2_offset_y",
+        "default": "45.0"
     },
-      {
+    {
         "type": "numeric",
         "title": "Tool Rack X Offset",
         "desc": "Tool 6 X Offset relative to anchor1",
         "section": "Advanced",
-        "key": "coordinate.toolrack_offset_x"
+        "key": "coordinate.toolrack_offset_x",
+        "default": "356"
     },
     {
         "type": "numeric",
         "title": "Tool Rack Y Offset",
         "desc": "Tool 6 Y Offset relative to anchor1",
         "section": "Advanced",
-        "key": "coordinate.toolrack_offset_y"
+        "key": "coordinate.toolrack_offset_y",
+        "default": "0.0"
     },
     {
         "type": "numeric",
         "title": "ATC Z",
         "desc": "ATC Z axis machine coordinates",
         "section": "Advanced",
-        "key": "coordinate.toolrack_z"
+        "key": "coordinate.toolrack_z",
+        "default": "-112.5"
     },
-     {
+    {
         "type": "numeric",
         "title": "Rotation X Offset",
         "desc": "Rotation module X Offset relative to anchor1",
         "section": "Advanced",
-        "key": "coordinate.rotation_offset_x"
+        "key": "coordinate.rotation_offset_x",
+        "default": "3.5"
     },
     {
         "type": "numeric",
         "title": "Rotation Y Offset",
         "desc": "Rotation module Y Offset relative to anchor1",
         "section": "Advanced",
-        "key": "coordinate.rotation_offset_y"
+        "key": "coordinate.rotation_offset_y",
+        "default": "37.5"
     },
     {
         "type": "numeric",
         "title": "Rotation Z Offset",
         "desc": "Rotation module Z Offset relative to chuck center",
         "section": "Advanced",
-        "key": "coordinate.rotation_offset_z"
+        "key": "coordinate.rotation_offset_z",
+        "default": "23"
     },
     {
         "type": "numeric",
         "title": "Anchor width",
         "desc": "Width of anchors",
         "section": "Advanced",
-        "key": "coordinate.anchor_width"
-    },	
+        "key": "coordinate.anchor_width",
+        "default": "15.0"
+    },
     {
         "type": "numeric",
         "title": "Anchor length",
         "desc": "Length of anchors",
         "section": "Advanced",
-        "key": "coordinate.anchor_length"
-    },	
+        "key": "coordinate.anchor_length",
+        "default": "100.0"
+    },
     {
         "type": "numeric",
         "title": "X Work Size",
         "desc": "Width of work area",
         "section": "Advanced",
-        "key": "coordinate.worksize_x"
-    },	
+        "key": "coordinate.worksize_x",
+        "default": "340.0"
+    },
     {
         "type": "numeric",
         "title": "Y Work Size",
         "desc": "Height of work area",
         "section": "Advanced",
-        "key": "coordinate.worksize_y"
-    },	
+        "key": "coordinate.worksize_y",
+        "default": "240.0"
+    },
     {
         "type": "numeric",
         "title": "X Clearance",
         "desc": "X Machine coordinates for clearance",
         "section": "Advanced",
-        "key": "coordinate.clearance_x"
-    },	
+        "key": "coordinate.clearance_x",
+        "default": "-75.0"
+    },
     {
         "type": "numeric",
         "title": "Y Clearance",
         "desc": "Y Machine coordinates for clearance",
         "section": "Advanced",
-        "key": "coordinate.clearance_y"
-    },	
+        "key": "coordinate.clearance_y",
+        "default": "-3.0"
+    },
     {
         "type": "numeric",
         "title": "Z Clearance",
         "desc": "Z Machine coordinates for clearance",
         "section": "Advanced",
-        "key": "coordinate.clearance_z"
+        "key": "coordinate.clearance_z",
+        "default": "-3.0"
     },
     {
         "type": "bool",
@@ -210,7 +233,7 @@
         "desc": "Enabled to precheck if gCode commands will exceed the travel limits",
         "section": "Advanced",
         "key": "soft_endstop.enable",
-        "default": "true"
+        "default": "True"
     },
     {
         "type": "numeric",
@@ -248,77 +271,87 @@
         "type": "title",
         "title": "Motion",
         "section": "Advanced"
-    },	
+    },
     {
         "type": "numeric",
         "title": "Default Feed Rate",
         "desc": "Feed rate when F parameter is not set (mm/min)",
         "section": "Advanced",
-        "key": "default_feed_rate"
-    },																
+        "key": "default_feed_rate",
+        "default": "1000"
+    },
     {
         "type": "numeric",
         "title": "Default Seek Rate",
         "desc": "Feed rate for G0 rapid mode (mm/min)",
         "section": "Advanced",
-        "key": "default_seek_rate"
-    },																
+        "key": "default_seek_rate",
+        "default": "3000"
+    },
     {
         "type": "numeric",
         "title": "Max X Speed",
         "desc": "Max feed rate for X axis (mm/min)",
         "section": "Advanced",
-        "key": "alpha_max_rate"
-    },																
+        "key": "alpha_max_rate",
+        "default": "3000.0"
+    },
     {
         "type": "numeric",
         "title": "Max Y Speed",
         "desc": "Max feed rate for Y axis (mm/min)",
         "section": "Advanced",
-        "key": "beta_max_rate"
-    },																
+        "key": "beta_max_rate",
+        "default": "3000.0"
+    },
     {
         "type": "numeric",
         "title": "Max Z Speed",
         "desc": "Max feed rate for Z axis (mm/min)",
         "section": "Advanced",
-        "key": "gamma_max_rate"
-    },																
+        "key": "gamma_max_rate",
+        "default": "2000.0"
+    },
     {
         "type": "numeric",
         "title": "Max Rotation Speed",
         "desc": "Max rotation speed rate for A axis (degree/min)",
         "section": "Advanced",
-        "key": "delta_max_rate"
-    },																
+        "key": "delta_max_rate",
+        "default": "1800.0"
+    },
     {
         "type": "numeric",
         "title": "ATC Max Speed",
         "desc": "Max feed rate for auto tool changer (mm/min)",
         "section": "Advanced",
-        "key": "epsilon_max_rate"
-    },																
+        "key": "epsilon_max_rate",
+        "default": "100.0"
+    },
     {
         "type": "numeric",
         "title": "XYZ Acceleration",
         "desc": "Acceleration for X/Y/Z axis (mm/second/second)",
         "section": "Advanced",
-        "key": "acceleration"
-    },																
+        "key": "acceleration",
+        "default": "150"
+    },
     {
         "type": "numeric",
         "title": "Rotation Acceleration",
         "desc": "Acceleration for rotation axis (degree/second/second)",
         "section": "Advanced",
-        "key": "delta_acceleration"
-    },																
+        "key": "delta_acceleration",
+        "default": "360.0"
+    },
     {
         "type": "numeric",
         "title": "ATC Acceleration",
         "desc": "Acceleration for auto tool changer (mm/second/second)",
         "section": "Advanced",
-        "key": "epsilon_acceleration"
-    },	
+        "key": "epsilon_acceleration",
+        "default": "10.0"
+    },
     {
         "type": "bool",
         "title": "Skip move to path origin on playback start",
@@ -327,52 +360,55 @@
         "section": "Advanced",
         "key": "atc.skip_path_origin"
     },
-	
     {
         "type": "title",
         "title": "WIFI",
         "section": "Advanced"
-    },	
+    },
     {
         "type": "string",
         "title": "Machine WiFi Name",
         "desc": "Machine name that is shown in the WiFi list",
         "section": "Advanced",
-        "key": "wifi.machine_name"
-    },		
-	
+        "key": "wifi.machine_name",
+        "default": "CARVERA_01001"
+    },
     {
         "type": "title",
         "title": "ATC Motion",
         "section": "Advanced"
-    },	
+    },
     {
         "type": "numeric",
         "title": "Homing Retract",
         "desc": "Retract distance after homing (mm)",
         "section": "Advanced",
-        "key": "atc.homing_retract_mm"
-    },															
+        "key": "atc.homing_retract_mm",
+        "default": "0.4"
+    },
     {
         "type": "numeric",
         "title": "Action Distance",
         "desc": "Action distance when drop tool (mm)",
         "section": "Advanced",
-        "key": "atc.action_mm"
+        "key": "atc.action_mm",
+        "default": "1.6"
     },
-   {
+    {
         "type": "numeric",
         "title": "Detect speed",
         "desc": "Tool detect speed (mm / second)",
         "section": "Advanced",
-        "key": "atc.detector.detect_rate_mm_s"
+        "key": "atc.detector.detect_rate_mm_s",
+        "default": "20"
     },
-   {
+    {
         "type": "numeric",
         "title": "Detect Distance",
         "desc": "Tool detect back and forth distance (mm)",
         "section": "Advanced",
-        "key": "atc.detector.detect_travel_mm"
+        "key": "atc.detector.detect_travel_mm",
+        "default": "5"
     },
     {
         "type": "numeric",
@@ -387,118 +423,133 @@
         "title": "Safe Z",
         "desc": "Safety Z height when clamping tool",
         "section": "Advanced",
-        "key": "atc.safe_z_mm"
-    },															
+        "key": "atc.safe_z_mm",
+        "default": "-20.0"
+    },
     {
         "type": "numeric",
         "title": "Safe Z Empty",
         "desc": "Safety Z height when not clamping tool",
         "section": "Advanced",
-        "key": "atc.safe_z_empty_mm"
-    },	
+        "key": "atc.safe_z_empty_mm",
+        "default": "-50.0"
+    },
     {
         "type": "numeric",
         "title": "Safe Z Offset",
         "desc": "Z offset when slowing down ATC speed",
         "section": "Advanced",
-        "key": "atc.safe_z_offset_mm"
-    },			
+        "key": "atc.safe_z_offset_mm",
+        "default": "15.0"
+    },
     {
         "type": "numeric",
         "title": "Fast ATC Speed",
         "desc": "Z axis fast speed When doing ATC",
         "section": "Advanced",
-        "key": "atc.fast_z_rate_mm_m"
-    },		
+        "key": "atc.fast_z_rate_mm_m",
+        "default": "1000"
+    },
     {
         "type": "numeric",
         "title": "Slow ATC Speed",
         "desc": "Z axis slow speed when doing ATC",
         "section": "Advanced",
-        "key": "atc.slow_z_rate_mm_m"
-    },	
+        "key": "atc.slow_z_rate_mm_m",
+        "default": "200"
+    },
     {
         "type": "numeric",
         "title": "Margin Scan Speed",
         "desc": "X and Y speed when scaning margin",
         "section": "Advanced",
-        "key": "atc.margin_rate_mm_m"
-    },		
+        "key": "atc.margin_rate_mm_m",
+        "default": "1000.0"
+    },
     {
         "type": "numeric",
         "title": "Probe Fast Speed",
         "desc": "Z axis fast speed when doing calibrate",
         "section": "Advanced",
-        "key": "atc.probe.fast_rate_mm_m"
-    },			
+        "key": "atc.probe.fast_rate_mm_m",
+        "default": "500"
+    },
     {
         "type": "numeric",
         "title": "Probe Slow Speed",
         "desc": "Z axis slow speed when doing calibrate",
         "section": "Advanced",
-        "key": "atc.probe.slow_rate_mm_m"
-    },			
+        "key": "atc.probe.slow_rate_mm_m",
+        "default": "100"
+    },
     {
         "type": "numeric",
         "title": "Probe Retract",
         "desc": "Retract distance when hitting probe",
         "section": "Advanced",
-        "key": "atc.probe.retract_mm"
+        "key": "atc.probe.retract_mm",
+        "default": "2"
     },
-		
     {
         "type": "title",
         "title": "Laser",
         "section": "Advanced"
-    },	
+    },
     {
         "type": "numeric",
         "title": "Test Power",
         "desc": "Laser power when doing test(0 - 1)",
         "section": "Advanced",
-        "key": "laser_module_test_power"
-    },		
+        "key": "laser_module_test_power",
+        "default": "0.01"
+    },
     {
         "type": "numeric",
         "title": "Max Laser Power",
         "desc": "Max laser power (0 - 1)",
         "section": "Advanced",
-        "key": "laser_module_maximum_power"
-    },		
+        "key": "laser_module_maximum_power",
+        "default": "1.0"
+    },
     {
         "type": "numeric",
         "title": "Min Laser Power",
         "desc": "Min laser power (0 - 1)",
         "section": "Advanced",
-        "key": "laser_module_minimum_power"
-    },		
+        "key": "laser_module_minimum_power",
+        "default": "0.0"
+    },
     {
         "type": "numeric",
         "title": "Offset X",
         "desc": "Laser module x offset relative to spindle",
         "section": "Advanced",
-        "key": "laser_module_offset_x"
-    },		
+        "key": "laser_module_offset_x",
+        "default": "-37.3"
+    },
     {
         "type": "numeric",
         "title": "Offset Y",
         "desc": "Laser module y offset relative to spindle",
         "section": "Advanced",
-        "key": "laser_module_offset_y"
-    },		
+        "key": "laser_module_offset_y",
+        "default": "4.8"
+    },
     {
         "type": "numeric",
         "title": "Offset Z",
         "desc": "Laser module z offset relative to spindle",
         "section": "Advanced",
-        "key": "laser_module_offset_z"
+        "key": "laser_module_offset_z",
+        "default": "-45.0"
     },
     {
         "type": "numeric",
         "title": "Cooldown power",
         "desc": "Laser module cooldown power",
         "section": "Advanced",
-        "key": "temperatureswitch.spindle.cooldown_power_laser"
+        "key": "temperatureswitch.spindle.cooldown_power_laser",
+        "default": "80.0"
     },
     {
         "type": "bool",
@@ -508,48 +559,51 @@
         "key": "laser_module_clustering",
         "default": "false"
     },
-
     {
         "type": "title",
         "title": "Z Probe",
         "section": "Advanced"
-    },	
+    },
     {
         "type": "numeric",
         "title": "Slow Speed",
         "desc": "Z probe slow speed (mm/s)",
         "section": "Advanced",
-        "key": "zprobe.slow_feedrate"
-    },		
+        "key": "zprobe.slow_feedrate",
+        "default": "0.8"
+    },
     {
         "type": "numeric",
         "title": "Fast Speed",
         "desc": "Z probe fast speed (mm/s)",
         "section": "Advanced",
-        "key": "zprobe.fast_feedrate"
-    },		
+        "key": "zprobe.fast_feedrate",
+        "default": "5"
+    },
     {
         "type": "numeric",
         "title": "Return Speed",
         "desc": "Z probe return speed (mm/s)",
         "section": "Advanced",
-        "key": "zprobe.return_feedrate"
-    },		
+        "key": "zprobe.return_feedrate",
+        "default": "20"
+    },
     {
         "type": "numeric",
         "title": "Probe Height",
         "desc": "How much above bed to start probe",
         "section": "Advanced",
-        "key": "zprobe.probe_height"
-    },		
+        "key": "zprobe.probe_height",
+        "default": "2"
+    },
     {
         "type": "numeric",
         "title": "Max Z",
         "desc": "Max action distance when doing z probe",
         "section": "Advanced",
-        "key": "zprobe.max_z"
-    },	
-	
+        "key": "zprobe.max_z",
+        "default": "100"
+    },
     {
         "type": "title",
         "title": "Spindle",
@@ -560,7 +614,8 @@
         "title": "Default RPM",
         "desc": "Default RPM value in case no RPM is provided",
         "section": "Advanced",
-        "key": "spindle.default_rpm"
+        "key": "spindle.default_rpm",
+        "default": "10000"
     },
     {
         "type": "numeric",
@@ -575,37 +630,41 @@
         "title": "Cooldown Threshold",
         "desc": "Temperature to turn on or off spindle fan",
         "section": "Advanced",
-        "key": "temperatureswitch.spindle.threshold_temp"
+        "key": "temperatureswitch.spindle.threshold_temp",
+        "default": "35.0"
     },
     {
         "type": "numeric",
         "title": "Cooldown Fan Start Power",
         "desc": "Cooldown fan start power percentage (50 - 100)",
         "section": "Advanced",
-        "key": "temperatureswitch.spindle.cooldown_power_init"
+        "key": "temperatureswitch.spindle.cooldown_power_init",
+        "default": "50.0"
     },
     {
         "type": "numeric",
         "title": "Cooldown Fan Step",
         "desc": "Cooldown fan start power increase step per degree",
         "section": "Advanced",
-        "key": "temperatureswitch.spindle.cooldown_power_step"
-    },	
+        "key": "temperatureswitch.spindle.cooldown_power_step",
+        "default": "10.0"
+    },
     {
         "type": "numeric",
         "title": "Cooldown Delay",
         "desc": "Stop cooldown after these seconds",
         "section": "Advanced",
-        "key": "temperatureswitch.spindle.cooldown_delay"
-    },				
-	{
+        "key": "temperatureswitch.spindle.cooldown_delay",
+        "default": "180"
+    },
+    {
         "type": "numeric",
         "title": "Temperature Alarm Threshold",
         "desc": "Alarm and halt machine when overheated",
         "section": "Advanced",
-        "key": "temperature_control.spindle.max_temp"
+        "key": "temperature_control.spindle.max_temp",
+        "default": "60"
     },
-
     {
         "type": "title",
         "title": "Wireless Probe",
@@ -616,16 +675,17 @@
         "title": "Charge Start Voltage",
         "desc": "Wireless probe charge start voltage",
         "section": "Advanced",
-        "key": "wp.min_voltage"
+        "key": "wp.min_voltage",
+        "default": "3.6"
     },
     {
         "type": "numeric",
         "title": "Charge Cut-Off Voltage",
         "desc": "Wireless probe charge cut-off voltage",
         "section": "Advanced",
-        "key": "wp.max_voltage"
+        "key": "wp.max_voltage",
+        "default": "4.1"
     },
-
     {
         "type": "string",
         "title": "Restore to default settings",
@@ -646,6 +706,8 @@
         "desc": "config.txt, flex_compensation.dat, etc. will be backed up to your computer",
         "section": "Backup",
         "key": "backup",
-        "options": ["Back up files now"]
+        "options": [
+            "Back up files now"
+        ]
     }
 ]
