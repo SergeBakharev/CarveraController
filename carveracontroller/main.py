@@ -2875,6 +2875,7 @@ class Makera(RelativeLayout):
         self.wifi_event = lambda instance, x: self.openWIFI(x)
 
         self.heartbeat_time = 0
+        self.machine_metadata_query_time = 0
         self.file_just_loaded = False
 
         self.fill_remote_dir_callback = None
@@ -3408,16 +3409,19 @@ class Makera(RelativeLayout):
         # The App.get_running_app() can return None in certain situations, especially during initialization or shutdown.
         if app is None:
             return
+
+        if self.controller.stream is None:
+            return
             
         # Check if model has been set and if not, query for it
         if not app.model or app.model == "":
-            if self.controller.stream is not None:
-                self.controller.queryModel()
+            self.controller.queryModel()
         
         # Check if version has been set and if not, query for it
         if not self.fw_version or self.fw_version == "":
-            if self.controller.stream is not None:
-                self.controller.queryVersion()
+            self.controller.queryVersion()
+
+        self.machine_metadata_query_time = time.time()
 
     # -----------------------------------------------------------------------
     def open_comports_drop_down(self, button):
@@ -4212,7 +4216,7 @@ class Makera(RelativeLayout):
             self.config_loading = False
             self.config_popup.btn_apply.disabled = True if len(self.setting_change_list) == 0 else False
         else:
-            self.controller.log.put(Controller.MSG_ERROR, tr._('Download config file error'))
+            self.controller.log.put((Controller.MSG_ERROR, tr._('Download config file error')))
             #self.controller.close()
 
         # Preserve selected file only when reconnecting to the same machine.
@@ -4307,8 +4311,10 @@ class Makera(RelativeLayout):
                 if show_progress:
                     Clock.schedule_once(partial(self.progressUpdate, 100, tr._('Synchronize version and time...'), True), 0)
                 Clock.schedule_once(self.controller.queryTime, 0.1)
-                Clock.schedule_once(self.controller.queryModel, 0.2)
-                Clock.schedule_once(self.controller.queryVersion, 0.3)
+                if app is None or not app.model:
+                    Clock.schedule_once(self.controller.queryModel, 0.2)
+                if not self.fw_version:
+                    Clock.schedule_once(self.controller.queryVersion, 0.3)
                 self.filetype = ''
                 Clock.schedule_once(self.controller.queryFtype, 0.4)
                 # Schedule a one off diagnostic command to get the machine's extended state
@@ -4389,14 +4395,9 @@ class Makera(RelativeLayout):
                 self.tool_drop_down.change_dropdown.values = ['Probe', '3D Probe', 'Tool: 1', 'Tool: 2', 'Tool: 3', 'Tool: 4',
                                                                 'Tool: 5', 'Tool: 6', 'Laser', 'Custom']
         app.has_atc = bool(CNC.vars['FuncSetting'] & 4)
-        # Load or reload machine config when model is detected/changed
-        if model_changed:
-            if self.config_loaded:
-                # Reload if already loaded
-                Clock.schedule_once(lambda dt: self.load_machine_config(), 0.1)
-            else:
-                # Load for the first time when model is detected
-                Clock.schedule_once(lambda dt: self.load_machine_config(), 0.1)
+        # The first machine config load must happen after /sd/config.txt is parsed.
+        if model_changed and self.config_loaded:
+            Clock.schedule_once(lambda dt: self.load_machine_config(), 0.1)
 
     # -----------------------------------------------------------------------
     def downloadCallback(self, remote_path, packet_size, success_count, error_count):
@@ -5019,6 +5020,10 @@ class Makera(RelativeLayout):
                     self.config_loaded = False
                     self.config_loading = False
                     self.fw_version_checked = False
+                    self.fw_version = ''
+                    app.model = ''
+                    app.fw_version_digitized = 0
+                    self.machine_metadata_query_time = 0
                     
                     # Clean up light toggle binding when disconnected
                     if hasattr(self, '_light_toggle_bound'):
@@ -5076,13 +5081,17 @@ class Makera(RelativeLayout):
 
             # load config, only one time per connection
             if not app.playing and not self.config_loaded and not self.config_loading and app.state == "Idle":
-                self.config_loading = True
-                self.download_config_file()
-                
-                # Bind light toggle button to LightProperty (only once per connection)
-                if not hasattr(self, '_light_toggle_bound'):
-                    self.bind_light_toggle_to_property()
-                    self._light_toggle_bound = True
+                if not app.model or not self.fw_version:
+                    if now - self.machine_metadata_query_time > 1:
+                        self.check_model_metadata()
+                else:
+                    self.config_loading = True
+                    self.download_config_file()
+
+                    # Bind light toggle button to LightProperty (only once per connection)
+                    if not hasattr(self, '_light_toggle_bound'):
+                        self.bind_light_toggle_to_property()
+                        self._light_toggle_bound = True
 
             # show update
             if not app.playing and self.fw_upd_text != '' and not self.fw_version_checked and app.state == "Idle":
@@ -5701,18 +5710,19 @@ class Makera(RelativeLayout):
                         has_setting = True
                     # construct json objects
                     if has_setting:
+                        panel_setting = setting.copy()
                         if 'section' in setting and setting['section'] == 'Basic':
-                            basic_config.append(setting)
+                            basic_config.append(panel_setting)
                         elif 'section' in setting and setting['section'] == 'Advanced':
-                            advanced_config.append(setting)
+                            advanced_config.append(panel_setting)
                     elif 'section' in setting and setting['section'] == 'Restore':
                         self.config.setdefaults(setting['section'], {
                             setting['key']: Utils.from_config(setting['type'], '')})
-                        restore_config.append(setting)
+                        restore_config.append(setting.copy())
                     elif 'section' in setting and setting['section'] == 'Backup':
                         self.config.setdefaults(setting['section'], {
                             setting['key']: Utils.from_config(setting['type'], '')})
-                        backup_config.append(setting)
+                        backup_config.append(setting.copy())
             # clear title section
             for basic in basic_config:
                 if basic['type'] == 'title' and 'section' in basic:
