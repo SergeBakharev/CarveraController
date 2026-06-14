@@ -1,7 +1,7 @@
 from kivy.uix.boxlayout import BoxLayout
 
-from carveracontroller.addons.probing.operations.ConfigUtils import ConfigUtils
 from carveracontroller.addons.probing.operations.Boss.BossParameterDefinitions import BossParameterDefinitions
+from carveracontroller.addons.probing.operations.ConfigUtils import ConfigUtils
 
 
 class BossSettings(BoxLayout):
@@ -11,7 +11,7 @@ class BossSettings(BoxLayout):
     def __init__(self, **kwargs):
         self.config = ConfigUtils.load_config(self.config_filename)
         self.config = self.order_config(self.config)
-        super(BossSettings, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
     def setting_changed(self, key: str, value: float):
         param = getattr(BossParameterDefinitions, key, None)
@@ -38,4 +38,4 @@ class BossSettings(BoxLayout):
         return param.default
 
     def get_config(self):
-        return self.config;
+        return self.config

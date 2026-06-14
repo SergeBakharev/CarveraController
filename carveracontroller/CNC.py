@@ -1,78 +1,68 @@
+import math
 import os
 import re
-import math
 import types
 
 PARENPAT = re.compile(r"(\(.*?\))")
-SEMIPAT  = re.compile(r"(;.*)")
-CMDPAT   = re.compile(r"([A-Za-z]+)")
+SEMIPAT = re.compile(r"(;.*)")
+CMDPAT = re.compile(r"([A-Za-z]+)")
 
 _O_KEYWORDS = (
-    r'elseif|endwhile|endrepeat|endsub|endif|continue|'
-    r'repeat|while|break|call|else|sub|do|if'
+    r"elseif|endwhile|endrepeat|endsub|endif|continue|"
+    r"repeat|while|break|call|else|sub|do|if"
 )
 
-_MATH_KEYWORDS_COMPACT = (
-    r'xor|and|nor|mod|eq|ne|gt|ge|lt|le|or'
-)
-_MATH_KEYWORDS_FUNCTIONS = (
-    r'sqrt|round|asin|acos|atan|sin|cos|tan|abs|fix|fup|ln|exp'
-)
+_MATH_KEYWORDS_COMPACT = r"xor|and|nor|mod|eq|ne|gt|ge|lt|le|or"
+_MATH_KEYWORDS_FUNCTIONS = r"sqrt|round|asin|acos|atan|sin|cos|tan|abs|fix|fup|ln|exp"
 _MATH_KEYWORDS_SPACED = (
-    r'sqrt|round|asin|acos|atan|xor|and|nor|mod|'
-    r'sin|cos|tan|abs|fix|fup|exp|'
-    r'eq|ne|gt|ge|lt|le|ln|or'
+    r"sqrt|round|asin|acos|atan|xor|and|nor|mod|"
+    r"sin|cos|tan|abs|fix|fup|exp|"
+    r"eq|ne|gt|ge|lt|le|ln|or"
 )
 
 GCODE_TOKEN_RE = re.compile(
-    r'(?P<comment>\(.*?\)|;.*)'                              # paren or semicolon comment
-    r'|(?:^|\s)(?P<o_label>[Oo]\d+)(?=\s+(?:'
-    + _O_KEYWORDS
-    + r')\b)'                                                # O-codes labels
-    r'|(?P<o_keyword>\b(?:'
-    + _O_KEYWORDS
-    + r')\b)'                                                # O-codes keywords
-    r'|(?P<param_ref>#\d+)'                                  # parameter variables
-    r'|(?P<math_keyword>(?:(?<=[\d#\]%\)])(?:'
+    r"(?P<comment>\(.*?\)|;.*)"  # paren or semicolon comment
+    r"|(?:^|\s)(?P<o_label>[Oo]\d+)(?=\s+(?:" + _O_KEYWORDS + r")\b)"  # O-codes labels
+    r"|(?P<o_keyword>\b(?:" + _O_KEYWORDS + r")\b)"  # O-codes keywords
+    r"|(?P<param_ref>#\d+)"  # parameter variables
+    r"|(?P<math_keyword>(?:(?<=[\d#\]%\)])(?:"
     + _MATH_KEYWORDS_COMPACT
-    + r')(?=[\d#\[\(])'                                      # compact form keywords (ex: 5eq5, 1and1)
-    r'|(?<![A-Za-z])(?:'
-    + _MATH_KEYWORDS_FUNCTIONS
-    + r')(?=\[)'                                             # functions keywords (ex: sin[45])
-    r'|\b(?:'
-    + _MATH_KEYWORDS_SPACED
-    + r')\b))'                                               # spaced keywords (ex: #100 gt 5)
-    r'|(?P<g_command>[Gg]\d+\.?\d*)'                         # G command
-    r'|(?P<m_command>[Mm]\d+\.?\d*)'                         # M command
-    r'|(?P<coordinate>[XYZAxyza][-+]?\d*\.?\d*)'             # coordinate axis
-    r'|(?P<feedrate>[Ff][-+]?\d*\.?\d*)'                     # feed rate
-    r'|(?P<spindle>[Ss][-+]?\d*\.?\d*)'                      # spindle speed
-    r'|(?P<tool>[Tt]\d+)'                                    # tool number
-    r'|(?P<line_number>[Nn]\d+)'                             # line number
-    r'|(?P<parameter>[IJKPRHLDQEijkprhldqe][-+]?\d*\.?\d*)' # other parameters
+    + r")(?=[\d#\[\(])"  # compact form keywords (ex: 5eq5, 1and1)
+    r"|(?<![A-Za-z])(?:" + _MATH_KEYWORDS_FUNCTIONS + r")(?=\[)"  # functions keywords (ex: sin[45])
+    r"|\b(?:" + _MATH_KEYWORDS_SPACED + r")\b))"  # spaced keywords (ex: #100 gt 5)
+    r"|(?P<g_command>[Gg]\d+\.?\d*)"  # G command
+    r"|(?P<m_command>[Mm]\d+\.?\d*)"  # M command
+    r"|(?P<coordinate>[XYZAxyza][-+]?\d*\.?\d*)"  # coordinate axis
+    r"|(?P<feedrate>[Ff][-+]?\d*\.?\d*)"  # feed rate
+    r"|(?P<spindle>[Ss][-+]?\d*\.?\d*)"  # spindle speed
+    r"|(?P<tool>[Tt]\d+)"  # tool number
+    r"|(?P<line_number>[Nn]\d+)"  # line number
+    r"|(?P<parameter>[IJKPRHLDQEijkprhldqe][-+]?\d*\.?\d*)"  # other parameters
 )
 
-M118_HIGHLIGHT_STOP = re.compile(r'[Mm]118(?!\.\d)\b')
+M118_HIGHLIGHT_STOP = re.compile(r"[Mm]118(?!\.\d)\b")
 
 GCODE_DEFAULT_COLORS = {
-    'comment':      '#6A9955',
-    'g_command':    '#569CD6',
-    'm_command':    '#C586C0',
-    'coordinate':   '#CE9178',
-    'feedrate':     '#4EC9B0',
-    'spindle':      '#D16969',
-    'tool':         '#B5CEA8',
-    'line_number':  '#858585',
-    'parameter':    '#9CDCFE',
-    'o_label':      '#569CD6',
-    'o_keyword':    '#DCDCAA',
-    'param_ref':    '#B5CEA8',
-    'math_keyword': '#D7BA7D',
+    "comment": "#6A9955",
+    "g_command": "#569CD6",
+    "m_command": "#C586C0",
+    "coordinate": "#CE9178",
+    "feedrate": "#4EC9B0",
+    "spindle": "#D16969",
+    "tool": "#B5CEA8",
+    "line_number": "#858585",
+    "parameter": "#9CDCFE",
+    "o_label": "#569CD6",
+    "o_keyword": "#DCDCAA",
+    "param_ref": "#B5CEA8",
+    "math_keyword": "#D7BA7D",
 }
+
 
 def escape_gcode_markup(text):
     """Escape characters that Kivy label markup interprets."""
-    return text.replace('&', '&amp;').replace('[', '&bl;').replace(']', '&br;')
+    return text.replace("&", "&amp;").replace("[", "&bl;").replace("]", "&br;")
+
 
 def highlight_gcode_line(line, colors=None):
     """Return *line* wrapped in Kivy ``[color]`` markup tags.
@@ -96,7 +86,7 @@ def highlight_gcode_line(line, colors=None):
     pos = 0
     for m in GCODE_TOKEN_RE.finditer(line, 0, highlight_end):
         if m.start() > pos:
-            result.append(escape_gcode_markup(line[pos:m.start()]))
+            result.append(escape_gcode_markup(line[pos : m.start()]))
 
         group_name = m.lastgroup
         if group_name and m.start(group_name) != -1:
@@ -104,19 +94,20 @@ def highlight_gcode_line(line, colors=None):
         else:
             token_text = m.group()
 
-        hex_color = effective.get(group_name, '#C8C8C8')
-        result.append(f'[color={hex_color}]{escape_gcode_markup(token_text)}[/color]')
+        hex_color = effective.get(group_name, "#C8C8C8")
+        result.append(f"[color={hex_color}]{escape_gcode_markup(token_text)}[/color]")
         pos = m.end()
 
     if pos < highlight_end:
         result.append(escape_gcode_markup(line[pos:highlight_end]))
     if highlight_end < len(line):
         result.append(escape_gcode_markup(line[highlight_end:]))
-    return ''.join(result)
+    return "".join(result)
 
-XY   = 0
-XZ   = 1
-YZ   = 2
+
+XY = 0
+XZ = 1
+YZ = 2
 
 LASER_TOOL_NUMBER = 8888
 ZPROBE_TOOL_NUMBER = 0
@@ -133,182 +124,182 @@ def is_probe_tools_range(tool_num):
         return False
     return PROBE_TOOLS_RANGE_START <= n <= PROBE_TOOLS_RANGE_END
 
-#===============================================================================
+
+# ===============================================================================
 # Command operations on a CNC
-#===============================================================================
+# ===============================================================================
 class CNC:
-    has_4axis      = False
+    has_4axis = False
     can_rotate_wcs = False
-    inch           = False
-    travel_x       = 340
-    travel_y       = 240
-    travel_z       = 140
+    inch = False
+    travel_x = 340
+    travel_y = 240
+    travel_z = 140
     feedmax_x = 3000
     feedmax_y = 3000
     feedmax_z = 2000
     feedmax_a = 2000
-    accuracy       = 0.01	# sagitta error during arc conversion
-    digits         = 4
-    startup        = "G90"
-    stdexpr        = False	# standard way of defining expressions with []
-    comment        = ""	# last parsed comment
-    developer      = False
-    drozeropad     = 0
-    curr_tool      = 0
+    accuracy = 0.01  # sagitta error during arc conversion
+    digits = 4
+    startup = "G90"
+    stdexpr = False  # standard way of defining expressions with []
+    comment = ""  # last parsed comment
+    developer = False
+    drozeropad = 0
+    curr_tool = 0
     coordinates = []  # list of coordinates
     laser_names = ["laser_module_offset_x", "laser_module_offset_y"]
-    coord_names = ["anchor1_x", "anchor1_y", "anchor2_offset_x", "anchor2_offset_y",\
-                   "anchor_width", "anchor_length", "worksize_x", "worksize_y", "rotation_offset_x",\
-                   "rotation_offset_y"]
+    coord_names = [
+        "anchor1_x",
+        "anchor1_y",
+        "anchor2_offset_x",
+        "anchor2_offset_y",
+        "anchor_width",
+        "anchor_length",
+        "worksize_x",
+        "worksize_y",
+        "rotation_offset_x",
+        "rotation_offset_y",
+    ]
     wcs_names = ["G54", "G55", "G56", "G57", "G58", "G59", "G59.1", "G59.2", "G59.3"]
-    vars           = {
-        "prbx"       : 0.0,
-        "prby"       : 0.0,
-        "prbz"       : 0.0,
-        "prbcmd"     : "G38.2",
-        "prbfeed"    : 10.,
-        "errline"    : "",
-        "wx"         : 0.0,
-        "wy"         : 0.0,
-        "wz"         : 0.0,
-        "wa"         : 0.0,
-        "mx"         : 0.0,
-        "my"         : 0.0,
-        "mz"         : 0.0,
-        "ma"         : 0.0,
-        "wcox"       : 0.0,
-        "wcoy"       : 0.0,
-        "wcoz"       : 0.0,
-        "active_coord_system" : 0,
-        "rotation_angle" : 0,
-        "curfeed"    : 0.0,
-        "curspindle" : 0.0,
+    vars = {
+        "prbx": 0.0,
+        "prby": 0.0,
+        "prbz": 0.0,
+        "prbcmd": "G38.2",
+        "prbfeed": 10.0,
+        "errline": "",
+        "wx": 0.0,
+        "wy": 0.0,
+        "wz": 0.0,
+        "wa": 0.0,
+        "mx": 0.0,
+        "my": 0.0,
+        "mz": 0.0,
+        "ma": 0.0,
+        "wcox": 0.0,
+        "wcoy": 0.0,
+        "wcoz": 0.0,
+        "active_coord_system": 0,
+        "rotation_angle": 0,
+        "curfeed": 0.0,
+        "curspindle": 0.0,
         "spindletemp": 0.0,
-        "lasermode"  : 0,
+        "lasermode": 0,
         "laserstate": 0,
         "lasertesting": 0,
-        "laserpower" : 0.0,
-        "laserscale" : 0.0,
-        "max_delta"  : 0.0,
+        "laserpower": 0.0,
+        "laserscale": 0.0,
+        "max_delta": 0.0,
         "laser_module_offset_x": -37.3,
         "laser_module_offset_y": 4.8,
-        "tarspindle" : 0.0,
-        "_camwx"     : 0.0,
-        "_camwy"     : 0.0,
-        "G"          : [],
-        "motion"     : "G0",
-        "WCS"        : "G54",
-        "plane"      : "G17",
-        "feedmode"   : "G94",
-        "distance"   : "G90",
-        "arc"        : "G91.1",
-        "units"      : "G20",
-        "cutter"     : "",
-        "tlo"        : 0.0,
+        "tarspindle": 0.0,
+        "_camwx": 0.0,
+        "_camwy": 0.0,
+        "G": [],
+        "motion": "G0",
+        "WCS": "G54",
+        "plane": "G17",
+        "feedmode": "G94",
+        "distance": "G90",
+        "arc": "G91.1",
+        "units": "G20",
+        "cutter": "",
+        "tlo": 0.0,
         "target_tool": -1,
         "target_collet_type": 0,
-        "program"    : "M0",
-        "spindle"    : "M5",
-        "coolant"    : "M9",
-
+        "program": "M0",
+        "spindle": "M5",
+        "coolant": "M9",
         "playedlines": 0,
         "playedpercent": 0,
         "playedseconds": 0,
-
         "atc_state": 0,
-
-        "tool"       : 0,
-        "feed"       : 0.0,
-        "rpm"        : 0.0,
-
-        'wpvoltage'  : 0.0,
-        'halt_reason': 1,
-        'alarm_message': '',
-
-        "planner"    : 0,
-        "rxbytes"    : 0,
+        "tool": 0,
+        "feed": 0.0,
+        "rpm": 0.0,
+        "wpvoltage": 0.0,
+        "halt_reason": 1,
+        "alarm_message": "",
+        "planner": 0,
+        "rxbytes": 0,
         "tarfeed": 0.0,
-        "OvFeed"     : 100,	# Override status
-        "OvRapid"    : 100,
-        "OvSpindle"  : 100,
-        "vacuummode" : 0,
-        "_OvChanged" : False,
-        "_OvFeed"    : 100,	# Override target values
-        "_OvRapid"   : 100,
-        "_OvSpindle" : 100,
-
-        "version"    : "",
-        "running"    : False,
-
+        "OvFeed": 100,  # Override status
+        "OvRapid": 100,
+        "OvSpindle": 100,
+        "vacuummode": 0,
+        "_OvChanged": False,
+        "_OvFeed": 100,  # Override target values
+        "_OvRapid": 100,
+        "_OvSpindle": 100,
+        "version": "",
+        "running": False,
         # Basic coordinates
-        "anchor1_x"       : -360.158,
-        "anchor1_y"       : -234.568,
-        "anchor2_offset_x"       : 90.,
-        "anchor2_offset_y"       : 45,
-        "anchor_width"     : 15.,
-        "anchor_length"    : 100.,
-        "worksize_x"       : 340.,
-        "worksize_y"       : 240.,
-        "clearance_x"      : -75.,
-        "clearance_y"      : -3.,
-        "clearance_z"      : -3.,
-
+        "anchor1_x": -360.158,
+        "anchor1_y": -234.568,
+        "anchor2_offset_x": 90.0,
+        "anchor2_offset_y": 45,
+        "anchor_width": 15.0,
+        "anchor_length": 100.0,
+        "worksize_x": 340.0,
+        "worksize_y": 240.0,
+        "clearance_x": -75.0,
+        "clearance_y": -3.0,
+        "clearance_z": -3.0,
         # rotation coordinates
-        "rotation_base_width"     : 330.,
-        "rotation_base_height"    : 102.5,
-        "rotation_head_width"     : 7.,
-        "rotation_head_height"    : 102.5,
-        "rotation_chuck_dia"      : 50.,
-        "rotation_chuck_interval" : 4.,
-        "rotation_chuck_width"    : 40.,
-        "rotation_tail_width"     : 70.,
-        "rotation_tail_height"    : 30.,
-        "rotation_offset_x"       : -8.,
-        "rotation_offset_y"       : 37.5,
-        "rotation_offset_z"       : 22.5,
-
+        "rotation_base_width": 330.0,
+        "rotation_base_height": 102.5,
+        "rotation_head_width": 7.0,
+        "rotation_head_height": 102.5,
+        "rotation_chuck_dia": 50.0,
+        "rotation_chuck_interval": 4.0,
+        "rotation_chuck_width": 40.0,
+        "rotation_tail_width": 70.0,
+        "rotation_tail_height": 30.0,
+        "rotation_offset_x": -8.0,
+        "rotation_offset_y": 37.5,
+        "rotation_offset_z": 22.5,
         # diagnose states
-        "sw_spindle"        : 0,
-        "sw_spindlefan"     : 0,
-        "sw_vacuum"         : 0,
-        "sw_light"          : 0,
+        "sw_spindle": 0,
+        "sw_spindlefan": 0,
+        "sw_vacuum": 0,
+        "sw_light": 0,
         "sw_tool_sensor_pwr": 0,
-        "sw_air"            : 0,
-        "sw_wp_charge_pwr"  : 0,
-        "sl_spindle"        : 0,
-        "sl_spindlefan"     : 0,
-        "sl_vacuum"         : 0,
-        "sl_laser"          : 0,
-        "st_x_min"          : 0,
-        "st_x_max"          : 0,
-        "st_y_min"          : 0,
-        "st_y_max"          : 0,
-        "st_z_max"          : 0,
-        "st_atc_home"       : 0,
-        "st_probe"          : 0,
-        "st_calibrate"      : 0,
-        "st_cover"          : 0,
-        "st_tool_sensor"    : 0,
-        "st_e_stop"         : 0
-
+        "sw_air": 0,
+        "sw_wp_charge_pwr": 0,
+        "sl_spindle": 0,
+        "sl_spindlefan": 0,
+        "sl_vacuum": 0,
+        "sl_laser": 0,
+        "st_x_min": 0,
+        "st_x_max": 0,
+        "st_y_min": 0,
+        "st_y_max": 0,
+        "st_z_max": 0,
+        "st_atc_home": 0,
+        "st_probe": 0,
+        "st_calibrate": 0,
+        "st_cover": 0,
+        "st_tool_sensor": 0,
+        "st_e_stop": 0,
     }
 
     # for feed override testing
     # FIXME will not be needed after Grbl v1.0
 
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     def __init__(self):
         self.init()
 
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     def __getitem__(self, name):
         return CNC.vars[name]
 
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     def __setitem__(self, name, value):
         CNC.vars[name] = value
 
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     def initPath(self, x=None, y=None, z=None, a=None):
         self.x = self.xval = 0 if x is None else x
         self.y = self.yval = 0 if y is None else y
@@ -316,8 +307,8 @@ class CNC:
         self.a = self.aval = 0 if a is None else a
         self.ival = self.jval = self.kval = 0.0
         self.uval = self.vval = self.wval = 0.0
-        self.dx   = self.dy   = self.dz   = self.da = 0.0
-        self.di   = self.dj   = self.dk   = 0.0
+        self.dx = self.dy = self.dz = self.da = 0.0
+        self.di = self.dj = self.dk = 0.0
         self.rval = 0.0
         self.pval = 0.0
         self.qval = 0.0
@@ -327,26 +318,26 @@ class CNC:
         self.tool = 0
         self.tool_cmd = False
 
-        self.absolute    = True		# G90/G91     absolute/relative motion
-        self.arcabsolute = False	# G90.1/G91.1 absolute/relative arc
-        self.retractz    = True		# G98/G99     retract to Z or R
-        self.gcode       = None
-        self.plane       = XY
-        self.feed        = 0		# Actual gcode feed rate (not to confuse with cutfeed
-        self.speed       = 0        # Spindle RPM
+        self.absolute = True  # G90/G91     absolute/relative motion
+        self.arcabsolute = False  # G90.1/G91.1 absolute/relative arc
+        self.retractz = True  # G98/G99     retract to Z or R
+        self.gcode = None
+        self.plane = XY
+        self.feed = 0  # Actual gcode feed rate (not to confuse with cutfeed
+        self.speed = 0  # Spindle RPM
         self.totalLength = 0.0
-        self.totalTime   = 0.0
+        self.totalTime = 0.0
         self.coordinates = []
         self.last_xyz = (-10000, -10000, -10000)
 
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     def resetMargins(self):
-        CNC.vars["xmin"]  = CNC.vars["ymin"]  = CNC.vars["zmin"]  = 1000000.0
-        CNC.vars["xmax"]  = CNC.vars["ymax"]  = CNC.vars["zmax"]  = -1000000.0
+        CNC.vars["xmin"] = CNC.vars["ymin"] = CNC.vars["zmin"] = 1000000.0
+        CNC.vars["xmax"] = CNC.vars["ymax"] = CNC.vars["zmax"] = -1000000.0
 
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     # @return line in broken a list of commands, None if empty or comment
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     def parseLine(self, line, line_no):
         # skip empty lines
         if len(line) == 0 or line[0] in ("%", "(", "#", ";"):
@@ -357,7 +348,7 @@ class CNC:
         # M118 prints the remainder of the line as text; do not parse it as G-code
         m118 = M118_HIGHLIGHT_STOP.search(line)
         if m118:
-            line = line[:m118.end()]
+            line = line[: m118.end()]
         # remove spaces
         line = line.replace(" ", "")
         # Insert space before each command
@@ -377,7 +368,17 @@ class CNC:
                 if xyz != self.last_xyz:
                     self.last_xyz = xyz
                     self.coordinates.append(
-                        [xyz[0], xyz[1], xyz[2], xyz[3], 0 if self.gcode == 0 or self.speed < 0.001 else 1, line_no, self.tool, self.feed])
+                        [
+                            xyz[0],
+                            xyz[1],
+                            xyz[2],
+                            xyz[3],
+                            0 if self.gcode == 0 or self.speed < 0.001 else 1,
+                            line_no,
+                            self.tool,
+                            self.feed,
+                        ]
+                    )
                     # self.coordinates.append('X: {} Y: {} Z: {} A: {} Color: {} Line: {} Tool: {}'.format(
                     #     xyz[0],
                     #     xyz[1],
@@ -393,11 +394,11 @@ class CNC:
         # end motion
         self.motionEnd()
 
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     # Create path for one g command
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     def motionStart(self, cmds):
-        self.mval = 0	# reset m command
+        self.mval = 0  # reset m command
         self.tool_cmd = False
         for cmd in cmds:
             c = cmd[0].upper()
@@ -406,7 +407,7 @@ class CNC:
             except:
                 value = 0
 
-            if   c == "X":
+            if c == "X":
                 self.xval = value * self.unit
                 if not self.absolute:
                     self.xval += self.x
@@ -426,7 +427,9 @@ class CNC:
 
             elif c == "A":
                 self.has_4axis = True
-                self.aval = value * self.unit * -1  # Right Hand Rule rotation. A+ movement when looking at rotary jaws is CCW rotation
+                self.aval = (
+                    value * self.unit * -1
+                )  # Right Hand Rule rotation. A+ movement when looking at rotary jaws is CCW rotation
                 if not self.absolute:
                     self.aval += self.a
                 self.da = self.aval - self.a
@@ -443,19 +446,19 @@ class CNC:
 
                 # Execute immediately
                 if gcode in (4, 10, 53, 54, 55, 56, 57, 58, 59):
-                    pass	# do nothing but don't record to motion
+                    pass  # do nothing but don't record to motion
                 elif gcode == 17:
                     self.plane = XY
                 elif gcode == 18:
                     self.plane = XZ
                 elif gcode == 19:
                     self.plane = YZ
-                elif gcode == 20:	# Switch to inches
+                elif gcode == 20:  # Switch to inches
                     if CNC.inch:
                         self.unit = 1.0
                     else:
                         self.unit = 25.4
-                elif gcode == 21:	# Switch to mm
+                elif gcode == 21:  # Switch to mm
                     if CNC.inch:
                         self.unit = 1.0 / 25.4
                     else:
@@ -463,8 +466,8 @@ class CNC:
                 elif gcode == 80:
                     # turn off canned cycles
                     self.gcode = None
-                    self.dz    = 0
-                    self.zval  = self.z
+                    self.dz = 0
+                    self.zval = self.z
                 elif gcode == 90:
                     if decimal == 0:
                         self.absolute = True
@@ -532,62 +535,62 @@ class CNC:
             elif c == "W":
                 self.wval = value * self.unit
 
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     # Return center x, y, z, r for arc motions 2,3 and set self.rval
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     def motionCenter(self):
         if self.rval > 0.0:
             if self.plane == XY:
-                x  = self.x
-                y  = self.y
+                x = self.x
+                y = self.y
                 xv = self.xval
                 yv = self.yval
             elif self.plane == XZ:
-                x  = self.x
-                y  = self.z
+                x = self.x
+                y = self.z
                 xv = self.xval
                 yv = self.zval
             else:
-                x  = self.y
-                y  = self.z
+                x = self.y
+                y = self.z
                 xv = self.yval
                 yv = self.zval
 
-            ABx = xv-x
-            ABy = yv-y
-            Cx  = 0.5 * (x + xv)
-            Cy  = 0.5 * (y + yv)
-            AB  = math.sqrt(ABx**2 + ABy**2)
-            try: OC  = math.sqrt(self.rval**2 - AB**2/4.0)
-            except: OC = 0.0
-            if self.gcode==2: OC = -OC	# CW
+            ABx = xv - x
+            ABy = yv - y
+            Cx = 0.5 * (x + xv)
+            Cy = 0.5 * (y + yv)
+            AB = math.sqrt(ABx**2 + ABy**2)
+            try:
+                OC = math.sqrt(self.rval**2 - AB**2 / 4.0)
+            except:
+                OC = 0.0
+            if self.gcode == 2:
+                OC = -OC  # CW
             if AB != 0.0:
-                return Cx-OC*ABy/AB, Cy + OC*ABx/AB
-            else:
-                # Error!!!
-                return x,y
-        else:
-            # Center
-            xc = self.x + self.ival
-            yc = self.y + self.jval
-            zc = self.z + self.kval
-            self.rval = math.sqrt(self.ival**2 + self.jval**2 + self.kval**2)
+                return Cx - OC * ABy / AB, Cy + OC * ABx / AB
+            # Error!!!
+            return x, y
+        # Center
+        xc = self.x + self.ival
+        yc = self.y + self.jval
+        zc = self.z + self.kval
+        self.rval = math.sqrt(self.ival**2 + self.jval**2 + self.kval**2)
 
-            if self.plane == XY:
-                return xc,yc
-            elif self.plane == XZ:
-                return xc,zc
-            else:
-                return yc,zc
+        if self.plane == XY:
+            return xc, yc
+        if self.plane == XZ:
+            return xc, zc
+        return yc, zc
 
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     # Create path for one g command
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     def motionPath(self):
         xyz = []
 
         # Execute g-code
-        if self.gcode in (0, 1):    # fast move or line
+        if self.gcode in (0, 1):  # fast move or line
             # If any axis is moving, interpolate all axes including A
             if self.dx != 0.0 or self.dy != 0.0 or self.dz != 0.0 or self.da != 0.0:
                 # Determine the number of interpolation steps based on the largest movement
@@ -601,7 +604,7 @@ class CNC:
                     a = self.a + t * self.da
                     xyz.append((x, y, z, a))
 
-        elif self.gcode in (2, 3):    # CW = 2, CCW = 3 circle
+        elif self.gcode in (2, 3):  # CW = 2, CCW = 3 circle
             uc, vc = self.motionCenter()
 
             gcode = self.gcode
@@ -623,7 +626,7 @@ class CNC:
                 v1 = self.zval
                 w1 = self.yval
                 a1 = self.aval
-                gcode = 5 - gcode    # flip 2-3 when XZ plane is used
+                gcode = 5 - gcode  # flip 2-3 when XZ plane is used
             else:
                 u0 = self.y
                 v0 = self.z
@@ -633,8 +636,8 @@ class CNC:
                 v1 = self.zval
                 w1 = self.xval
                 a1 = self.aval
-            phi0 = math.atan2(v0-vc, u0-uc)
-            phi1 = math.atan2(v1-vc, u1-uc)
+            phi0 = math.atan2(v0 - vc, u0 - uc)
+            phi1 = math.atan2(v1 - vc, u1 - uc)
             try:
                 sagitta = 1.0 - CNC.accuracy / self.rval
             except ZeroDivisionError:
@@ -650,8 +653,9 @@ class CNC:
             dphi = phi1 - phi0 if (phi1 - phi0) != 0 else 1e-9  # avoid division by zero
 
             if gcode == 2:
-                if phi1 >= phi0 - 1e-10: phi1 -= 2.0 * math.pi
-                ws  = (w1 - w0) / (phi1 - phi0)
+                if phi1 >= phi0 - 1e-10:
+                    phi1 -= 2.0 * math.pi
+                ws = (w1 - w0) / (phi1 - phi0)
                 as_ = da / (phi1 - phi0)
                 phi = phi0 - df
                 while phi > phi1:
@@ -667,8 +671,9 @@ class CNC:
                         xyz.append((w, u, v, a))
                     phi -= df
             else:
-                if phi1 <= phi0 + 1e-10: phi1 += 2.0 * math.pi
-                ws  = (w1 - w0) / (phi1 - phi0)
+                if phi1 <= phi0 + 1e-10:
+                    phi1 += 2.0 * math.pi
+                ws = (w1 - w0) / (phi1 - phi0)
                 as_ = da / (phi1 - phi0)
                 phi = phi0 + df
                 while phi < phi1:
@@ -686,11 +691,11 @@ class CNC:
 
             xyz.append((self.xval, self.yval, self.zval, self.aval))
 
-        elif self.gcode == 4:        # Dwell
+        elif self.gcode == 4:  # Dwell
             pass
             # self.totalTime += self.pval
 
-        elif self.gcode in (81, 82, 83, 85, 86, 89): # Canned cycles
+        elif self.gcode in (81, 82, 83, 85, 86, 89):  # Canned cycles
             # FIXME Assuming only on plane XY
             if self.absolute:
                 # FIXME is it correct?
@@ -699,10 +704,10 @@ class CNC:
                     clearz = max(self.rval, self.z)
                 else:
                     clearz = self.rval
-                drill  = self.zval
+                drill = self.zval
             else:
                 clearz = self.z + self.rval
-                drill  = clearz + self.dz
+                drill = clearz + self.dz
 
             x, y, z, a = self.x, self.y, self.z, self.a
             xyz.append((x, y, z, a))
@@ -724,12 +729,12 @@ class CNC:
 
                 # Move to original position
                 z = clearz
-                xyz.append((x, y, z, a))    # ???
+                xyz.append((x, y, z, a))  # ???
         return xyz
 
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     # move to end position
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     def motionEnd(self):
         if self.gcode in (0, 1, 2, 3):
             self.x = self.xval
@@ -740,7 +745,7 @@ class CNC:
             self.dy = 0
             self.dz = 0
             self.da = 0
-            if self.gcode >= 2: # reset at the end
+            if self.gcode >= 2:  # reset at the end
                 self.rval = self.ival = self.jval = self.kval = 0.0
 
         elif self.gcode in (28, 30, 92):
@@ -765,11 +770,11 @@ class CNC:
                 drill = self.zval
             else:
                 retract = self.z + self.rval
-                drill   = retract + self.dz
+                drill = retract + self.dz
 
             self.x += self.dx * self.lval
             self.y += self.dy * self.lval
-            self.z  = retract
+            self.z = retract
 
             self.xval = self.x
             self.yval = self.y
@@ -777,7 +782,7 @@ class CNC:
             self.dy = 0
             self.dz = drill - retract
 
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     def pathMargins(self, xyzs):
         for xyz in xyzs:
             CNC.vars["xmin"] = min(CNC.vars["xmin"], xyz[0])
@@ -787,32 +792,33 @@ class CNC:
             CNC.vars["zmin"] = min(CNC.vars["zmin"], xyz[2])
             CNC.vars["zmax"] = max(CNC.vars["zmax"], xyz[2])
 
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     # init CNC
-    #----------------------------------------------------------------------
-    def init(self, filename = None):
+    # ----------------------------------------------------------------------
+    def init(self, filename=None):
         self.has_4axis = False
         self.initPath()
         self.resetMargins()
 
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     # get document margins
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     def getMargins(self):
-        #Get bounding box of document
-        minx, miny, maxx, maxy = 0,0,0,0
+        # Get bounding box of document
+        minx, miny, maxx, maxy = 0, 0, 0, 0
         for i, block in enumerate(self.tool_blocks):
             paths = self.toPath(i)
             for path in paths:
-                minx2,miny2,maxx2,maxy2 = path.bbox()
-                minx,miny,maxx,maxy = min(minx,minx2), min(miny,miny2), max(maxx,maxx2), max(maxy,maxy2)
-        return minx,miny,maxx,maxy
-    
-    #----------------------------------------------------------------------
+                minx2, miny2, maxx2, maxy2 = path.bbox()
+                minx, miny, maxx, maxy = min(minx, minx2), min(miny, miny2), max(maxx, maxx2), max(maxy, maxy2)
+        return minx, miny, maxx, maxy
+
+    # ----------------------------------------------------------------------
     # get wcs names
-    #----------------------------------------------------------------------
+    # ----------------------------------------------------------------------
     def getWCSNames(self):
         return self.wcs_names
 
-    #----------------------------------------------------------------------
-    def fmt(self, c, v, d=None): return self.cnc.fmt(c,v,d)
+    # ----------------------------------------------------------------------
+    def fmt(self, c, v, d=None):
+        return self.cnc.fmt(c, v, d)

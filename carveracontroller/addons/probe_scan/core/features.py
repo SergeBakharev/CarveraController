@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from carveracontroller.CNC import CNC
 
+from .gcode import PROBE_VAR_CENTER_X, PROBE_VAR_CENTER_Y, PROBE_VAR_DIA_X, PROBE_VAR_DIA_Y
 from .geometry import (
     circle_circle_intersections_2d,
     circle_line_intersections_2d,
@@ -22,7 +23,6 @@ from .geometry import (
     tangent_point_to_circle_2d,
     tangent_point_to_ellipse_2d,
 )
-from .gcode import PROBE_VAR_CENTER_X, PROBE_VAR_CENTER_Y, PROBE_VAR_DIA_X, PROBE_VAR_DIA_Y
 from .session import FeatureKind, ProbeScanFeature
 
 _ERROR_INCOMPLETE_DATA = "Probe returned incomplete data."
@@ -69,8 +69,7 @@ def diameters_equal(
 
 def payload_referenced_feature_ids(payload: dict[str, Any]) -> list[str]:
     ids: list[str] = []
-    for key in ("a_id", "b_id", "segment_a_id", "segment_b_id",
-                "point_id", "circle_id", "circle_a_id", "circle_b_id"):
+    for key in ("a_id", "b_id", "segment_a_id", "segment_b_id", "point_id", "circle_id", "circle_a_id", "circle_b_id"):
         v = payload.get(key)
         if v:
             ids.append(str(v))
@@ -279,9 +278,7 @@ def _probe_axis_segment_bundle(
     out: list[ProbeScanFeature] = [pa, pb, seg]
     if include_center:
         mx_w, my_w = midpoint_2d(wx1, wy1, wx2, wy2)
-        out.append(
-            ProbeScanFeature.new_derived_point(center_label, pa.id, pb.id, mx_w, my_w)
-        )
+        out.append(ProbeScanFeature.new_derived_point(center_label, pa.id, pb.id, mx_w, my_w))
     return out
 
 
@@ -352,9 +349,7 @@ def _features_circle_or_ellipse(
     if diameter_x <= 0 or diameter_y <= 0:
         return [], _ERROR_INVALID_MISSING_DIAMETER
     return (
-        [
-            ProbeScanFeature.new_ellipse(label, wx, wy, diameter_x, diameter_y)
-        ],
+        [ProbeScanFeature.new_ellipse(label, wx, wy, diameter_x, diameter_y)],
         None,
     )
 
@@ -476,11 +471,7 @@ def features_from_m461_m462(
                 None,
             )
 
-        classify_tol = (
-            tolerance_mm
-            if tolerance_mm is not None
-            else DEFAULT_CIRCLE_CLASSIFY_TOLERANCE_MM
-        )
+        classify_tol = tolerance_mm if tolerance_mm is not None else DEFAULT_CIRCLE_CLASSIFY_TOLERANCE_MM
         return _features_circle_or_ellipse(
             curve_label,
             cx_m,
@@ -748,14 +739,8 @@ def construct_intersection(
 
     new_feats: list[ProbeScanFeature] = []
     for i, (ix, iy) in enumerate(new_pts):
-        lbl = (
-            f"{intersection_base_label} {i + 1}"
-            if len(new_pts) > 1
-            else intersection_base_label
-        )
-        new_feats.append(
-            ProbeScanFeature.new_derived_point(lbl, f1.id, f2.id, ix, iy)
-        )
+        lbl = f"{intersection_base_label} {i + 1}" if len(new_pts) > 1 else intersection_base_label
+        new_feats.append(ProbeScanFeature.new_derived_point(lbl, f1.id, f2.id, ix, iy))
     return new_feats, None
 
 
@@ -822,8 +807,7 @@ def construct_tangent(
 
     def _is_pt(f: ProbeScanFeature) -> bool:
         return (
-            f.kind in (FeatureKind.POINT, FeatureKind.CORNER, FeatureKind.DERIVED_POINT)
-            and resolve_xy(f) is not None
+            f.kind in (FeatureKind.POINT, FeatureKind.CORNER, FeatureKind.DERIVED_POINT) and resolve_xy(f) is not None
         )
 
     c1 = resolve_curve(f1)
@@ -852,9 +836,7 @@ def construct_tangent(
             return [], "Point is inside the ellipse \u2014 no tangent exists."
         for i, (tx, ty) in enumerate(touch_pts):
             new_feats.append(
-                ProbeScanFeature.new_derived_point(
-                    tangent_point_label(i + 1), pt_feat.id, curve_feat.id, tx, ty
-                )
+                ProbeScanFeature.new_derived_point(tangent_point_label(i + 1), pt_feat.id, curve_feat.id, tx, ty)
             )
 
     elif c1 is not None and c2 is not None:
@@ -864,17 +846,15 @@ def construct_tangent(
                 return [], "Circles are concentric \u2014 no external tangent exists."
             return [], "Ellipses have no external tangent."
         for i, (tp1, tp2) in enumerate(tangent_lines):
-            dp1 = ProbeScanFeature.new_derived_point(
-                tangent_a_label(i + 1), f1.id, f2.id, tp1[0], tp1[1]
+            dp1 = ProbeScanFeature.new_derived_point(tangent_a_label(i + 1), f1.id, f2.id, tp1[0], tp1[1])
+            dp2 = ProbeScanFeature.new_derived_point(tangent_b_label(i + 1), f1.id, f2.id, tp2[0], tp2[1])
+            new_feats.extend(
+                [
+                    dp1,
+                    dp2,
+                    ProbeScanFeature.new_segment(tangent_line_label(i + 1), dp1.id, dp2.id),
+                ]
             )
-            dp2 = ProbeScanFeature.new_derived_point(
-                tangent_b_label(i + 1), f1.id, f2.id, tp2[0], tp2[1]
-            )
-            new_feats.extend([
-                dp1,
-                dp2,
-                ProbeScanFeature.new_segment(tangent_line_label(i + 1), dp1.id, dp2.id),
-            ])
 
     return new_feats, None
 
@@ -927,10 +907,7 @@ def compute_construct_button_states(
         or (is_curve_like(ids[0]) and is_segment(ids[1]))
         or (is_segment(ids[0]) and is_curve_like(ids[1]))
     )
-    states.can_midpoint = (
-        (n == 2 and all(is_point_like(fid) for fid in ids))
-        or (n == 1 and is_segment(ids[0]))
-    )
+    states.can_midpoint = (n == 2 and all(is_point_like(fid) for fid in ids)) or (n == 1 and is_segment(ids[0]))
     states.can_tangent = n == 2 and (
         (is_point_like(ids[0]) and is_curve_like(ids[1]))
         or (is_curve_like(ids[0]) and is_point_like(ids[1]))

@@ -1,5 +1,7 @@
 from enum import Enum
+
 from carveracontroller.addons.probing.operations.Boss.BossOperation import BossOperation
+
 
 class BossOperationType(Enum):
     CenterX = BossOperation("Boss - Center X", True, False, "")

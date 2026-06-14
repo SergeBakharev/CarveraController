@@ -1,24 +1,24 @@
 """Floating color-scheme picker and legend for the G-code viewer."""
 
 from kivy.clock import Clock
+from kivy.graphics import Color, Rectangle
+from kivy.metrics import dp
+from kivy.properties import ListProperty
 from kivy.uix.anchorlayout import AnchorLayout
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.widget import Widget
-from kivy.graphics import Color, Rectangle
-from kivy.metrics import dp
-from kivy.properties import ListProperty
 
-from carveracontroller.CNC import LASER_TOOL_NUMBER, ZPROBE_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER
-from carveracontroller.translation import tr
+from carveracontroller.CNC import LASER_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER, ZPROBE_TOOL_NUMBER
 from carveracontroller.GcodeViewer import (
-    COLOR_SCHEME_BY_TYPE,
-    COLOR_SCHEME_BY_TOOL,
     COLOR_SCHEME_BY_SPEED,
+    COLOR_SCHEME_BY_TOOL,
+    COLOR_SCHEME_BY_TYPE,
     COLOR_SCHEME_BY_Z,
     speed_colormap_rgb,
     tool_palette_rgb,
 )
+from carveracontroller.translation import tr
 
 LEGEND_PANEL_MAX_HEIGHT = dp(250)
 HEADER_HEIGHT = dp(36)
@@ -31,26 +31,30 @@ LEGEND_GRID_PAD_Y = dp(4) + dp(2)
 def _tool_legend_label(tool):
     tool_num = int(tool)
     if tool_num == LASER_TOOL_NUMBER:
-        return tr._('Laser')
+        return tr._("Laser")
     if tool_num == ZPROBE_TOOL_NUMBER:
-        return tr._('Probe')
+        return tr._("Probe")
     if tool_num == PROBE_3D_TOOL_NUMBER:
-        return tr._('3D Probe')
-    return f'T{tool_num}'
+        return tr._("3D Probe")
+    return f"T{tool_num}"
 
 
 def build_legend_entries(color_scheme, gcode_viewer, used_tools):
     """Return list of {'label': str, 'color': (r,g,b,a)} for the active scheme."""
     entries = []
     if color_scheme == COLOR_SCHEME_BY_TYPE:
-        entries.append({
-            'label': tr._('Rapid (G0)'),
-            'color': (1.0, 0.0, 0.0, 1.0),
-        })
-        entries.append({
-            'label': tr._('Feed (G1)'),
-            'color': (0.0, 1.0, 0.0, 1.0),
-        })
+        entries.append(
+            {
+                "label": tr._("Rapid (G0)"),
+                "color": (1.0, 0.0, 0.0, 1.0),
+            }
+        )
+        entries.append(
+            {
+                "label": tr._("Feed (G1)"),
+                "color": (0.0, 1.0, 0.0, 1.0),
+            }
+        )
         return entries
 
     if color_scheme == COLOR_SCHEME_BY_TOOL:
@@ -60,12 +64,12 @@ def build_legend_entries(color_scheme, gcode_viewer, used_tools):
         for tool in tools:
             label = _tool_legend_label(tool)
             rgb = tool_palette_rgb(tool)
-            entries.append({'label': label, 'color': (*rgb, 1.0)})
+            entries.append({"label": label, "color": (*rgb, 1.0)})
         return entries
 
     if color_scheme == COLOR_SCHEME_BY_SPEED:
-        feed_min = float(getattr(gcode_viewer, 'feed_min', 0.0) or 0.0)
-        feed_max = float(getattr(gcode_viewer, 'feed_max', 0.0) or 0.0)
+        feed_min = float(getattr(gcode_viewer, "feed_min", 0.0) or 0.0)
+        feed_max = float(getattr(gcode_viewer, "feed_max", 0.0) or 0.0)
         if feed_max <= feed_min:
             feed_max = feed_min + 1.0
 
@@ -73,19 +77,23 @@ def build_legend_entries(color_scheme, gcode_viewer, used_tools):
             t = step / 10.0
             feed = feed_min + t * (feed_max - feed_min)
             rgb = speed_colormap_rgb(t)
-            entries.append({
-                'label': f'{feed:.0f} mm/min',
-                'color': (*rgb, 1.0),
-            })
-        entries.append({
-            'label': tr._('Rapid (G0)'),
-            'color': (1.0, 0.0, 0.0, 1.0),
-        })
+            entries.append(
+                {
+                    "label": f"{feed:.0f} mm/min",
+                    "color": (*rgb, 1.0),
+                }
+            )
+        entries.append(
+            {
+                "label": tr._("Rapid (G0)"),
+                "color": (1.0, 0.0, 0.0, 1.0),
+            }
+        )
         return entries
 
     if color_scheme == COLOR_SCHEME_BY_Z:
-        z_min = float(getattr(gcode_viewer, 'z_min_mm', 0.0) or 0.0)
-        z_max = float(getattr(gcode_viewer, 'z_max_mm', 0.0) or 0.0)
+        z_min = float(getattr(gcode_viewer, "z_min_mm", 0.0) or 0.0)
+        z_max = float(getattr(gcode_viewer, "z_max_mm", 0.0) or 0.0)
         if z_max <= z_min:
             z_max = z_min + 1.0
 
@@ -94,20 +102,22 @@ def build_legend_entries(color_scheme, gcode_viewer, used_tools):
             t = 1.0 - step / 10.0
             z_val = z_min + t * (z_max - z_min)
             rgb = speed_colormap_rgb(t)
-            z_str = f'{z_val:.3f}'
+            z_str = f"{z_val:.3f}"
             if step == 0:
-                label = tr._('≥ Z {} mm').format(z_str)
+                label = tr._("≥ Z {} mm").format(z_str)
             elif step == 10:
-                label = tr._('≤ Z {} mm').format(z_str)
+                label = tr._("≤ Z {} mm").format(z_str)
             else:
-                label = f'Z {z_str} mm'
-            entries.append({
-                'label': label,
-                'color': (*rgb, 1.0),
-            })
+                label = f"Z {z_str} mm"
+            entries.append(
+                {
+                    "label": label,
+                    "color": (*rgb, 1.0),
+                }
+            )
         return entries
 
-    raise ValueError(f'Invalid color scheme: {color_scheme}')
+    raise ValueError(f"Invalid color scheme: {color_scheme}")
 
 
 class _ColorSwatch(Widget):
@@ -134,16 +144,12 @@ class _ColorSwatch(Widget):
 def _legend_content_height(entry_count):
     if entry_count <= 0:
         return 0
-    return (
-        entry_count * LEGEND_ROW_HEIGHT
-        + max(0, entry_count - 1) * LEGEND_ROW_SPACING
-        + LEGEND_GRID_PAD_Y
-    )
+    return entry_count * LEGEND_ROW_HEIGHT + max(0, entry_count - 1) * LEGEND_ROW_SPACING + LEGEND_GRID_PAD_Y
 
 
 def _make_legend_row(entry):
     row = BoxLayout(
-        orientation='horizontal',
+        orientation="horizontal",
         size_hint_y=None,
         height=LEGEND_ROW_HEIGHT,
         spacing=dp(8),
@@ -151,19 +157,19 @@ def _make_legend_row(entry):
     swatch_holder = AnchorLayout(
         size_hint=(None, None),
         size=(dp(14), LEGEND_ROW_HEIGHT),
-        anchor_x='left',
-        anchor_y='center',
+        anchor_x="left",
+        anchor_y="center",
     )
-    swatch_holder.add_widget(_ColorSwatch(color=list(entry['color'])))
+    swatch_holder.add_widget(_ColorSwatch(color=list(entry["color"])))
     label = Label(
-        text=entry['label'],
-        halign='left',
-        valign='middle',
-        font_size='12sp',
+        text=entry["label"],
+        halign="left",
+        valign="middle",
+        font_size="12sp",
         color=(0.85, 0.85, 0.85, 1),
         size_hint_x=1,
     )
-    label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+    label.bind(size=lambda inst, val: setattr(inst, "text_size", val))
     row.add_widget(swatch_holder)
     row.add_widget(label)
     return row
@@ -178,8 +184,8 @@ class GcodeColorSchemePanel(BoxLayout):
         viewer = makera_root.gcode_viewer
         if viewer is None:
             return
-        scheme = getattr(viewer, 'color_scheme', COLOR_SCHEME_BY_TYPE)
-        used_tools = getattr(makera_root, 'used_tools', None)
+        scheme = getattr(viewer, "color_scheme", COLOR_SCHEME_BY_TYPE)
+        used_tools = getattr(makera_root, "used_tools", None)
         entries = build_legend_entries(scheme, viewer, used_tools)
         for entry in entries:
             legend_box.add_widget(_make_legend_row(entry))
@@ -187,12 +193,12 @@ class GcodeColorSchemePanel(BoxLayout):
         Clock.schedule_once(self._finish_layout, 0)
 
     def _finish_layout(self, _dt=None):
-        legend_box = self.ids.get('legend_box')
-        scroll = self.ids.get('legend_scroll')
+        legend_box = self.ids.get("legend_box")
+        scroll = self.ids.get("legend_scroll")
         if legend_box is None or scroll is None:
             return
 
-        entry_count = getattr(self, '_entry_count', len(legend_box.children))
+        entry_count = getattr(self, "_entry_count", len(legend_box.children))
         content_h = _legend_content_height(entry_count)
         legend_box.height = content_h
         legend_box.do_layout()

@@ -30,9 +30,7 @@ VAR_SETS: dict[str, list[str]] = {
 }
 
 
-def build_m118_echo_tail(
-    op: str, result_vars: Sequence[str] | None = None
-) -> str:
+def build_m118_echo_tail(op: str, result_vars: Sequence[str] | None = None) -> str:
     """Append START, M118.1 P# for each variable, then END."""
     if result_vars is not None:
         vars_ = [str(v).strip() for v in result_vars if str(v).strip()]
@@ -52,9 +50,7 @@ def build_m118_echo_tail(
     return "\n".join(lines)
 
 
-def merge_probe_program(
-    head: str, op: str, *, result_vars: Sequence[str] | None = None
-) -> str:
+def merge_probe_program(head: str, op: str, *, result_vars: Sequence[str] | None = None) -> str:
     """Join head G-code (may be multi-line) with echo tail for ``op``."""
     head = head.strip()
     tail = build_m118_echo_tail(op, result_vars=result_vars)
@@ -201,17 +197,13 @@ class M118ProbeCapture:
                 self._buf.append(v)
                 if len(self._buf) == self._expected:
                     try:
-                        self._on_complete(
-                            self._op, list(self._buf), list(self._var_keys)
-                        )
+                        self._on_complete(self._op, list(self._buf), list(self._var_keys))
                     except Exception:
                         _logger.exception("M118 probe capture callback")
                     self.reset()
 
 
-def map_values_to_dict(
-    op: str, values: list[float], var_keys: list[str] | None = None
-) -> dict[str, float]:
+def map_values_to_dict(op: str, values: list[float], var_keys: list[str] | None = None) -> dict[str, float]:
     """Map captured floats to # variable indices in order."""
     keys = var_keys if var_keys else VAR_SETS.get(op.upper(), [])
     out: dict[str, float] = {}
@@ -284,8 +276,11 @@ def build_m466(
     return _build_probe_cmd(
         "M466",
         [xw, yw, _word("E", e), _word("H", h), _word("C", c)],
-        f_probe=f_probe, k_rapid=k_rapid,
-        d_tip=d_tip, l_repeat=l_repeat, r_retract=r_retract,
+        f_probe=f_probe,
+        k_rapid=k_rapid,
+        d_tip=d_tip,
+        l_repeat=l_repeat,
+        r_retract=r_retract,
         result_vars=result_vars or list(VAR_SETS["M466"]),
     )
 
@@ -312,8 +307,11 @@ def build_m461(
     return _build_probe_cmd(
         "M461",
         [xw, yw, _word("E", e), _word("H", h), _word("C", c)],
-        f_probe=f_probe, k_rapid=k_rapid,
-        d_tip=d_tip, l_repeat=l_repeat, r_retract=r_retract,
+        f_probe=f_probe,
+        k_rapid=k_rapid,
+        d_tip=d_tip,
+        l_repeat=l_repeat,
+        r_retract=r_retract,
         result_vars=result_vars or list(VAR_SETS["M461"]),
     )
 
@@ -340,10 +338,12 @@ def build_m462(
         result_vars.extend([PROBE_VAR_DIA_Y, PROBE_VAR_CENTER_Y])
     return _build_probe_cmd(
         "M462",
-        [xw, yw, _word("J", j_clearance),
-         _word("E", e_depth), _word("H", h), _word("C", c)],
-        f_probe=f_probe, k_rapid=k_rapid,
-        d_tip=d_tip, l_repeat=l_repeat, r_retract=r_retract,
+        [xw, yw, _word("J", j_clearance), _word("E", e_depth), _word("H", h), _word("C", c)],
+        f_probe=f_probe,
+        k_rapid=k_rapid,
+        d_tip=d_tip,
+        l_repeat=l_repeat,
+        r_retract=r_retract,
         result_vars=result_vars or list(VAR_SETS["M462"]),
     )
 
@@ -363,10 +363,12 @@ def build_m463(
 ) -> str:
     return _build_probe_cmd(
         "M463",
-        [f"X{_fmt(x)}", f"Y{_fmt(y)}",
-         _word("E", e), _word("H", h), _word("C", c)],
-        f_probe=f_probe, k_rapid=k_rapid,
-        d_tip=d_tip, l_repeat=l_repeat, r_retract=r_retract,
+        [f"X{_fmt(x)}", f"Y{_fmt(y)}", _word("E", e), _word("H", h), _word("C", c)],
+        f_probe=f_probe,
+        k_rapid=k_rapid,
+        d_tip=d_tip,
+        l_repeat=l_repeat,
+        r_retract=r_retract,
     )
 
 
@@ -385,10 +387,12 @@ def build_m464(
 ) -> str:
     return _build_probe_cmd(
         "M464",
-        [f"X{_fmt(x)}", f"Y{_fmt(y)}",
-         _word("E", e), _word("H", h), _word("C", c)],
-        f_probe=f_probe, k_rapid=k_rapid,
-        d_tip=d_tip, l_repeat=l_repeat, r_retract=r_retract,
+        [f"X{_fmt(x)}", f"Y{_fmt(y)}", _word("E", e), _word("H", h), _word("C", c)],
+        f_probe=f_probe,
+        k_rapid=k_rapid,
+        d_tip=d_tip,
+        l_repeat=l_repeat,
+        r_retract=r_retract,
     )
 
 
@@ -407,10 +411,12 @@ def build_m465(
 ) -> str:
     return _build_probe_cmd(
         "M465",
-        [_word("X", x), _word("Y", y), _word("E", e),
-         _word("H", h), _word("C", c)],
-        f_probe=f_probe, k_rapid=k_rapid,
-        d_tip=d_tip, l_repeat=l_repeat, r_retract=r_retract,
+        [_word("X", x), _word("Y", y), _word("E", e), _word("H", h), _word("C", c)],
+        f_probe=f_probe,
+        k_rapid=k_rapid,
+        d_tip=d_tip,
+        l_repeat=l_repeat,
+        r_retract=r_retract,
     )
 
 

@@ -7,6 +7,7 @@ CORNER_BR = "br"
 CORNER_TL = "tl"
 CORNER_TR = "tr"
 
+
 def stock_rect_from_origin_corner(
     width_mm: float,
     length_mm: float,

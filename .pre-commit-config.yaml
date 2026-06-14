@@ -1,31 +1,44 @@
-# Local-only linter enforcement. Opt in with:
+# Local quality checks. Opt in with:
 #   poetry install --with lint
 #   poetry run pre-commit install
 #
-# After install, hooks run automatically on `git commit`. Run manually against
-# the whole repo with:
+# After install, hooks run automatically on `git commit`. Run manually with:
 #   poetry run pre-commit run --all-files
 
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.0
-    hooks:
-      - id: ruff
-        args: [--fix]
-      - id: ruff-format
-
   - repo: local
     hooks:
-      - id: mypy
-        name: mypy (strict on /machine/, /ui/)
-        entry: poetry run mypy carveracontroller
+      - id: ruff-check
+        name: ruff (package, tests, scripts)
+        entry: poetry run ruff check carveracontroller tests scripts
         language: system
-        types: [python]
+        always_run: true
+        pass_filenames: false
+
+      - id: ruff-format-check
+        name: ruff format (package, tests, scripts)
+        entry: poetry run ruff format --check carveracontroller tests scripts
+        language: system
+        always_run: true
+        pass_filenames: false
+
+      - id: mypy
+        name: mypy (package baseline)
+        entry: poetry run mypy carveracontroller --config-file pyproject.toml
+        language: system
+        always_run: true
+        pass_filenames: false
+
+      - id: mypy-machine-strict
+        name: mypy (strict machine layer)
+        entry: poetry run mypy carveracontroller/machine --config-file pyproject.toml --strict
+        language: system
+        always_run: true
         pass_filenames: false
 
       - id: import-linter
         name: import-linter (architectural boundaries)
-        entry: poetry run lint-imports
+        entry: poetry run lint-imports --config pyproject.toml
         language: system
-        types: [python]
+        always_run: true
         pass_filenames: false

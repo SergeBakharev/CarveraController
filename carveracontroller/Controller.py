@@ -1,16 +1,15 @@
 #!/usr/bin/python
 
-from __future__ import absolute_import
-from __future__ import print_function
 
-import re
-import os
-import sys
-import time
-import threading
-import webbrowser
-import math
 import logging
+import math
+import os
+import re
+import sys
+import threading
+import time
+import webbrowser
+
 logger = logging.getLogger(__name__)
 
 from datetime import datetime
@@ -20,34 +19,37 @@ try:
 except ImportError:
     from queue import *
 
-from .CNC import CNC, LASER_TOOL_NUMBER, ZPROBE_TOOL_NUMBER, CMDPAT, PARENPAT, SEMIPAT
-from .USBStream import USBStream
-from .WIFIStream import WIFIStream
-from .XMODEM import EOT, CAN
-from . import Utils
 from functools import partial
 
+from . import Utils
+from .CNC import CMDPAT, CNC, LASER_TOOL_NUMBER, PARENPAT, SEMIPAT, ZPROBE_TOOL_NUMBER
+from .USBStream import USBStream
+from .WIFIStream import WIFIStream
+from .XMODEM import CAN, EOT
+
 try:
-    from kivy.clock import Clock
     from kivy.app import App
+    from kivy.clock import Clock
 except ImportError:
     # Fallback if kivy is not available (e.g., during testing)
     Clock = None
     App = None
 
-STREAM_POLL = 0.2 # s
+STREAM_POLL = 0.2  # s
 DIAGNOSE_POLL = 0.5  # s
 RX_BUFFER_SIZE = 128
 
 GPAT = re.compile(r"[A-Za-z]\s*[-+]?\d+.*")
 FEEDPAT = re.compile(r"^(.*)[fF](\d+\.?\d+)(.*)$")
 
-STATUSPAT = re.compile(r"^<(\w*?),MPos:([+\-]?\d*\.\d*),([+\-]?\d*\.\d*),([+\-]?\d*\.\d*),WPos:([+\-]?\d*\.\d*),([+\-]?\d*\.\d*),([+\-]?\d*\.\d*),?(.*)>$")
-POSPAT	  = re.compile(r"^\[(...):([+\-]?\d*\.\d*),([+\-]?\d*\.\d*),([+\-]?\d*\.\d*):?(\d*)\]$")
-TLOPAT	  = re.compile(r"^\[(...):([+\-]?\d*\.\d*)\]$")
+STATUSPAT = re.compile(
+    r"^<(\w*?),MPos:([+\-]?\d*\.\d*),([+\-]?\d*\.\d*),([+\-]?\d*\.\d*),WPos:([+\-]?\d*\.\d*),([+\-]?\d*\.\d*),([+\-]?\d*\.\d*),?(.*)>$"
+)
+POSPAT = re.compile(r"^\[(...):([+\-]?\d*\.\d*),([+\-]?\d*\.\d*),([+\-]?\d*\.\d*):?(\d*)\]$")
+TLOPAT = re.compile(r"^\[(...):([+\-]?\d*\.\d*)\]$")
 DOLLARPAT = re.compile(r"^\[G\d* .*\]$")
-SPLITPAT  = re.compile(r"[:,]")
-VARPAT    = re.compile(r"^\$(\d+)=(\d*\.?\d*) *\(?.*")
+SPLITPAT = re.compile(r"[:,]")
+VARPAT = re.compile(r"^\$(\d+)=(\d*\.?\d*) *\(?.*")
 
 
 WIKI = "https://github.com/vlachoudis/bCNC/wiki"
@@ -55,32 +57,33 @@ WIKI = "https://github.com/vlachoudis/bCNC/wiki"
 CONNECTED = "Wait"
 NOT_CONNECTED = "N/A"
 
-STATECOLORDEF = (155/255, 155/255, 155/255, 1)  # Default color for unknown types or not connected
+STATECOLORDEF = (155 / 255, 155 / 255, 155 / 255, 1)  # Default color for unknown types or not connected
 STATECOLOR = {
-    "Idle":         (52/255, 152/255, 219/255, 1),
-    "Run":          (34/255, 153/255, 84/255, 1),
-    "Tool":        (34/255, 153/255, 84/255, 1),
-    "Alarm":        (231/255, 76/255, 60/255, 1),
-    "Home":         (247/255, 220/255, 111/255, 1),
-    "Hold":         (34/255, 153/255, 84/255, 1),
-    'Wait':         (247/255, 220/255, 111/255, 1),
-    'Disable':      (100/255, 100/255, 100/255, 1),
-    'Sleep':        (220/255, 220/255, 220/255, 1),
-    'Pause':        (52/255, 152/255, 219/255, 1),
-    NOT_CONNECTED:  (155/255, 155/255, 155/255, 1)
+    "Idle": (52 / 255, 152 / 255, 219 / 255, 1),
+    "Run": (34 / 255, 153 / 255, 84 / 255, 1),
+    "Tool": (34 / 255, 153 / 255, 84 / 255, 1),
+    "Alarm": (231 / 255, 76 / 255, 60 / 255, 1),
+    "Home": (247 / 255, 220 / 255, 111 / 255, 1),
+    "Hold": (34 / 255, 153 / 255, 84 / 255, 1),
+    "Wait": (247 / 255, 220 / 255, 111 / 255, 1),
+    "Disable": (100 / 255, 100 / 255, 100 / 255, 1),
+    "Sleep": (220 / 255, 220 / 255, 220 / 255, 1),
+    "Pause": (52 / 255, 152 / 255, 219 / 255, 1),
+    NOT_CONNECTED: (155 / 255, 155 / 255, 155 / 255, 1),
 }
 
-LOAD_DIR   = 1
-LOAD_RM    = 2
-LOAD_MV    = 3
+LOAD_DIR = 1
+LOAD_RM = 2
+LOAD_MV = 3
 LOAD_MKDIR = 4
-LOAD_WIFI  = 7
+LOAD_WIFI = 7
 LOAD_CONN_WIFI = 8
 
 SEND_FILE = 1
 
 CONN_USB = 0
 CONN_WIFI = 1
+
 
 # ==============================================================================
 # Controller class
@@ -100,10 +103,10 @@ class Controller:
     modem = None
     connection_type = CONN_WIFI
 
-    def __init__(self, cnc, callback, log_sent_receive = False):
+    def __init__(self, cnc, callback, log_sent_receive=False):
         self.usb_stream = USBStream(log_sent_receive)
         self.wifi_stream = WIFIStream(log_sent_receive)
-        
+
         # Reconnection properties
         self.reconnect_enabled = True
         self.reconnect_wait_time = 10
@@ -192,11 +195,10 @@ class Controller:
     # ----------------------------------------------------------------------
     # Execute a line as gcode if pattern matches
     # @return True on success
-    #	  False otherwise
+    # False otherwise
     # ----------------------------------------------------------------------
     def executeGcode(self, line):
-        if isinstance(line, tuple) or \
-                line[0] in ("$", "!", "~", "?", "(", "@") or GPAT.match(line):
+        if isinstance(line, tuple) or line[0] in ("$", "!", "~", "?", "(", "@") or GPAT.match(line):
             self.sendGCode(line)
             return True
         return False
@@ -205,11 +207,11 @@ class Controller:
     # Execute a single command
     # ----------------------------------------------------------------------
     def executeCommand(self, line):
-        #if self.sio_status != False or self.sio_diagnose != False:      #wait for the ? or * command
+        # if self.sio_status != False or self.sio_diagnose != False:      #wait for the ? or * command
         #    time.sleep(0.5)
         if self.stream and line:
             try:
-                if line[-1] != '\n':
+                if line[-1] != "\n":
                     line += "\n"
                 self.stream.send(line.encode())
                 if self.execCallback:
@@ -225,26 +227,54 @@ class Controller:
                 self.log.put((Controller.MSG_ERROR, str(sys.exc_info()[1])))
 
     # ----------------------------------------------------------------------
-    def autoCommand(self, margin=False, zprobe=False, zprobe_abs=False, leveling=False, goto_origin=False, z_probe_offset_x=0, z_probe_offset_y=0, i=3, j=3, h=5, buffer=False, auto_level_offsets = [0,0,0,0], upcoming_tool=0):
+    def autoCommand(
+        self,
+        margin=False,
+        zprobe=False,
+        zprobe_abs=False,
+        leveling=False,
+        goto_origin=False,
+        z_probe_offset_x=0,
+        z_probe_offset_y=0,
+        i=3,
+        j=3,
+        h=5,
+        buffer=False,
+        auto_level_offsets=None,
+        upcoming_tool=0,
+    ):
         if not (margin or zprobe or leveling or goto_origin):
             return
-        if abs(CNC.vars['xmin']) > CNC.vars['worksize_x'] or abs(CNC.vars['ymin']) > CNC.vars['worksize_y']:
+        if auto_level_offsets is None:
+            auto_level_offsets = [0, 0, 0, 0]
+        if abs(CNC.vars["xmin"]) > CNC.vars["worksize_x"] or abs(CNC.vars["ymin"]) > CNC.vars["worksize_y"]:
             return
-        cmd = "M495 X%gY%g" % (CNC.vars['xmin'], CNC.vars['ymin'])
+        cmd = "M495 X%gY%g" % (CNC.vars["xmin"], CNC.vars["ymin"])
         if margin:
-            cmd = cmd + "C%gD%g" % (CNC.vars['xmax'], CNC.vars['ymax'])
+            cmd = cmd + "C%gD%g" % (CNC.vars["xmax"], CNC.vars["ymax"])
             if buffer:
                 cmd = "buffer " + cmd
-            self.executeCommand(cmd) #run margin command. Has to be two seperate commands to offset the start of the autolevel process
-        cmd = "M495 X%gY%g" % (CNC.vars['xmin'] + auto_level_offsets[0], CNC.vars['ymin'] + auto_level_offsets[2]) #reinitialize command with any autolevel offsets
+            self.executeCommand(
+                cmd
+            )  # run margin command. Has to be two seperate commands to offset the start of the autolevel process
+        cmd = "M495 X%gY%g" % (
+            CNC.vars["xmin"] + auto_level_offsets[0],
+            CNC.vars["ymin"] + auto_level_offsets[2],
+        )  # reinitialize command with any autolevel offsets
         if zprobe:
             if zprobe_abs:
-                cmd = "M495 X%gY%g" % (CNC.vars['xmin'], CNC.vars['ymin']) #reset command for 4th axis
+                cmd = "M495 X%gY%g" % (CNC.vars["xmin"], CNC.vars["ymin"])  # reset command for 4th axis
                 cmd = cmd + "O0"
             else:
                 cmd = cmd + "O%gF%g" % (z_probe_offset_x, z_probe_offset_y)
         if leveling:
-            cmd = cmd + "A%gB%gI%dJ%dH%d" % (CNC.vars['xmax'] - (CNC.vars['xmin']+auto_level_offsets[1]+ auto_level_offsets[0]) , CNC.vars['ymax'] - (CNC.vars['ymin']+auto_level_offsets[3] + auto_level_offsets[2]), i, j, h)
+            cmd = cmd + "A%gB%gI%dJ%dH%d" % (
+                CNC.vars["xmax"] - (CNC.vars["xmin"] + auto_level_offsets[1] + auto_level_offsets[0]),
+                CNC.vars["ymax"] - (CNC.vars["ymin"] + auto_level_offsets[3] + auto_level_offsets[2]),
+                i,
+                j,
+                h,
+            )
         if goto_origin:
             cmd = cmd + "P1"
             # Include the first tool number so firmware can do tool change/TLO before going to origin
@@ -278,7 +308,6 @@ class Controller:
 
     def queryFtype(self, *args):
         self.executeCommand("ftype")
-
 
     # # ----------------------------------------------------------------------
     # def zProbeCommand(self, c=0, d=0, buffer=False):
@@ -324,8 +353,8 @@ class Controller:
         self.executeCommand(cmd)
 
     def gotoPathOrigin(self, buffer=False):
-        if abs(CNC.vars['xmin']) <= CNC.vars['worksize_x'] and abs(CNC.vars['ymin']) <= CNC.vars['worksize_y']:
-            cmd = "M496.5 X%gY%g\n" % (CNC.vars['xmin'], CNC.vars['ymin'])
+        if abs(CNC.vars["xmin"]) <= CNC.vars["worksize_x"] and abs(CNC.vars["ymin"]) <= CNC.vars["worksize_y"]:
+            cmd = "M496.5 X%gY%g\n" % (CNC.vars["xmin"], CNC.vars["ymin"])
             if buffer:
                 cmd = "buffer " + cmd
             self.executeCommand(cmd)
@@ -357,7 +386,9 @@ class Controller:
 
     def setFeedScale(self, scale):
         app = App.get_running_app()
-        if (app.is_community_firmware and app.fw_version_digitized >= Utils.digitize_v("2.1.0")) and app.root.instantFSoverride:
+        if (
+            app.is_community_firmware and app.fw_version_digitized >= Utils.digitize_v("2.1.0")
+        ) and app.root.instantFSoverride:
             self.executeCommand("$F S%d\n" % (scale))
             return
         self.executeCommand("M220 S%d\n" % (scale))
@@ -367,7 +398,9 @@ class Controller:
 
     def setSpindleScale(self, scale):
         app = App.get_running_app()
-        if (app.is_community_firmware and app.fw_version_digitized >= Utils.digitize_v("2.1.0")) and app.root.instantFSoverride:
+        if (
+            app.is_community_firmware and app.fw_version_digitized >= Utils.digitize_v("2.1.0")
+        ) and app.root.instantFSoverride:
             self.executeCommand("$O S%d\n" % (scale))
             return
         self.executeCommand("M223 S%d\n" % (scale))
@@ -381,7 +414,7 @@ class Controller:
         elif switch and rpm is None:
             cmd = "M3\n"
         else:
-           cmd = "M5\n"
+            cmd = "M5\n"
         self.executeCommand(cmd)
 
     def setVacuumPower(self, power=0):
@@ -454,7 +487,6 @@ class Controller:
         if key and value:
             self.executeCommand("config-set sd %s %s\n" % (key, value))
 
-
     def dropToolCommand(self):
         self.executeCommand("M6T-1\n")
 
@@ -468,25 +500,25 @@ class Controller:
         self.executeCommand("M490.2\n")
 
     def change_tool_command(self, tool):
-        if tool == 'e':
+        if tool == "e":
             self.executeCommand("M6T%d\n" % ZPROBE_TOOL_NUMBER)
-        elif tool == 'r':
+        elif tool == "r":
             self.executeCommand("M6T%d\n" % LASER_TOOL_NUMBER)
-        elif tool == 'm':
-            #custom tool number
+        elif tool == "m":
+            # custom tool number
             pass
         else:
             self.executeCommand("M6T%s\n" % tool)
 
     def set_tool_command(self, tool):
-        if tool == 'e':
+        if tool == "e":
             self.executeCommand("M493.2T%d\n" % ZPROBE_TOOL_NUMBER)
-        elif tool == 'r':
+        elif tool == "r":
             self.executeCommand("M493.2T%d\n" % LASER_TOOL_NUMBER)
-        elif tool == 'm':
-            #custom tool number
+        elif tool == "m":
+            # custom tool number
             pass
-        elif tool == 'y':
+        elif tool == "y":
             self.executeCommand("M493.2T-1\n")
         else:
             self.executeCommand("M493.2T%s\n" % tool)
@@ -499,42 +531,45 @@ class Controller:
     # ------------------------------------------------------------------------------
     def escape(self, value):
         """Escape special characters for protocol transmission"""
-        return value.replace('?', '\x02').replace('&', '\x03').replace('!', '\x04').replace('~', '\x05')
+        return value.replace("?", "\x02").replace("&", "\x03").replace("!", "\x04").replace("~", "\x05")
 
     def lsCommand(self, ls_dir):
-        ls_command = "ls -e -s %s\n" % ls_dir.replace(' ', '\x01')
-        if '\\' in ls_dir:
-            ls_command = "ls -e -s %s\n" % '/'.join(ls_dir.split('\\')).replace(' ', '\x01')
+        ls_command = "ls -e -s %s\n" % ls_dir.replace(" ", "\x01")
+        if "\\" in ls_dir:
+            ls_command = "ls -e -s %s\n" % "/".join(ls_dir.split("\\")).replace(" ", "\x01")
         self.executeCommand(self.escape(ls_command))
 
     def catCommand(self, filename):
-        cat_command = "cat %s -e\n" % filename.replace(' ', '\x01')
-        if '\\' in filename:
-            cat_command = "cat %s -e\n" % '/'.join(filename.split('\\')).replace(' ', '\x01')
+        cat_command = "cat %s -e\n" % filename.replace(" ", "\x01")
+        if "\\" in filename:
+            cat_command = "cat %s -e\n" % "/".join(filename.split("\\")).replace(" ", "\x01")
         self.executeCommand(self.escape(cat_command))
 
     def rmCommand(self, filename):
-        rm_command = "rm %s -e\n" % filename.replace(' ', '\x01')
-        if '\\' in filename:
-            rm_command = "rm %s -e\n" % '/'.join(filename.split('\\')).replace(' ', '\x01')
+        rm_command = "rm %s -e\n" % filename.replace(" ", "\x01")
+        if "\\" in filename:
+            rm_command = "rm %s -e\n" % "/".join(filename.split("\\")).replace(" ", "\x01")
         self.executeCommand(self.escape(rm_command))
 
     def mvCommand(self, file, newfile):
-        mv_command = "mv %s %s -e\n" % (file.replace(' ', '\x01'), newfile.replace(' ', '\x01'))
-        if '\\' in file or '\\' in newfile:
-            mv_command = "mv %s %s -e\n" % ('/'.join(file.split('\\')).replace(' ', '\x01'), '/'.join(newfile.split('\\')).replace(' ', '\x01'))
+        mv_command = "mv %s %s -e\n" % (file.replace(" ", "\x01"), newfile.replace(" ", "\x01"))
+        if "\\" in file or "\\" in newfile:
+            mv_command = "mv %s %s -e\n" % (
+                "/".join(file.split("\\")).replace(" ", "\x01"),
+                "/".join(newfile.split("\\")).replace(" ", "\x01"),
+            )
         self.executeCommand(self.escape(mv_command))
 
     def mkdirCommand(self, dirname):
-        mkdir_command = "mkdir %s -e\n" % dirname.replace(' ', '\x01')
-        if '\\' in dirname:
-            mkdir_command = "mkdir %s -e\n" % '/'.join(dirname.split('\\')).replace(' ', '\x01')
+        mkdir_command = "mkdir %s -e\n" % dirname.replace(" ", "\x01")
+        if "\\" in dirname:
+            mkdir_command = "mkdir %s -e\n" % "/".join(dirname.split("\\")).replace(" ", "\x01")
         self.executeCommand(self.escape(mkdir_command))
 
     def md5Command(self, filename):
-        md5_command = "md5sum %s -e\n" % filename.replace(' ', '\x01')
-        if '\\' in filename:
-            md5_command = "md5sum %s -e\n" % '/'.join(filename.split('\\')).replace(' ', '\x01')
+        md5_command = "md5sum %s -e\n" % filename.replace(" ", "\x01")
+        if "\\" in filename:
+            md5_command = "md5sum %s -e\n" % "/".join(filename.split("\\")).replace(" ", "\x01")
         self.executeCommand(self.escape(md5_command))
 
     def loadWiFiCommand(self):
@@ -544,7 +579,7 @@ class Controller:
         self.executeCommand("wlan -d disconnect\n")
 
     def connectWiFiCommand(self, ssid, password):
-        wifi_command = "wlan %s %s -e\n" % (ssid.replace(' ', '\x01'), password.replace(' ', '\x01'))
+        wifi_command = "wlan %s %s -e\n" % (ssid.replace(" ", "\x01"), password.replace(" ", "\x01"))
         self.executeCommand(self.escape(wifi_command))
 
     def loadConfigCommand(self):
@@ -557,15 +592,15 @@ class Controller:
         self.executeCommand("config-default\n")
 
     def uploadCommand(self, filename):
-        upload_command = "upload %s\n" % filename.replace(' ', '\x01')
-        if '\\' in filename:
-            upload_command = "upload %s\n" % '/'.join(filename.split('\\')).replace(' ', '\x01')
+        upload_command = "upload %s\n" % filename.replace(" ", "\x01")
+        if "\\" in filename:
+            upload_command = "upload %s\n" % "/".join(filename.split("\\")).replace(" ", "\x01")
         self.executeCommand(self.escape(upload_command))
 
     def downloadCommand(self, filename):
-        download_command = "download %s\n" % filename.replace(' ', '\x01')
-        if '\\' in filename:
-            download_command = "download %s\n" % '/'.join(filename.split('\\')).replace(' ', '\x01')
+        download_command = "download %s\n" % filename.replace(" ", "\x01")
+        if "\\" in filename:
+            download_command = "download %s\n" % "/".join(filename.split("\\")).replace(" ", "\x01")
         self.executeCommand(self.escape(download_command))
 
     def suspendCommand(self):
@@ -575,9 +610,9 @@ class Controller:
         self.executeCommand("resume\n")
 
     def playCommand(self, filename):
-        play_command = "play %s\n" % filename.replace(' ', '\x01')
-        if '\\' in filename:
-            play_command = "play %s\n" % '/'.join(filename.split('\\')).replace(' ', '\x01')
+        play_command = "play %s\n" % filename.replace(" ", "\x01")
+        if "\\" in filename:
+            play_command = "play %s\n" % "/".join(filename.split("\\")).replace(" ", "\x01")
         self.executeCommand(self.escape(play_command))
 
     def _binary_find_left(self, array, key):
@@ -601,82 +636,88 @@ class Controller:
     def _get_line_position_from_gcode_viewer(self, line_number):
         """
         Get the X/Y/Z/A position for a specific line number from the loaded gcode file using GcodeViewer.
-        
+
         Args:
             line_number: The line number (1-based) to get position for
-        
+
         Returns:
             Tuple of (x, y, z, a) where x, y, z are floats and a is float or None.
             Returns (None, None, None, None) if position cannot be determined.
         """
         if App is None:
             return (None, None, None, None)
-        
+
         try:
             app = App.get_running_app()
-            if not app or not hasattr(app.root, 'gcode_viewer') or not app.root.gcode_viewer:
+            if not app or not hasattr(app.root, "gcode_viewer") or not app.root.gcode_viewer:
                 return (None, None, None, None)
-            
+
             gcode_viewer = app.root.gcode_viewer
-            
+
             # Check if gcode_viewer has the necessary data
-            if not hasattr(gcode_viewer, 'raw_linenumbers') or not gcode_viewer.raw_linenumbers:
+            if not hasattr(gcode_viewer, "raw_linenumbers") or not gcode_viewer.raw_linenumbers:
                 return (None, None, None, None)
-            
+
             # Convert line_number to float for comparison (raw_linenumbers stores floats)
             line_num_float = float(line_number)
-            
+
             # Find the vertex index for this line number using binary search
             left_pos = self._binary_find_left(gcode_viewer.raw_linenumbers, line_num_float)
-            
+
             # Find the rightmost position with the same line number
             right_pos = left_pos
-            while right_pos < len(gcode_viewer.raw_linenumbers) - 1 and gcode_viewer.raw_linenumbers[right_pos + 1] == line_num_float:
+            while (
+                right_pos < len(gcode_viewer.raw_linenumbers) - 1
+                and gcode_viewer.raw_linenumbers[right_pos + 1] == line_num_float
+            ):
                 right_pos = right_pos + 1
-            
+
             # Use the rightmost position (end of line) to get the final position
             vertex_idx = right_pos
-            
+
             # Validate vertex index
             if vertex_idx < 0 or vertex_idx >= len(gcode_viewer.raw_linenumbers):
                 return (None, None, None, None)
-            
+
             # Get position from meshmanager (use raw_positions for unrotated G-code coordinates)
-            if hasattr(gcode_viewer, 'meshmanager') and gcode_viewer.meshmanager:
+            if hasattr(gcode_viewer, "meshmanager") and gcode_viewer.meshmanager:
                 # Use raw_positions array for unrotated G-code coordinates
-                if hasattr(gcode_viewer.meshmanager, 'raw_positions') and gcode_viewer.meshmanager.raw_positions:
+                if hasattr(gcode_viewer.meshmanager, "raw_positions") and gcode_viewer.meshmanager.raw_positions:
                     pos_idx = vertex_idx * 3
                     if pos_idx + 2 < len(gcode_viewer.meshmanager.raw_positions):
                         x = gcode_viewer.meshmanager.raw_positions[pos_idx]
                         y = gcode_viewer.meshmanager.raw_positions[pos_idx + 1]
                         z = gcode_viewer.meshmanager.raw_positions[pos_idx + 2]
-                        
+
                         # Get angle if 4-axis
                         a = None
-                        if hasattr(gcode_viewer.meshmanager, 'angles_of_vertices') and gcode_viewer.meshmanager.angles_of_vertices:
+                        if (
+                            hasattr(gcode_viewer.meshmanager, "angles_of_vertices")
+                            and gcode_viewer.meshmanager.angles_of_vertices
+                        ):
                             if vertex_idx < len(gcode_viewer.meshmanager.angles_of_vertices):
                                 a = gcode_viewer.meshmanager.angles_of_vertices[vertex_idx]
-                        
+
                         return (x, y, z, a)
             else:
                 # Fallback: use raw_positions array directly from gcode_viewer
-                if hasattr(gcode_viewer, 'raw_positions') and gcode_viewer.raw_positions:
+                if hasattr(gcode_viewer, "raw_positions") and gcode_viewer.raw_positions:
                     pos_idx = vertex_idx * 3
                     if pos_idx + 2 < len(gcode_viewer.raw_positions):
                         x = gcode_viewer.raw_positions[pos_idx]
                         y = gcode_viewer.raw_positions[pos_idx + 1]
                         z = gcode_viewer.raw_positions[pos_idx + 2]
-                        
+
                         # Get angle if 4-axis
                         a = None
-                        if hasattr(gcode_viewer, 'angles_of_vertices') and gcode_viewer.angles_of_vertices:
+                        if hasattr(gcode_viewer, "angles_of_vertices") and gcode_viewer.angles_of_vertices:
                             if vertex_idx < len(gcode_viewer.angles_of_vertices):
                                 a = gcode_viewer.angles_of_vertices[vertex_idx]
-                        
+
                         return (x, y, z, a)
-            
+
             return (None, None, None, None)
-            
+
         except Exception as e:
             logger.warning(f"Error getting line position from gcode_viewer for line {line_number}: {e}")
             return (None, None, None, None)
@@ -685,17 +726,17 @@ class Controller:
         """
         Search backwards from start_line to find M3 commands and extract S (spindle speed) parameter.
         First checks the most recent M3 command, then searches backwards if no S parameter found.
-        
+
         Args:
             lines: Gcode file lines (1-based line numbers index into this list)
             start_line: Line number to search backwards from (1-based)
-        
+
         Returns:
             Spindle speed value as float, or None if not found
         """
         if not lines:
             return None
-        
+
         try:
             # Ensure start_line is an integer
             try:
@@ -703,40 +744,40 @@ class Controller:
             except (ValueError, TypeError):
                 logger.warning(f"Invalid start_line value: {start_line}")
                 return None
-            
+
             if start_line < 1 or start_line > len(lines):
                 return None
-            
+
             # First, find the most recent M3 command and check if it has S parameter
             most_recent_m3_line = None
             for i in range(start_line - 2, -1, -1):
                 original_line = lines[i]
                 line = original_line.strip()
-                
+
                 # Remove comments using string methods
-                if ';' in line:
-                    line = line[:line.index(';')]
+                if ";" in line:
+                    line = line[: line.index(";")]
                 # Remove parentheses comments using string methods
-                while '(' in line and ')' in line:
-                    start_paren = line.index('(')
-                    end_paren = line.index(')', start_paren)
-                    line = line[:start_paren] + line[end_paren + 1:]
-                
+                while "(" in line and ")" in line:
+                    start_paren = line.index("(")
+                    end_paren = line.index(")", start_paren)
+                    line = line[:start_paren] + line[end_paren + 1 :]
+
                 line = line.strip()
                 if not line:
                     continue
-                
+
                 # Check if line contains M3 (not M30, M31, etc.)
                 line_upper = line.upper()
                 # Use regex to find M3 that's not part of M30, M31, etc.
                 # Look for M3 that's not followed by a digit (to avoid M30, M31, etc.)
-                # M3 can be preceded by anything (including digits from other commands like S12000). 
+                # M3 can be preceded by anything (including digits from other commands like S12000).
                 # Yes, really! One of the example files (ACRYLIC-R2D2.nc) has "G0X0.000Y0.000S12000M3" wtf is that!!?
-                m3_match = re.search(r'M3(?![0-9])', line_upper)
+                m3_match = re.search(r"M3(?![0-9])", line_upper)
                 if m3_match:
                     most_recent_m3_line = i
                     # Extract S parameter from this line (S can appear before or after M3)
-                    s_match = re.search(r'S(\d+)', line)
+                    s_match = re.search(r"S(\d+)", line)
                     if s_match:
                         try:
                             spindle_speed = float(s_match.group(1))
@@ -745,43 +786,43 @@ class Controller:
                             pass
                     # Found M3 but no S parameter, continue searching backwards
                     break
-            
+
             # If we found M3 but no S parameter, search backwards for previous M3 with S
             if most_recent_m3_line is not None:
                 for i in range(most_recent_m3_line - 1, -1, -1):
                     original_line = lines[i]
                     line = original_line.strip()
-                    
+
                     # Remove comments using string methods
-                    if ';' in line:
-                        line = line[:line.index(';')]
+                    if ";" in line:
+                        line = line[: line.index(";")]
                     # Remove parentheses comments using string methods
-                    while '(' in line and ')' in line:
-                        start_paren = line.index('(')
-                        end_paren = line.index(')', start_paren)
-                        line = line[:start_paren] + line[end_paren + 1:]
-                    
+                    while "(" in line and ")" in line:
+                        start_paren = line.index("(")
+                        end_paren = line.index(")", start_paren)
+                        line = line[:start_paren] + line[end_paren + 1 :]
+
                     line = line.strip()
                     if not line:
                         continue
-                    
+
                     # Check if line contains M3 (not M30, M31, etc.)
                     line_upper = line.upper()
                     # Use regex to find M3 that's not part of M30, M31, etc.
                     # Look for M3 that's not followed by a digit (to avoid M30, M31, etc.)
-                    m3_match = re.search(r'M3(?![0-9])', line_upper)
+                    m3_match = re.search(r"M3(?![0-9])", line_upper)
                     if m3_match:
                         # Extract S parameter from this line (S can appear before or after M3)
-                        s_match = re.search(r'S(\d+)', line)
+                        s_match = re.search(r"S(\d+)", line)
                         if s_match:
                             try:
                                 spindle_speed = float(s_match.group(1))
                                 return spindle_speed
                             except (ValueError, TypeError):
                                 continue
-            
+
             return None
-            
+
         except Exception as e:
             logger.warning(f"Error finding M3 spindle speed before line {start_line}: {e}")
             return None
@@ -823,30 +864,30 @@ class Controller:
 
             if start_line < 1 or start_line > len(lines):
                 return None
-            
+
             # Search backwards for G1/G01/G2/G02/G3/G03 commands
             for i in range(start_line - 2, -1, -1):
                 original_line = lines[i]
                 line = original_line.strip()
-                
+
                 # Remove comments using string methods
-                if ';' in line:
-                    line = line[:line.index(';')]
+                if ";" in line:
+                    line = line[: line.index(";")]
                 # Remove parentheses comments using string methods
-                while '(' in line and ')' in line:
-                    start_paren = line.index('(')
-                    end_paren = line.index(')', start_paren)
-                    line = line[:start_paren] + line[end_paren + 1:]
-                
+                while "(" in line and ")" in line:
+                    start_paren = line.index("(")
+                    end_paren = line.index(")", start_paren)
+                    line = line[:start_paren] + line[end_paren + 1 :]
+
                 line = line.strip()
                 if not line:
                     continue
-                
+
                 # Check if line contains G1/G01/G2/G02/G3/G03
                 line_upper = line.upper()
                 # Check for G1/G01/G2/G02/G3/G03 commands
                 # These can appear at start of line or anywhere in the line
-                g_commands = ['G1', 'G01', 'G2', 'G02', 'G3', 'G03']
+                g_commands = ["G1", "G01", "G2", "G02", "G3", "G03"]
                 found_g_command = False
                 for cmd in g_commands:
                     # Check if command appears at start
@@ -860,19 +901,19 @@ class Controller:
                         if cmd_pos + len(cmd) >= len(line_upper) or not line_upper[cmd_pos + len(cmd)].isdigit():
                             found_g_command = True
                             break
-                
+
                 if found_g_command:
                     # Extract F parameter using regex
-                    f_match = re.search(r'F(\d+\.?\d*)', line)
+                    f_match = re.search(r"F(\d+\.?\d*)", line)
                     if f_match:
                         try:
                             feed_rate = float(f_match.group(1))
                             return feed_rate
                         except (ValueError, TypeError):
                             continue
-            
+
             return None
-            
+
         except Exception as e:
             logger.warning(f"Error finding feed rate before line {start_line}: {e}")
             return None
@@ -931,20 +972,20 @@ class Controller:
     def _find_command_line_number(self, lines, start_line, gcode_command):
         """
         Search backwards from start_line to find the last occurrence of a gcode command.
-        
+
         Args:
             lines: Gcode file lines (1-based line numbers index into this list)
             start_line: Line number to search backwards from (1-based)
             gcode_command: Literal gcode command to search for (e.g., "G20", "G21", "M3", "M6")
                           Can include parameters (e.g., "M3 S1000", "M6 T1")
-        
+
         Returns:
             Tuple of (command_string, line_number). For M6, includes adjacent T on the same line
             (e.g. 'T4 M6'). Otherwise the matched modal word (e.g. G90 from 'G90 G94').
         """
         if not lines:
             return (None, None)
-        
+
         try:
             # Ensure start_line is an integer
             try:
@@ -952,13 +993,13 @@ class Controller:
             except (ValueError, TypeError):
                 logger.warning(f"Invalid start_line value: {start_line}")
                 return (None, None)
-            
+
             if start_line < 1 or start_line > len(lines):
                 return (None, None)
-            
+
             command_upper = gcode_command.upper().strip()
             base_command = command_upper.split()[0]
-            
+
             for i in range(start_line - 2, -1, -1):
                 tokens = self._gcode_line_to_cmd_tokens(lines[i])
                 for ti in range(len(tokens) - 1, -1, -1):
@@ -967,10 +1008,10 @@ class Controller:
                         if base_command.upper() == "M6":
                             return (self._compose_m6_command_from_tokens(tokens, ti), i + 1)
                         return (token.upper(), i + 1)
-                
+
         except Exception as e:
             logger.warning(f"Error finding command {gcode_command} before line {start_line}: {e}")
-        
+
         return (None, None)
 
     def _get_last_movement_line_before(self, lines, start_line):
@@ -988,9 +1029,9 @@ class Controller:
 
     def playStartLineCommand(self, filename, start_line, preview=False, lines=None):
         # Build the play command with proper formatting
-        play_command = "play %s\n" % filename.replace(' ', '\x01')
-        if '\\' in filename:
-            play_command = "play %s" % '/'.join(filename.split('\\')).replace(' ', '\x01')
+        play_command = "play %s\n" % filename.replace(" ", "\x01")
+        if "\\" in filename:
+            play_command = "play %s" % "/".join(filename.split("\\")).replace(" ", "\x01")
 
         # Position to move to before start: last movement line before start_line (from loaded lines), then from GcodeViewer
         try:
@@ -1016,7 +1057,7 @@ class Controller:
         # Note the use of buffer is to avoid the firmware bug https://github.com/Carvera-Community/Carvera_Community_Firmware/issues/211
         additional_commands = []
         m6_line = None
-        
+
         if lines:
             # Search for G20 or G21 (unit mode) - take the last one found
             _, g20_line = self._find_command_line_number(lines, start_line, "G20")
@@ -1097,11 +1138,10 @@ class Controller:
             elif m7_line:
                 additional_commands.append("buffer M7")
 
-
-            # Search for M6 (tool change) 
+            # Search for M6 (tool change)
             # +1 to start_line because would be silly to change to the previous tool only to change to something else
             # _find_command_line_number() only searchs backwards
-            m6_cmd, m6_line = self._find_command_line_number(lines, start_line_int + 1, "M6")  
+            m6_cmd, m6_line = self._find_command_line_number(lines, start_line_int + 1, "M6")
             if m6_cmd:
                 additional_commands.append(f"buffer {m6_cmd}")
 
@@ -1111,7 +1151,9 @@ class Controller:
             _, m321_line = self._find_command_line_number(lines, start_line, "M321")
             _, m322_line = self._find_command_line_number(lines, start_line, "M322")
 
-            if (m321_line or 0) > max(m322_line or 0, m5_line or 0, m3_line or 0):  # Yucky way to compare with vars that might be NoneType. Sorry
+            if (m321_line or 0) > max(
+                m322_line or 0, m5_line or 0, m3_line or 0
+            ):  # Yucky way to compare with vars that might be NoneType. Sorry
                 # Laser mode was last used
                 additional_commands.append("buffer M321")
             elif (m3_line or 0) > max(m321_line or 0, m5_line or 0):
@@ -1122,7 +1164,7 @@ class Controller:
                     additional_commands.append(f"buffer M3 S{spindle_speed:.0f}")
                 else:
                     additional_commands.append("buffer M3")
-        
+
         # Add SafeZ movement (G53 G0 Z-2)
         # This should come after coordinate system setup but before position movement
         additional_commands.append("buffer G53 G0 Z-2")
@@ -1158,8 +1200,10 @@ class Controller:
         # the bug is that it goes to the end of the line specified instead of start.
         start_line_comment = ""
 
-        if app is not None and not (app.is_community_firmware and app.fw_version_digitized >= Utils.digitize_v("2.1.0")):
-            start_line = int(start_line)-1
+        if app is not None and not (
+            app.is_community_firmware and app.fw_version_digitized >= Utils.digitize_v("2.1.0")
+        ):
+            start_line = int(start_line) - 1
             start_line_comment = ";using number-1 as goto is bugged and off by one in this fw version"
 
         commands = [
@@ -1173,7 +1217,7 @@ class Controller:
 
         if preview:
             # Replace \x01 with spaces for better readability in preview
-            return [cmd.replace('\x01', ' ') for cmd in commands]
+            return [cmd.replace("\x01", " ") for cmd in commands]
 
         # Some times the machine seems to have a race condition when pausing before executing the next queued command
         # and the next command after M600 is run while the machine isn't fully paused, causing it to fail.
@@ -1184,9 +1228,9 @@ class Controller:
             if cmd.startswith("play"):
                 play_index = i
                 break
-        
+
         if play_index is not None and play_index < len(commands) - 1:
-            remaining_commands = commands[play_index + 1:]
+            remaining_commands = commands[play_index + 1 :]
             self._wait_for_pause_and_continue_cmd_list_execution(remaining_commands)
 
     def _wait_for_pause_and_continue_cmd_list_execution(self, remaining_commands, dt=None):
@@ -1203,22 +1247,22 @@ class Controller:
 
     def feedholdCommand(self):
         if self.stream:
-            self.stream.send('!'.encode())
+            self.stream.send(b"!")
 
     def toggleFeedholdCommand(self, holding):
         if self.stream:
             if holding:
-                self.stream.send('~'.encode())
+                self.stream.send(b"~")
             else:
-                self.stream.send('!'.encode())
+                self.stream.send(b"!")
 
     def cyclestartCommand(self):
         if self.stream:
-            self.stream.send('~'.encode())
+            self.stream.send(b"~")
 
     def estopCommand(self):
         if self.stream:
-            self.stream.send(b'\x18')
+            self.stream.send(b"\x18")
 
     # ----------------------------------------------------------------------
     def hardResetPre(self):
@@ -1227,85 +1271,102 @@ class Controller:
     def hardResetAfter(self):
         time.sleep(6)
 
-    def parseBracketAngle(self, line,):
+    def parseBracketAngle(
+        self,
+        line,
+    ):
         # R: Rotation Angle; G: active Coord System;
         # <Idle|MPos:68.9980,-49.9240,40.0000,12.3456|WPos:68.9980,-49.9240,40.0000,5.3|R:0.0|G:0|F:12345.12,100.0|S:1.2,100.0|T:1|L:0>
         # F: Feed, overide | S: Spindle RPM
         ln = line[1:-1]  # strip off < .. >
 
         # split fields
-        l = ln.split('|')
+        l = ln.split("|")
 
         # strip off status
         CNC.vars["state"] = l[0]
 
         # strip of rest into a dict of name: [values,...,]
-        d = {a: [float(y) for y in b.split(',')] for a, b in [x.split(':') for x in l[1:]]}
-        if 'R' in d:
-            CNC.vars["rotation_angle"] = float(d['R'][0])
+        d = {a: [float(y) for y in b.split(",")] for a, b in [x.split(":") for x in l[1:]]}
+        if "R" in d:
+            CNC.vars["rotation_angle"] = float(d["R"][0])
             CNC.can_rotate_wcs = True
         else:
             CNC.vars["rotation_angle"] = 0.0
-        if 'G' in d:
-            CNC.vars["active_coord_system"] = int(d['G'][0])
-        if 'C' in d:
-            CNC.vars['MachineModel'] = int(d['C'][0])
-            CNC.vars['FuncSetting'] = int(d['C'][1])
-            CNC.vars['inch_mode'] = int(d['C'][2])
-            CNC.vars['absolute_mode'] = int(d['C'][3])
+        if "G" in d:
+            CNC.vars["active_coord_system"] = int(d["G"][0])
+        if "C" in d:
+            CNC.vars["MachineModel"] = int(d["C"][0])
+            CNC.vars["FuncSetting"] = int(d["C"][1])
+            CNC.vars["inch_mode"] = int(d["C"][2])
+            CNC.vars["absolute_mode"] = int(d["C"][3])
         else:
-            CNC.vars['MachineModel'] = 1
-            CNC.vars['FuncSetting'] = 0
-            CNC.vars['inch_mode'] = 0
-            CNC.vars['absolute_mode'] = 0
-        if CNC.vars['inch_mode'] != 999:
-            if CNC.vars['inch_mode'] == 1:
+            CNC.vars["MachineModel"] = 1
+            CNC.vars["FuncSetting"] = 0
+            CNC.vars["inch_mode"] = 0
+            CNC.vars["absolute_mode"] = 0
+        if CNC.vars["inch_mode"] != 999:
+            if CNC.vars["inch_mode"] == 1:
                 CNC.UnitScale = 25.4
             else:
                 CNC.UnitScale = 1
         else:
             CNC.UnitScale = 1
-        CNC.vars["mx"] = float(d['MPos'][0])
-        CNC.vars["my"] = float(d['MPos'][1])
-        CNC.vars["mz"] = float(d['MPos'][2])
-        if len(d['MPos']) > 3:
-            CNC.vars["ma"] = float(d['MPos'][3])
+        CNC.vars["mx"] = float(d["MPos"][0])
+        CNC.vars["my"] = float(d["MPos"][1])
+        CNC.vars["mz"] = float(d["MPos"][2])
+        if len(d["MPos"]) > 3:
+            CNC.vars["ma"] = float(d["MPos"][3])
         else:
             CNC.vars["ma"] = 0.0
-        CNC.vars["wx"] = float(d['WPos'][0])
-        CNC.vars["wy"] = float(d['WPos'][1])
-        CNC.vars["wz"] = float(d['WPos'][2])
-        if len(d['WPos']) > 3:
-            CNC.vars["wa"] = float(d['WPos'][3])
+        CNC.vars["wx"] = float(d["WPos"][0])
+        CNC.vars["wy"] = float(d["WPos"][1])
+        CNC.vars["wz"] = float(d["WPos"][2])
+        if len(d["WPos"]) > 3:
+            CNC.vars["wa"] = float(d["WPos"][3])
         else:
             CNC.vars["wa"] = 0.0
-        CNC.vars["wcox"] = round(CNC.vars["mx"] - (math.cos(CNC.vars["rotation_angle"] * math.pi / 180) * CNC.vars["wx"] - math.sin(CNC.vars["rotation_angle"] * math.pi / 180) * CNC.vars["wy"]), 3)
-        CNC.vars["wcoy"] = round(CNC.vars["my"] - (math.sin(CNC.vars["rotation_angle"] * math.pi / 180) * CNC.vars["wx"] + math.cos(CNC.vars["rotation_angle"] * math.pi / 180) * CNC.vars["wy"]), 3)
+        CNC.vars["wcox"] = round(
+            CNC.vars["mx"]
+            - (
+                math.cos(CNC.vars["rotation_angle"] * math.pi / 180) * CNC.vars["wx"]
+                - math.sin(CNC.vars["rotation_angle"] * math.pi / 180) * CNC.vars["wy"]
+            ),
+            3,
+        )
+        CNC.vars["wcoy"] = round(
+            CNC.vars["my"]
+            - (
+                math.sin(CNC.vars["rotation_angle"] * math.pi / 180) * CNC.vars["wx"]
+                + math.cos(CNC.vars["rotation_angle"] * math.pi / 180) * CNC.vars["wy"]
+            ),
+            3,
+        )
         CNC.vars["wcoz"] = round(CNC.vars["mz"] - CNC.vars["wz"], 3)
         CNC.vars["wcoa"] = round(CNC.vars["ma"] - CNC.vars["wa"], 3)
-        if 'F' in d:
-           CNC.vars["curfeed"] = float(d['F'][0])
-           CNC.vars["tarfeed"] = float(d['F'][1])
-           CNC.vars["OvFeed"]  = int(d['F'][2])
-           if len(d['F']) > 3:  # Analog type spindle reports temp via F status for some reason in FW <= 2.1.0
-               CNC.vars["spindletemp"] = float(d['F'][3])
-        if 'S' in d:
-            CNC.vars["curspindle"]  = float(d['S'][0])
-            CNC.vars["tarspindle"]  = float(d['S'][1])
-            CNC.vars["OvSpindle"]   = float(d['S'][2])
-            if len(d['S']) > 3:
-                CNC.vars["vacuummode"] = int(d['S'][3])
-            if len(d['S']) > 4:
-                CNC.vars["spindletemp"] = float(d['S'][4])
-        if 'T' in d:
-            CNC.vars["tool"] = int(d['T'][0])
-            CNC.vars["tlo"] = float(d['T'][1])
-            if len(d['T']) > 2:
-                CNC.vars["target_tool"] = int(d['T'][2])
+        if "F" in d:
+            CNC.vars["curfeed"] = float(d["F"][0])
+            CNC.vars["tarfeed"] = float(d["F"][1])
+            CNC.vars["OvFeed"] = int(d["F"][2])
+            if len(d["F"]) > 3:  # Analog type spindle reports temp via F status for some reason in FW <= 2.1.0
+                CNC.vars["spindletemp"] = float(d["F"][3])
+        if "S" in d:
+            CNC.vars["curspindle"] = float(d["S"][0])
+            CNC.vars["tarspindle"] = float(d["S"][1])
+            CNC.vars["OvSpindle"] = float(d["S"][2])
+            if len(d["S"]) > 3:
+                CNC.vars["vacuummode"] = int(d["S"][3])
+            if len(d["S"]) > 4:
+                CNC.vars["spindletemp"] = float(d["S"][4])
+        if "T" in d:
+            CNC.vars["tool"] = int(d["T"][0])
+            CNC.vars["tlo"] = float(d["T"][1])
+            if len(d["T"]) > 2:
+                CNC.vars["target_tool"] = int(d["T"][2])
             else:
                 CNC.vars["target_tool"] = -1
-            if len(d['T']) > 3:
-                CNC.vars["target_collet_type"] = int(d['T'][3])
+            if len(d["T"]) > 3:
+                CNC.vars["target_collet_type"] = int(d["T"][3])
             else:
                 CNC.vars["target_collet_type"] = 0
         else:
@@ -1313,37 +1374,37 @@ class Controller:
             CNC.vars["tlo"] = 0.0
             CNC.vars["target_tool"] = -1
             CNC.vars["target_collet_type"] = 0
-        if 'W' in d:
-            CNC.vars["wpvoltage"] = float(d['W'][0])
-        if 'L' in d:
-            CNC.vars["lasermode"]  = int(d['L'][0])
-            CNC.vars["laserstate"] = int(d['L'][1])
-            CNC.vars["lasertesting"] = int(d['L'][2])
-            CNC.vars["laserpower"] = float(d['L'][3])
-            CNC.vars["laserscale"] = float(d['L'][4])
-        if 'P' in d:
-            CNC.vars["playedlines"] = int(d['P'][0])
-            CNC.vars["playedpercent"] = int(d['P'][1])
-            CNC.vars["playedseconds"] = int(d['P'][2])
-            if len(d['P']) >= 4:
-                CNC.vars["is_playing"] = int(d['P'][3])
+        if "W" in d:
+            CNC.vars["wpvoltage"] = float(d["W"][0])
+        if "L" in d:
+            CNC.vars["lasermode"] = int(d["L"][0])
+            CNC.vars["laserstate"] = int(d["L"][1])
+            CNC.vars["lasertesting"] = int(d["L"][2])
+            CNC.vars["laserpower"] = float(d["L"][3])
+            CNC.vars["laserscale"] = float(d["L"][4])
+        if "P" in d:
+            CNC.vars["playedlines"] = int(d["P"][0])
+            CNC.vars["playedpercent"] = int(d["P"][1])
+            CNC.vars["playedseconds"] = int(d["P"][2])
+            if len(d["P"]) >= 4:
+                CNC.vars["is_playing"] = int(d["P"][3])
         else:
             # not playing file
             CNC.vars["playedlines"] = -1
             CNC.vars["is_playing"] = 0
 
-        if 'A' in d:
-            CNC.vars["atc_state"] = int(d['A'][0])
+        if "A" in d:
+            CNC.vars["atc_state"] = int(d["A"][0])
         else:
             CNC.vars["atc_state"] = 0
 
-        if 'O' in d:
-            CNC.vars["max_delta"] = float(d['O'][0])
+        if "O" in d:
+            CNC.vars["max_delta"] = float(d["O"][0])
         else:
             CNC.vars["max_delta"] = 0.0
 
-        if 'H' in d:
-            CNC.vars["halt_reason"] = int(d['H'][0])
+        if "H" in d:
+            CNC.vars["halt_reason"] = int(d["H"][0])
 
         self.posUpdate = True
 
@@ -1352,55 +1413,54 @@ class Controller:
         ln = line[1:-1]  # strip off < .. >
 
         # split fields
-        l = ln.split('|')
+        l = ln.split("|")
 
         # strip of rest into a dict of name: [values,...,]
         d = {}
         for x in l:
-            if ':' in x:
+            if ":" in x:
                 try:
-                    a, b = x.split(':', 1)  # Split on first colon only
-                    d[a] = [int(y) for y in b.split(',')]
+                    a, b = x.split(":", 1)  # Split on first colon only
+                    d[a] = [int(y) for y in b.split(",")]
                 except (ValueError, IndexError) as e:
                     logger.warning(f"parseBigParentheses: Failed to parse line '{x}': {e}")
                     continue
-        if 'S' in d:
-            CNC.vars["sw_spindle"] = int(d['S'][0])
-            CNC.vars["sl_spindle"] = int(d['S'][1])
-        if 'L' in d:
-            CNC.vars["sw_laser"]  = int(d['L'][0])
-            CNC.vars["sl_laser"]  = int(d['L'][1])
-        if 'F' in d:
-            CNC.vars["sw_spindlefan"] = int(d['F'][0])
-            CNC.vars["sl_spindlefan"] = int(d['F'][1])
-        if 'V' in d:
-            CNC.vars["sw_vacuum"] = int(d['V'][0])
-            CNC.vars["sl_vacuum"] = int(d['V'][1])
-        if 'G' in d:
-            CNC.vars["sw_light"] = int(d['G'][0])
-        if 'T' in d:
-            CNC.vars["sw_tool_sensor_pwr"] = int(d['T'][0])
-        if 'R' in d:
-            CNC.vars["sw_air"] = int(d['R'][0])
-        if 'C' in d:
-            CNC.vars["sw_wp_charge_pwr"] = int(d['C'][0])
+        if "S" in d:
+            CNC.vars["sw_spindle"] = int(d["S"][0])
+            CNC.vars["sl_spindle"] = int(d["S"][1])
+        if "L" in d:
+            CNC.vars["sw_laser"] = int(d["L"][0])
+            CNC.vars["sl_laser"] = int(d["L"][1])
+        if "F" in d:
+            CNC.vars["sw_spindlefan"] = int(d["F"][0])
+            CNC.vars["sl_spindlefan"] = int(d["F"][1])
+        if "V" in d:
+            CNC.vars["sw_vacuum"] = int(d["V"][0])
+            CNC.vars["sl_vacuum"] = int(d["V"][1])
+        if "G" in d:
+            CNC.vars["sw_light"] = int(d["G"][0])
+        if "T" in d:
+            CNC.vars["sw_tool_sensor_pwr"] = int(d["T"][0])
+        if "R" in d:
+            CNC.vars["sw_air"] = int(d["R"][0])
+        if "C" in d:
+            CNC.vars["sw_wp_charge_pwr"] = int(d["C"][0])
 
-        if 'E' in d:
-            CNC.vars["st_x_min"] = int(d['E'][0])
-            CNC.vars["st_x_max"] = int(d['E'][1])
-            CNC.vars["st_y_min"] = int(d['E'][2])
-            CNC.vars["st_y_max"] = int(d['E'][3])
-            CNC.vars["st_z_max"] = int(d['E'][4])
-            CNC.vars["st_cover"] = int(d['E'][5])
-        if 'P' in d:
-            CNC.vars["st_probe"] = int(d['P'][0])
-            CNC.vars["st_calibrate"] = int(d['P'][1])
-        if 'A' in d:
-            CNC.vars["st_atc_home"] = int(d['A'][0])
-            CNC.vars["st_tool_sensor"] = int(d['A'][1])
-        if 'I' in d:
-            CNC.vars["st_e_stop"] = int(d['I'][0])
-
+        if "E" in d:
+            CNC.vars["st_x_min"] = int(d["E"][0])
+            CNC.vars["st_x_max"] = int(d["E"][1])
+            CNC.vars["st_y_min"] = int(d["E"][2])
+            CNC.vars["st_y_max"] = int(d["E"][3])
+            CNC.vars["st_z_max"] = int(d["E"][4])
+            CNC.vars["st_cover"] = int(d["E"][5])
+        if "P" in d:
+            CNC.vars["st_probe"] = int(d["P"][0])
+            CNC.vars["st_calibrate"] = int(d["P"][1])
+        if "A" in d:
+            CNC.vars["st_atc_home"] = int(d["A"][0])
+            CNC.vars["st_tool_sensor"] = int(d["A"][1])
+        if "I" in d:
+            CNC.vars["st_e_stop"] = int(d["I"][0])
 
         self.diagnoseUpdate = True
 
@@ -1426,61 +1486,62 @@ class Controller:
         if self.stream.open(address):
             CNC.vars["state"] = CONNECTED
             CNC.vars["color"] = STATECOLOR[CNC.vars["state"]]
-            self.log.put((self.MSG_NORMAL, 'Connected to machine!'))
-            #self.stream.send(b"\n")
+            self.log.put((self.MSG_NORMAL, "Connected to machine!"))
+            # self.stream.send(b"\n")
             self._gcount = 0
             self._alarm = True
-            CNC.vars["alarm_message"] = ''
+            CNC.vars["alarm_message"] = ""
             # Reset manual disconnect flag when connection is established
             self._manual_disconnect = False
             try:
                 self.clearRun()
             except:
-                self.log.put((self.MSG_ERROR, 'Controller clear thread error!'))
+                self.log.put((self.MSG_ERROR, "Controller clear thread error!"))
             self.thread = threading.Thread(target=self.streamIO)
             self.thread.start()
             return True
-        else:
-            self.log.put((self.MSG_ERROR, 'Connection Failed!'))
+        self.log.put((self.MSG_ERROR, "Connection Failed!"))
 
     # ----------------------------------------------------------------------
     # Close connection port
     # ----------------------------------------------------------------------
     def close(self):
-        if self.stream is None: return
+        if self.stream is None:
+            return
         try:
             self.stopRun()
         except:
-            self.log.put((self.MSG_ERROR, 'Controller stop thread error!'))
+            self.log.put((self.MSG_ERROR, "Controller stop thread error!"))
         self._runLines = 0
         time.sleep(0.5)
         self.thread = None
         try:
             self.stream.close()
         except:
-            self.log.put((self.MSG_ERROR, 'Controller close stream error!'))
+            self.log.put((self.MSG_ERROR, "Controller close stream error!"))
         self.stream = None
         CNC.vars["state"] = NOT_CONNECTED
         CNC.vars["color"] = STATECOLOR[CNC.vars["state"]]
-        
+
         # Start reconnection if enabled
         if self.reconnect_enabled and self.reconnect_callback and self.connection_type == CONN_WIFI:
             self.start_reconnection()
 
     def close_manual(self):
         """Close connection manually (user initiated) - don't auto-reconnect"""
-        if self.stream is None: return
+        if self.stream is None:
+            return
         try:
             self.stopRun()
         except:
-            self.log.put((self.MSG_ERROR, 'Controller stop thread error!'))
+            self.log.put((self.MSG_ERROR, "Controller stop thread error!"))
         self._runLines = 0
         time.sleep(0.5)
         self.thread = None
         try:
             self.stream.close()
         except:
-            self.log.put((self.MSG_ERROR, 'Controller close stream error!'))
+            self.log.put((self.MSG_ERROR, "Controller close stream error!"))
         self.stream = None
         # Set a flag to indicate this was a manual disconnection
         self._manual_disconnect = True
@@ -1503,10 +1564,10 @@ class Controller:
         """Start the reconnection process"""
         if not self.reconnect_enabled or not self.reconnect_callback:
             return
-            
+
         self.reconnect_countdown = self.reconnect_wait_time
         self.reconnect_attempts_remaining = self.reconnect_attempts
-        
+
         # Schedule the first reconnection attempt
         if self.reconnect_timer:
             self.reconnect_timer.cancel()
@@ -1516,11 +1577,11 @@ class Controller:
     def attempt_reconnect(self):
         """Attempt to reconnect"""
         self.reconnect_attempts_remaining -= 1
-        
+
         # Try to reconnect using the callback
         if self.reconnect_callback:
             self.reconnect_callback()
-            
+
         # Schedule next attempt if there are more attempts remaining
         if self.reconnect_attempts_remaining > 0:
             if self.reconnect_timer:
@@ -1565,7 +1626,8 @@ class Controller:
 
     # ----------------------------------------------------------------------
     def sendHex(self, hexcode):
-        if self.stream is None: return
+        if self.stream is None:
+            return
         self.stream.send(chr(int(hexcode, 16)))
         self.stream.flush()
 
@@ -1596,7 +1658,7 @@ class Controller:
         self.openClose()
         self.stopProbe()
         self._alarm = False
-        CNC.vars["alarm_message"] = ''
+        CNC.vars["alarm_message"] = ""
         CNC.vars["_OvChanged"] = True  # force a feed change if any
         self.notBusy()
 
@@ -1606,13 +1668,13 @@ class Controller:
         self.stopProbe()
         if clearAlarm:
             self._alarm = False
-            CNC.vars["alarm_message"] = ''
+            CNC.vars["alarm_message"] = ""
         CNC.vars["_OvChanged"] = True  # force a feed change if any
 
     def unlock(self, clearAlarm=True):
         if clearAlarm:
             self._alarm = False
-            CNC.vars["alarm_message"] = ''
+            CNC.vars["alarm_message"] = ""
         self.sendGCode("$X")
 
     def home(self, event=None):
@@ -1657,7 +1719,7 @@ class Controller:
         """Set the jog mode (step or continuous)"""
         if not self.is_community_firmware:
             return
-        
+
         if mode in [Controller.JOG_MODE_STEP, Controller.JOG_MODE_CONTINUOUS]:
             if self.continuous_jog_active:
                 self.stopContinuousJog()
@@ -1673,19 +1735,18 @@ class Controller:
                 self.executeCommand(f"$J -c {_dir} F{self.jog_speed}")
             else:
                 if scale_feed_override is not None:
-                    self.executeCommand(f"$J -c {_dir} {scale_feed_override}") 
+                    self.executeCommand(f"$J -c {_dir} {scale_feed_override}")
                 else:
-                    self.executeCommand(f"$J -c {_dir}") 
+                    self.executeCommand(f"$J -c {_dir}")
         else:
             self.executeCommand(f"$J -c {_dir} F{speed}")
-        
-    
+
     def stopContinuousJog(self):
         """Stop continuous jogging"""
 
         if self.jog_mode != Controller.JOG_MODE_CONTINUOUS:
             return
-        
+
         # Send Y^ (Ctrl+Y) to stop continuous jogging
         if self.stream is not None and self.continuous_jog_active:
             self.stream.send(b"\031")
@@ -1706,9 +1767,12 @@ class Controller:
 
     def goto(self, x=None, y=None, z=None):
         cmd = "G90G0"
-        if x is not None: cmd += "X%g" % (x)
-        if y is not None: cmd += "Y%g" % (y)
-        if z is not None: cmd += "Z%g" % (z)
+        if x is not None:
+            cmd += "X%g" % (x)
+        if y is not None:
+            cmd += "Y%g" % (y)
+        if z is not None:
+            cmd += "Z%g" % (z)
         self.sendGCode("%s" % (cmd))
 
     def gotoSafeZ(self):
@@ -1722,45 +1786,55 @@ class Controller:
 
     def gotoWCSHome(self):
         self.gotoSafeZ()
-        self.sendGCode("G53 G0 X%g Y%g" % (CNC.vars['wcox'], CNC.vars['wcoy']))
+        self.sendGCode("G53 G0 X%g Y%g" % (CNC.vars["wcox"], CNC.vars["wcoy"]))
 
-    def wcs_set_a(self, a = None):
+    def wcs_set_a(self, a=None):
         cmd = "G10L20P0"
-        if a is not None and abs(a) < 3600000.0: cmd += "A" + str(round(a, 5))
+        if a is not None and abs(a) < 3600000.0:
+            cmd += "A" + str(round(a, 5))
 
         self.sendGCode(cmd)
 
     def shrinkA(self):
         self.sendGCode("G92.4 A0 S0")
 
-    def rapid_move_a(self, a = None):
+    def rapid_move_a(self, a=None):
         cmd = "G90G0"
-        cmd += "X"  + str(round(a, 5))
+        cmd += "X" + str(round(a, 5))
         cmd = "G92.4"
         cmd += " A " + str(round(a, 5)) + " R0"
-        if a is not None and abs(a) < 3600000.0: self.sendGCode(cmd)
+        if a is not None and abs(a) < 3600000.0:
+            self.sendGCode(cmd)
 
-    def wcs_set(self, x = None, y = None, z = None, a = None):
+    def wcs_set(self, x=None, y=None, z=None, a=None):
         cmd = "G10L20P0"
 
         pos = ""
-        if x is not None and abs(x) < 10000.0: pos += "X" + str(round(x, 4))
-        if y is not None and abs(y) < 10000.0: pos += "Y" + str(round(y, 4))
-        if z is not None and abs(z) < 10000.0: pos += "Z" + str(round(z, 4))
-        if a is not None and abs(a) < 3600000.0: pos += "A" + str(round(a, 4))
+        if x is not None and abs(x) < 10000.0:
+            pos += "X" + str(round(x, 4))
+        if y is not None and abs(y) < 10000.0:
+            pos += "Y" + str(round(y, 4))
+        if z is not None and abs(z) < 10000.0:
+            pos += "Z" + str(round(z, 4))
+        if a is not None and abs(a) < 3600000.0:
+            pos += "A" + str(round(a, 4))
         cmd += pos
 
         self.sendGCode(cmd)
 
-    def wcsSetM(self, x = None, y = None, z = None, a = None):
+    def wcsSetM(self, x=None, y=None, z=None, a=None):
         # p = WCS.index(CNC.vars["WCS"])
         cmd = "G10L2P0"
 
         pos = ""
-        if x is not None and abs(x) < 10000.0: pos += "X" + str(round(x, 4))
-        if y is not None and abs(y) < 10000.0: pos += "Y" + str(round(y, 4))
-        if z is not None and abs(z) < 10000.0: pos += "Z" + str(round(z, 4))
-        if a is not None and abs(a) < 3600000.0: pos += "A" + str(round(a, 4))
+        if x is not None and abs(x) < 10000.0:
+            pos += "X" + str(round(x, 4))
+        if y is not None and abs(y) < 10000.0:
+            pos += "Y" + str(round(y, 4))
+        if z is not None and abs(z) < 10000.0:
+            pos += "Z" + str(round(z, 4))
+        if a is not None and abs(a) < 3600000.0:
+            pos += "A" + str(round(a, 4))
         cmd += pos
 
         self.sendGCode(cmd)
@@ -1775,23 +1849,28 @@ class Controller:
         self.sendGCode(cmd)
 
     def feedHold(self, event=None):
-        if event is not None and not self.acceptKey(True): return
-        if self.stream is None: return
+        if event is not None and not self.acceptKey(True):
+            return
+        if self.stream is None:
+            return
         self.stream.send(b"!")
         self.stream.flush()
         self._pause = True
 
     def resume(self, event=None):
-        if event is not None and not self.acceptKey(True): return
-        if self.stream is None: return
+        if event is not None and not self.acceptKey(True):
+            return
+        if self.stream is None:
+            return
         self.stream.send(b"~")
         self.stream.flush()
         self._alarm = False
-        CNC.vars["alarm_message"] = ''
+        CNC.vars["alarm_message"] = ""
         self._pause = False
 
     def pause(self, event=None):
-        if self.stream is None: return
+        if self.stream is None:
+            return
         if self._pause:
             self.resume()
         else:
@@ -1804,12 +1883,12 @@ class Controller:
             return
         self._baud_switch_in_progress = True
         try:
-            self.stream.send("baud {}\n".format(baud).encode())
-            if hasattr(self.usb_stream, 'reopen_at_baud'):
+            self.stream.send(f"baud {baud}\n".encode())
+            if hasattr(self.usb_stream, "reopen_at_baud"):
                 self.usb_stream.reopen_at_baud(baud)
-                self.log.put((self.MSG_NORMAL, 'Serial speed set to {} baud'.format(baud)))
+                self.log.put((self.MSG_NORMAL, f"Serial speed set to {baud} baud"))
         except Exception as e:
-            self.log.put((self.MSG_ERROR, 'Failed to change serial speed: {}'.format(e)))
+            self.log.put((self.MSG_ERROR, f"Failed to change serial speed: {e}"))
         finally:
             self._baud_switch_in_progress = False
 
@@ -1840,7 +1919,7 @@ class Controller:
             elif "error" in line.lower() or "alarm" in line.lower():
                 self.log.put((self.MSG_ERROR, line))
                 if line.upper().startswith("ERROR:"):
-                    msg = line[len("ERROR:"):].strip()
+                    msg = line[len("ERROR:") :].strip()
                     if msg:
                         CNC.vars["alarm_message"] = msg
             else:
@@ -1882,8 +1961,8 @@ class Controller:
         self.sio_diagnose = False
         dynamic_delay = 0.1
         tr = td = time.time()
-        line = b''
-        last_error = ''
+        line = b""
+        last_error = ""
 
         while not self.stop.is_set():
             if not self.stream or self.paused:
@@ -1907,44 +1986,44 @@ class Controller:
                 if self.stream.waiting_for_recv():
                     received = [bytes([b]) for b in self.stream.recv()]
                     for c in received:
-                        if c == EOT or c == CAN:
+                        if c in (EOT, CAN):
                             # Ctrl + Z means transmission complete, Ctrl + D means transmission cancel or error
                             if len(line) > 0:
-                                self.load_buffer.put(line.decode(errors='ignore'))
+                                self.load_buffer.put(line.decode(errors="ignore"))
                                 if self.loadNUM > 0:
                                     self.load_buffer_size += len(line)
-                            line = b''
+                            line = b""
                             if c == EOT:
                                 self.loadEOF = True
                             else:
                                 self.loadERR = True
                         else:
-                            if c == b'\n':
+                            if c == b"\n":
                                 # (line.decode(errors='ignore'))
-                                if self.loadNUM == 0 or '|MPos' in line.decode(errors='ignore'):
-                                    self.parseLine(line.decode(errors='ignore'))
+                                if self.loadNUM == 0 or "|MPos" in line.decode(errors="ignore"):
+                                    self.parseLine(line.decode(errors="ignore"))
                                 else:
                                     # 将字节串解码为字符串
-                                    decoded_line = line.decode(errors='ignore')
+                                    decoded_line = line.decode(errors="ignore")
                                     # 使用正则表达式去除以"<"开头，以">"结尾的部分
-                                    cleaned_line = re.sub(r'<.*?>', '', decoded_line)
+                                    cleaned_line = re.sub(r"<.*?>", "", decoded_line)
                                     # 去除多余的空格（如果需要）
                                     cleaned_line = cleaned_line.strip()
                                     if len(cleaned_line) != 0:
                                         self.load_buffer.put(cleaned_line)
                                         self.load_buffer_size += len(cleaned_line) + 1
-                                line = b''
+                                line = b""
                             else:
                                 line += c
                     dynamic_delay = 0
                 else:
                     if self.sendNUM == 0 and self.loadNUM == 0:
-                        dynamic_delay = (0.1 if dynamic_delay >= 0.09 else dynamic_delay + 0.01)
+                        dynamic_delay = 0.1 if dynamic_delay >= 0.09 else dynamic_delay + 0.01
                     else:
                         dynamic_delay = 0
 
             except Exception:
-                line = b''
+                line = b""
                 exc_msg = str(sys.exc_info()[1])
                 if self._baud_switch_in_progress:
                     last_error = exc_msg
@@ -1962,9 +2041,9 @@ class Controller:
         # Extract all WCS entries from the line
 
         # parse the current WCS from the "get wcs" command
-        get_wcs_pattern = r'\[current WCS: (G5[4-9][.1-3]*)\]'
+        get_wcs_pattern = r"\[current WCS: (G5[4-9][.1-3]*)\]"
         current_wcs_matches = re.findall(get_wcs_pattern, line)
-        
+
         if current_wcs_matches:
             # if not on community firmware or rotation angle is not set,
             # the active coordinate system is tracked through the "get wcs" command
@@ -1972,12 +2051,12 @@ class Controller:
                 CNC.vars["active_coord_system"] = CNC.wcs_names.index(current_wcs_matches[0])
             return
 
-        wcs_pattern = r'\[(G5[4-9][.1-3]*):([^]]+)\]'
+        wcs_pattern = r"\[(G5[4-9][.1-3]*):([^]]+)\]"
         matches = re.findall(wcs_pattern, line)
         wcs_data = {}
         for wcs_code, values_str in matches:
             # Split the values by comma
-            values = values_str.split(',')
+            values = values_str.split(",")
             if len(values) >= 5:  # X, Y, Z, A, B, Rotation
                 try:
                     x = float(values[0])
@@ -1990,10 +2069,10 @@ class Controller:
                     else:
                         rotation = 0.0
                     wcs_data[wcs_code] = [x, y, z, a, b, rotation]  # Store only X, Y, Z, A, B, Rotation
-                    
+
                 except (ValueError, IndexError):
                     logger.error(f"Error parsing WCS values for {wcs_code}: {values_str}")
-        
+
         # Send the parsed data to the WCS Settings popup if it's open
-        if hasattr(self, 'wcs_popup_callback') and self.wcs_popup_callback:
+        if hasattr(self, "wcs_popup_callback") and self.wcs_popup_callback:
             self.wcs_popup_callback(wcs_data)

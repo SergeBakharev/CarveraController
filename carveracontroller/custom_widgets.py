@@ -1,3 +1,5 @@
+import json
+
 from kivy.animation import Animation
 from kivy.clock import Clock
 from kivy.factory import Factory
@@ -14,7 +16,6 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.settings import SettingItem
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
-import json
 
 from carveracontroller.translation import tr
 
@@ -25,10 +26,11 @@ class ScrollingLabel(ScrollView):
     (marquee style) when the text overflows. If text would fit at 80% font size,
     uses that instead of scrolling. Based on https://stackoverflow.com/a/43051460
     """
-    text = StringProperty('')
-    font_size = StringProperty('18sp')
+
+    text = StringProperty("")
+    font_size = StringProperty("18sp")
     color = ListProperty([1, 1, 1, 1])
-    effective_font_size = StringProperty('18sp')
+    effective_font_size = StringProperty("18sp")
 
     def __init__(self, **kwargs):
         self._marquee_anim = None
@@ -38,7 +40,7 @@ class ScrollingLabel(ScrollView):
     def _parse_font_size(self, value):
         try:
             if isinstance(value, str):
-                return float(value.replace('sp', '').replace('dp', '').strip())
+                return float(value.replace("sp", "").replace("dp", "").strip())
             return float(value)
         except (TypeError, ValueError):
             return 18.0
@@ -139,11 +141,12 @@ class ScrollingLabel(ScrollView):
         return False
 
 
-Factory.register('ScrollingLabel', cls=ScrollingLabel)
+Factory.register("ScrollingLabel", cls=ScrollingLabel)
 
 
 class ColorPreview(Widget):
     """A simple widget that displays a color preview."""
+
     def __init__(self, color=(0, 1, 1, 1), **kwargs):
         super().__init__(**kwargs)
         self._color = color
@@ -174,28 +177,20 @@ class SettingColorPicker(SettingItem):
         self._current_color = self._parse_color(self.value)
 
         # Wrapper for vertical centering
-        wrapper = AnchorLayout(anchor_y='center', anchor_x='left')
+        wrapper = AnchorLayout(anchor_y="center", anchor_x="left")
 
         inner = BoxLayout(
-            orientation='horizontal',
-            spacing=dp(10),
-            size_hint=(1, None),
-            height=dp(40),
-            padding=[dp(10), 0]
+            orientation="horizontal", spacing=dp(10), size_hint=(1, None), height=dp(40), padding=[dp(10), 0]
         )
 
         # Color preview widget
-        self.color_preview = ColorPreview(
-            color=self._current_color,
-            size_hint=(None, 1),
-            width=dp(60)
-        )
+        self.color_preview = ColorPreview(color=self._current_color, size_hint=(None, 1), width=dp(60))
 
         # Color value label
         self.color_label = Label(
             text=self._format_color(self._current_color),
-            halign='left',
-            valign='middle',
+            halign="left",
+            valign="middle",
             size_hint=(1, 1),
         )
 
@@ -214,12 +209,12 @@ class SettingColorPicker(SettingItem):
         try:
             if not value:
                 return (0, 1, 1, 1)  # Default cyan
-            parts = [float(x.strip()) for x in value.split(',')]
+            parts = [float(x.strip()) for x in value.split(",")]
             if len(parts) == 3:
                 parts.append(1.0)  # Add alpha if missing
             # If values are > 1, assume 0-255 range
             if any(p > 1 for p in parts[:3]):
-                return (parts[0]/255, parts[1]/255, parts[2]/255, parts[3] if parts[3] <= 1 else parts[3]/255)
+                return (parts[0] / 255, parts[1] / 255, parts[2] / 255, parts[3] if parts[3] <= 1 else parts[3] / 255)
             return tuple(parts)
         except Exception:
             return (0, 1, 1, 1)  # Default cyan
@@ -227,16 +222,16 @@ class SettingColorPicker(SettingItem):
     def _format_color(self, color):
         """Format color tuple as a readable string."""
         r, g, b, a = color
-        return f"R:{int(r*255)} G:{int(g*255)} B:{int(b*255)}"
+        return f"R:{int(r * 255)} G:{int(g * 255)} B:{int(b * 255)}"
 
     def _color_to_string(self, color):
         """Convert color tuple to storage string (0-255 range)."""
         r, g, b, a = color
-        return f"{int(r*255)},{int(g*255)},{int(b*255)},{int(a*255)}"
+        return f"{int(r * 255)},{int(g * 255)},{int(b * 255)},{int(a * 255)}"
 
     def open_popup(self, *args):
         """Open the color picker popup."""
-        content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(10))
+        content = BoxLayout(orientation="vertical", spacing=dp(10), padding=dp(10))
 
         # Color picker widget
         self.picker = ColorPicker(color=self._current_color)
@@ -246,10 +241,7 @@ class SettingColorPicker(SettingItem):
         btns = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(10))
 
         popup = Popup(
-            title=self.title or tr._("Select Color"),
-            content=content,
-            size_hint=(0.8, 0.9),
-            auto_dismiss=False
+            title=self.title or tr._("Select Color"), content=content, size_hint=(0.8, 0.9), auto_dismiss=False
         )
 
         save_btn = Button(text=tr._("Save"))
@@ -290,10 +282,11 @@ class SettingColorPicker(SettingItem):
 
     def on_value(self, instance, value):
         """Called when the value changes."""
-        if hasattr(self, 'color_preview'):
+        if hasattr(self, "color_preview"):
             self._current_color = self._parse_color(value)
             self.color_preview.set_color(self._current_color)
             self.color_label.text = self._format_color(self._current_color)
+
 
 class SettingGCodeSnippet(SettingItem):
     def __init__(self, **kwargs):
@@ -303,23 +296,19 @@ class SettingGCodeSnippet(SettingItem):
         self.height = dp(80)
 
         # Wrapper: ensure the content is centered vertically
-        wrapper = AnchorLayout(anchor_y='center', anchor_x='left')
+        wrapper = AnchorLayout(anchor_y="center", anchor_x="left")
 
         # And split it horizontally into two parts:
         # 1. Block with preview of the G-code snippet name
         # 2. Button to open the editor popup
         inner = BoxLayout(
-            orientation='horizontal',
-            spacing=dp(10),
-            size_hint=(1, None),
-            height=dp(40),
-            padding=[dp(10), 0]
+            orientation="horizontal", spacing=dp(10), size_hint=(1, None), height=dp(40), padding=[dp(10), 0]
         )
 
         self.preview = Label(
             text=self._get_name(self.value),
-            halign='left',
-            valign='middle',
+            halign="left",
+            valign="middle",
             size_hint=(1, 1),
             text_size=(None, None),
         )
@@ -347,37 +336,26 @@ class SettingGCodeSnippet(SettingItem):
 
     def open_popup(self, *args):
         try:
-            obj = json.loads(self.value or '{}')
+            obj = json.loads(self.value or "{}")
         except Exception:
             obj = {}
 
         name = obj.get("name", "")
         gcode = obj.get("gcode", "")
 
-        content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(10))
+        content = BoxLayout(orientation="vertical", spacing=dp(10), padding=dp(10))
 
-        self.name_input = TextInput(
-            text=name,
-            multiline=False,
-            size_hint_y=None,
-            height=dp(40)
-        )
+        self.name_input = TextInput(text=name, multiline=False, size_hint_y=None, height=dp(40))
         content.add_widget(Label(text=tr._("Name:"), size_hint_y=None, height=dp(20)))
         content.add_widget(self.name_input)
 
-        self.gcode_input = TextInput(
-            text=gcode,
-            size_hint=(1, 1)
-        )
+        self.gcode_input = TextInput(text=gcode, size_hint=(1, 1))
         content.add_widget(Label(text=tr._("G-code:"), size_hint_y=None, height=dp(20)))
         content.add_widget(self.gcode_input)
 
         btns = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(10))
         popup = Popup(
-            title=self.title or tr._("Edit command"),
-            content=content,
-            size_hint=(0.8, 0.8),
-            auto_dismiss=False
+            title=self.title or tr._("Edit command"), content=content, size_hint=(0.8, 0.8), auto_dismiss=False
         )
 
         save_btn = Button(text=tr._("Save"))
@@ -394,10 +372,7 @@ class SettingGCodeSnippet(SettingItem):
         self._popup = popup
 
     def _save_and_close(self, popup):
-        obj = {
-            "name": self.name_input.text.strip(),
-            "gcode": self.gcode_input.text.strip()
-        }
+        obj = {"name": self.name_input.text.strip(), "gcode": self.gcode_input.text.strip()}
 
         new_value = json.dumps(obj)
 
@@ -409,5 +384,5 @@ class SettingGCodeSnippet(SettingItem):
         popup.dismiss()
 
     def on_value(self, instance, value):
-        if hasattr(self, 'preview'):
+        if hasattr(self, "preview"):
             self.preview.text = self._get_name(value)

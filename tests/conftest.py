@@ -98,6 +98,7 @@ def alarm_state(connected_idle_state):
 def mock_controller():
     """A Controller mock for unit tests that doesn't touch hardware."""
     from unittest.mock import MagicMock
+
     from carveracontroller.Controller import Controller
 
     controller = MagicMock(spec=Controller)

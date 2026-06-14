@@ -4,329 +4,346 @@
 # Author:	Vasilis.Vlachoudis@cern.ch
 # Date:	16-Apr-2015
 
-from __future__ import absolute_import
-from __future__ import print_function
 __author__ = "Vasilis Vlachoudis"
-__email__  = "vvlachoudis@gmail.com"
+__email__ = "vvlachoudis@gmail.com"
 
+import glob
+import hashlib
 import os
 import sys
-import hashlib
-import glob
 import traceback
+
 try:
-	import ConfigParser
+    import ConfigParser
 except ImportError:
-	import configparser as ConfigParser
+    import configparser as ConfigParser
 
 import gettext
-try:
-	import __builtin__
-except:
-	import builtins as __builtin__
-	#__builtin__.unicode = str		# dirty hack for python3
 
 try:
-	import serial
+    import __builtin__
 except:
-	serial = None
+    import builtins as __builtin__
+    # __builtin__.unicode = str		# dirty hack for python3
+
+try:
+    import serial
+except:
+    serial = None
 
 from datetime import datetime
 
-__prg__     = "bCNC"
-__tool__    = "TOOL"
-prgpath   = os.path.abspath(os.path.dirname(sys.argv[0]))
-iniSystem = os.path.join(prgpath,"%s.ini"%(__prg__))
-iniUser   = os.path.expanduser("~/.%s" % (__prg__))
-hisFile   = os.path.expanduser("~/.%s.history" % (__prg__))
-iniTool   = os.path.expanduser("~/.%s" % (__tool__))
+__prg__ = "bCNC"
+__tool__ = "TOOL"
+prgpath = os.path.abspath(os.path.dirname(sys.argv[0]))
+iniSystem = os.path.join(prgpath, "%s.ini" % (__prg__))
+iniUser = os.path.expanduser("~/.%s" % (__prg__))
+hisFile = os.path.expanduser("~/.%s.history" % (__prg__))
+iniTool = os.path.expanduser("~/.%s" % (__tool__))
 
 # dirty way of substituting the "_" on the builtin namespace
-#__builtin__.__dict__["_"] = gettext.translation('bCNC', 'locale', fallback=True).ugettext
-__builtin__._ = gettext.translation('bCNC', os.path.join(prgpath,'locale'), fallback=True).gettext
+# __builtin__.__dict__["_"] = gettext.translation('bCNC', 'locale', fallback=True).ugettext
+__builtin__._ = gettext.translation("bCNC", os.path.join(prgpath, "locale"), fallback=True).gettext
 __builtin__.N_ = lambda message: message
 
 
-icons     = {}
-images     = {}
-config    = ConfigParser.ConfigParser()
+icons = {}
+images = {}
+config = ConfigParser.ConfigParser()
 toolconfig = ConfigParser.ConfigParser()
-language  = ""
+language = ""
 
 _errorReport = True
-errors       = []
-_maxRecent   = 10
+errors = []
+_maxRecent = 10
 
 _FONT_SECTION = "Font"
 
 
-#New class to provide config for everyone
-#FIXME: create single instance of this and pass it to all parts of application
-class Config():
-	def greet(self, who=__name__):
-		print("Config class loaded in %s"%(who))
+# New class to provide config for everyone
+# FIXME: create single instance of this and pass it to all parts of application
+class Config:
+    def greet(self, who=__name__):
+        print("Config class loaded in %s" % (who))
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Load configuration
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def loadConfiguration(systemOnly=False):
-	global config, _errorReport, language
-	if systemOnly:
-		config.read(iniSystem)
-	else:
-		config.read([iniSystem, iniUser])
-		_errorReport = getInt("Connection","errorreport",1)
+    global config, _errorReport, language
+    if systemOnly:
+        config.read(iniSystem)
+    else:
+        config.read([iniSystem, iniUser])
+        _errorReport = getInt("Connection", "errorreport", 1)
 
-		language = getStr(__prg__, "language")
-		if language:
-			# replace language
-			__builtin__._ = gettext.translation('bCNC', os.path.join(prgpath,'locale'),
-					fallback=True, languages=[language]).gettext
+        language = getStr(__prg__, "language")
+        if language:
+            # replace language
+            __builtin__._ = gettext.translation(
+                "bCNC", os.path.join(prgpath, "locale"), fallback=True, languages=[language]
+            ).gettext
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Save configuration file
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def saveConfiguration():
-	global config
-	cleanConfiguration()
-	f = open(iniUser,"w")
-	config.write(f)
-	f.close()
+    global config
+    cleanConfiguration()
+    f = open(iniUser, "w")
+    config.write(f)
+    f.close()
 
-#----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
 # Remove items that are the same as in the default ini
-#----------------------------------------------------------------------
+# ----------------------------------------------------------------------
 def cleanConfiguration():
-	global config
-	newconfig = config	# Remember config
-	config = ConfigParser.ConfigParser()
+    global config
+    newconfig = config  # Remember config
+    config = ConfigParser.ConfigParser()
 
-	loadConfiguration(True)
+    loadConfiguration(True)
 
-	# Compare items
-	for section in config.sections():
-		for item, value in config.items(section):
-			try:
-				new = newconfig.get(section, item)
-				if value==new:
-					newconfig.remove_option(section, item)
-			except ConfigParser.NoOptionError:
-				pass
-	config = newconfig
+    # Compare items
+    for section in config.sections():
+        for item, value in config.items(section):
+            try:
+                new = newconfig.get(section, item)
+                if value == new:
+                    newconfig.remove_option(section, item)
+            except ConfigParser.NoOptionError:
+                pass
+    config = newconfig
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # Load tool config
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def loadToolConfig():
-	global toolconfig
-	toolconfig.read(iniTool)
+    global toolconfig
+    toolconfig.read(iniTool)
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # Save tool config
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def saveToolConfig():
-	global toolconfig
-	f = open(iniTool, "w")
-	toolconfig.write(f)
-	f.close()
+    global toolconfig
+    f = open(iniTool, "w")
+    toolconfig.write(f)
+    f.close()
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # add section if it doesn't exist
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def addSection(section):
-	global config
-	if not config.has_section(section):
-		config.add_section(section)
+    global config
+    if not config.has_section(section):
+        config.add_section(section)
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def getStr(section, name, default=""):
-	global config
-	try:
-		return config.get(section, name)
-	except:
-		return default
+    global config
+    try:
+        return config.get(section, name)
+    except:
+        return default
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def getUtf(section, name, default=""):
-	global config
-	try:
-		return config.get(section, name).decode("utf8")
-	except:
-		return default
+    global config
+    try:
+        return config.get(section, name).decode("utf8")
+    except:
+        return default
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def getInt(section, name, default=0):
-	global config
-	try: return int(config.get(section, name))
-	except: return default
+    global config
+    try:
+        return int(config.get(section, name))
+    except:
+        return default
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def getFloat(section, name, default=0.0):
-	global config
-	try: return float(config.get(section, name))
-	except: return default
+    global config
+    try:
+        return float(config.get(section, name))
+    except:
+        return default
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def getBool(section, name, default=False):
-	global config
-	try: return bool(int(config.get(section, name)))
-	except: return default
+    global config
+    try:
+        return bool(int(config.get(section, name)))
+    except:
+        return default
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def getToolInt(section, name, default=0):
-	global toolconfig
-	try: return int(toolconfig.get(section, name))
-	except: return default
+    global toolconfig
+    try:
+        return int(toolconfig.get(section, name))
+    except:
+        return default
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def getToolFloat(section, name, default=0.0):
-	global toolconfig
-	try: return float(toolconfig.get(section, name))
-	except: return default
+    global toolconfig
+    try:
+        return float(toolconfig.get(section, name))
+    except:
+        return default
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 def setToolStr(section, name, value):
-	global toolconfig
-	if not toolconfig.has_section(section):
-		toolconfig.add_section(section)
-	toolconfig.set(section, name, str(value))
+    global toolconfig
+    if not toolconfig.has_section(section):
+        toolconfig.add_section(section)
+    toolconfig.set(section, name, str(value))
 
 
-
-
-#-------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 # Set font in configuration
-#-------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 def setFont(name, font):
-	if font is None: return
-	if isinstance(font,str):
-		config.set(_FONT_SECTION, name, font)
-	elif isinstance(font,tuple):
-		config.set(_FONT_SECTION, name, ",".join(map(str,font)))
-	else:
-		config.set(_FONT_SECTION, name, "%s,%s,%s" % \
-			(font.cget("family"),font.cget("size"),font.cget("weight")))
+    if font is None:
+        return
+    if isinstance(font, str):
+        config.set(_FONT_SECTION, name, font)
+    elif isinstance(font, tuple):
+        config.set(_FONT_SECTION, name, ",".join(map(str, font)))
+    else:
+        config.set(_FONT_SECTION, name, "%s,%s,%s" % (font.cget("family"), font.cget("size"), font.cget("weight")))
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def setBool(section, name, value):
-	global config
-	config.set(section, name, str(int(value)))
+    global config
+    config.set(section, name, str(int(value)))
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def setStr(section, name, value):
-	global config
-	config.set(section, name, str(value))
+    global config
+    config.set(section, name, str(value))
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def setUtf(section, name, value):
-	global config
-	try:
-		s = str(value.encode("utf8"))
-	except:
-		s = str(value)
-	config.set(section, name, s)
+    global config
+    try:
+        s = str(value.encode("utf8"))
+    except:
+        s = str(value)
+    config.set(section, name, s)
 
-setInt   = setStr
+
+setInt = setStr
 setFloat = setStr
 
 
-#-------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 # Add Recent
-#-------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 def addRecent(filename):
-	try:
-		sfn = str(os.path.abspath(filename))
-	except UnicodeEncodeError:
-		sfn = filename.encode("utf8")
+    try:
+        sfn = str(os.path.abspath(filename))
+    except UnicodeEncodeError:
+        sfn = filename.encode("utf8")
 
-	last = _maxRecent-1
-	for i in range(_maxRecent):
-		rfn = getRecent(i)
-		if rfn is None:
-			last = i-1
-			break
-		if rfn == sfn:
-			if i==0: return
-			last = i-1
-			break
+    last = _maxRecent - 1
+    for i in range(_maxRecent):
+        rfn = getRecent(i)
+        if rfn is None:
+            last = i - 1
+            break
+        if rfn == sfn:
+            if i == 0:
+                return
+            last = i - 1
+            break
 
-	# Shift everything by one
-	for i in range(last, -1, -1):
-		config.set("File", "recent.%d"%(i+1), getRecent(i))
-	config.set("File", "recent.0", sfn)
+    # Shift everything by one
+    for i in range(last, -1, -1):
+        config.set("File", "recent.%d" % (i + 1), getRecent(i))
+    config.set("File", "recent.0", sfn)
 
 
-#-------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------
 def getRecent(recent):
-	try:
-		return config.get("File","recent.%d"%(recent))
-	except ConfigParser.NoOptionError:
-		return None
+    try:
+        return config.get("File", "recent.%d" % (recent))
+    except ConfigParser.NoOptionError:
+        return None
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Return all comports when serial.tools.list_ports is not available!
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def comports(include_links=True):
-	locations=[	'/dev/ttyACM',
-			'/dev/ttyUSB',
-			'/dev/ttyS',
-			'com']
+    locations = ["/dev/ttyACM", "/dev/ttyUSB", "/dev/ttyS", "com"]
 
-	comports = []
-	for prefix in locations:
-		for i in range(32):
-			device = "%s%d"%(prefix,i)
-			try:
-				os.stat(device)
-				comports.append((device,None,None))
-			except OSError:
-				pass
+    comports = []
+    for prefix in locations:
+        for i in range(32):
+            device = "%s%d" % (prefix, i)
+            try:
+                os.stat(device)
+                comports.append((device, None, None))
+            except OSError:
+                pass
 
-			# Detects windows XP serial ports
-			try:
-				s = serial.Serial(device)
-				s.close()
-				comports.append((device,None,None))
-			except:
-				pass
-	return comports
+            # Detects windows XP serial ports
+            try:
+                s = serial.Serial(device)
+                s.close()
+                comports.append((device, None, None))
+            except:
+                pass
+    return comports
 
-suffixes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
 
-#------------------------------------------------------------------------------
+suffixes = ["B", "KB", "MB", "GB", "TB", "PB"]
+
+
+# ------------------------------------------------------------------------------
 # Return readable size string
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def humansize(nbytes):
     nbytes = int(nbytes)
     i = 0
-    while nbytes >= 1024 and i < len(suffixes)-1:
-        nbytes /= 1024.
+    while nbytes >= 1024 and i < len(suffixes) - 1:
+        nbytes /= 1024.0
         i += 1
-    f = ('%.2f' % nbytes).rstrip('0').rstrip('.')
-    return '%s %s' % (f, suffixes[i])
+    f = ("%.2f" % nbytes).rstrip("0").rstrip(".")
+    return "%s %s" % (f, suffixes[i])
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # Return readable date string
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def humandate(date):
     return datetime.fromtimestamp(date).strftime("%Y-%m-%d %H:%M")
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # Return hours, minutes, seconds from seconds
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def second2hour(seconds):
     total_seconds = int(seconds)
     hour = total_seconds // 3600
@@ -334,16 +351,17 @@ def second2hour(seconds):
     minute = total_seconds // 60
     total_seconds = total_seconds % 60
     second = total_seconds
-    ret_value = str(second) + 's'
+    ret_value = str(second) + "s"
     if minute > 0:
-        ret_value = str(minute) + 'm' + ret_value
+        ret_value = str(minute) + "m" + ret_value
     if hour > 0:
-        ret_value = str(hour) + 'h' + ret_value
+        ret_value = str(hour) + "h" + ret_value
     return ret_value
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # Return md5 of a file
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def md5(filename):
     hash_md5 = hashlib.md5()
     with open(filename, "rb") as f:
@@ -351,9 +369,10 @@ def md5(filename):
             hash_md5.update(chunk)
     return hash_md5.hexdigest()
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # Return float array
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def xfrange(start, stop, steps):
     if steps <= 1:
         return
@@ -367,9 +386,10 @@ def xfrange(start, stop, steps):
             yield start + i * interval
             i += 1
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # Return float array
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def translate(value, leftMin, leftMax, rightMin, rightMax):
     # Figure out how 'wide' each range is
     leftSpan = leftMax - leftMin
@@ -381,279 +401,272 @@ def translate(value, leftMin, leftMax, rightMin, rightMax):
     # Convert the 0-1 range into a value in the right range.
     return rightMin + (valueScaled * rightSpan)
 
-#------------------------------------------------------------------------------
-# convert from config string
-#------------------------------------------------------------------------------
-def from_config(type, value_string):
-    if type == 'bool':
-        if value_string.lower() == "true":
-            return 1
-        else:
-            return 0
-    elif type == 'numeric':
-        return float(value_string)
-    else:
-        return value_string
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # convert from config string to panel value
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def from_config(type, value_string):
-    if type == 'bool':
+    if type == "bool":
         if value_string.lower() == "true":
             return 1
-        else:
-            return 0
-    elif type == 'numeric':
+        return 0
+    if type == "numeric":
         return float(value_string)
-    else:
-        return value_string
+    return value_string
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 # convert from config string
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def to_config(type, value_string):
-    if type == 'bool':
+    if type == "bool":
         if value_string.lower() == "1":
-            return 'true'
-        else:
-            return 'false'
-    else:
-        return value_string
+            return "true"
+        return "false"
+    return value_string
+
 
 def directory_breadcrumb_paths(
-	directory,
-	*,
-	root_label_markers=("",),
-	root_label="root",
-	max_ancestors=5,
+    directory,
+    *,
+    root_label_markers=("",),
+    root_label="root",
+    max_ancestors=5,
 ):
-	"""Build (full_paths, labels) for a clickable directory breadcrumb bar."""
-	import string
+    """Build (full_paths, labels) for a clickable directory breadcrumb bar."""
+    import string
 
-	directory = os.path.normpath(directory) if directory else ""
-	if not directory:
-		return [], []
+    directory = os.path.normpath(directory) if directory else ""
+    if not directory:
+        return [], []
 
-	win_drivers = ["%s:" % d for d in string.ascii_uppercase]
-	win_drivers_slash = ["%s:\\" % d for d in string.ascii_uppercase]
-	markers = tuple(root_label_markers)
+    win_drivers = ["%s:" % d for d in string.ascii_uppercase]
+    win_drivers_slash = ["%s:\\" % d for d in string.ascii_uppercase]
+    markers = tuple(root_label_markers)
 
-	def segment_label(path):
-		if path in win_drivers or path in win_drivers_slash:
-			return path
-		name = os.path.basename(path) if path else ""
-		if name in markers:
-			return root_label
-		return name
+    def segment_label(path):
+        if path in win_drivers or path in win_drivers_slash:
+            return path
+        name = os.path.basename(path) if path else ""
+        if name in markers:
+            return root_label
+        return name
 
-	full_paths = [directory]
-	path_labels = [segment_label(directory)]
-	last_parent_dir = directory
+    full_paths = [directory]
+    path_labels = [segment_label(directory)]
+    last_parent_dir = directory
 
-	for _ in range(max_ancestors):
-		parent_dir = os.path.dirname(last_parent_dir)
-		if not last_parent_dir or last_parent_dir == parent_dir:
-			break
-		full_paths.insert(0, parent_dir)
-		if parent_dir in win_drivers or parent_dir in win_drivers_slash:
-			path_labels.insert(0, parent_dir)
-		else:
-			path_labels.insert(0, segment_label(parent_dir))
-		last_parent_dir = parent_dir
+    for _ in range(max_ancestors):
+        parent_dir = os.path.dirname(last_parent_dir)
+        if not last_parent_dir or last_parent_dir == parent_dir:
+            break
+        full_paths.insert(0, parent_dir)
+        if parent_dir in win_drivers or parent_dir in win_drivers_slash:
+            path_labels.insert(0, parent_dir)
+        else:
+            path_labels.insert(0, segment_label(parent_dir))
+        last_parent_dir = parent_dir
 
-	if path_labels and path_labels[0] in markers:
-		path_labels[0] = root_label
+    if path_labels and path_labels[0] in markers:
+        path_labels[0] = root_label
 
-	return full_paths, path_labels
+    return full_paths, path_labels
 
 
 RECENT_LOCAL_DIR_SLOTS = 5
 
 
 def has_all_files_access():
-	"""Return whether Android all-files access is granted (always True elsewhere)."""
-	from kivy.utils import platform as kivy_platform
-	import logging
+    """Return whether Android all-files access is granted (always True elsewhere)."""
+    import logging
 
-	if kivy_platform != 'android':
-		return True
-	try:
-		from jnius import autoclass
-		Environment = autoclass('android.os.Environment')
-		return Environment.isExternalStorageManager()
-	except Exception as e:
-		logging.getLogger(__name__).error('Error checking storage manager status: %s', e)
-		return False
+    from kivy.utils import platform as kivy_platform
+
+    if kivy_platform != "android":
+        return True
+    try:
+        from jnius import autoclass
+
+        Environment = autoclass("android.os.Environment")
+        return Environment.isExternalStorageManager()
+    except Exception as e:
+        logging.getLogger(__name__).error("Error checking storage manager status: %s", e)
+        return False
 
 
 def request_android_permissions():
-	"""On Android, open system UI to grant all-files access if missing."""
-	from kivy.utils import platform as kivy_platform
-	import logging
+    """On Android, open system UI to grant all-files access if missing."""
+    import logging
 
-	if kivy_platform != 'android':
-		return
-	logger = logging.getLogger(__name__)
-	try:
-		if has_all_files_access():
-			logger.info('Already have all files access permission')
-			return
-		from android import mActivity
-		from jnius import autoclass
-		Intent = autoclass('android.content.Intent')
-		Settings = autoclass('android.provider.Settings')
-		intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-		mActivity.startActivity(intent)
-	except Exception as e:
-		logger.error('Error requesting permissions: %s', e)
+    from kivy.utils import platform as kivy_platform
+
+    if kivy_platform != "android":
+        return
+    logger = logging.getLogger(__name__)
+    try:
+        if has_all_files_access():
+            logger.info("Already have all files access permission")
+            return
+        from android import mActivity
+        from jnius import autoclass
+
+        Intent = autoclass("android.content.Intent")
+        Settings = autoclass("android.provider.Settings")
+        intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+        mActivity.startActivity(intent)
+    except Exception as e:
+        logger.error("Error requesting permissions: %s", e)
 
 
 def common_local_directories():
-	"""Return standard local folder shortcuts (home, Documents, drives, ...)."""
-	from pathlib import Path
-	import logging
-	import string
+    """Return standard local folder shortcuts (home, Documents, drives, ...)."""
+    import logging
+    import string
+    from pathlib import Path
 
-	from kivy.utils import platform as kivy_platform
+    from kivy.utils import platform as kivy_platform
 
-	from carveracontroller.translation import tr
+    from carveracontroller.translation import tr
 
-	logger = logging.getLogger(__name__)
-	entries = []
-	home_path = Path.home()
-	if home_path.exists():
-		entries.append({
-			'name': os.path.basename(home_path),
-			'path': str(home_path),
-			'icon': 'data/folder-home.png',
-		})
-	for sub, icon in (
-		('Documents', 'data/folder-documents.png'),
-		('Downloads', 'data/folder-downloads.png'),
-		('Desktop', 'data/folder-desktop.png'),
-	):
-		folder = home_path.joinpath(sub)
-		if folder.exists():
-			entries.append({'name': tr._(sub), 'path': str(folder), 'icon': icon})
+    logger = logging.getLogger(__name__)
+    entries = []
+    home_path = Path.home()
+    if home_path.exists():
+        entries.append(
+            {
+                "name": os.path.basename(home_path),
+                "path": str(home_path),
+                "icon": "data/folder-home.png",
+            }
+        )
+    for sub, icon in (
+        ("Documents", "data/folder-documents.png"),
+        ("Downloads", "data/folder-downloads.png"),
+        ("Desktop", "data/folder-desktop.png"),
+    ):
+        folder = home_path.joinpath(sub)
+        if folder.exists():
+            entries.append({"name": tr._(sub), "path": str(folder), "icon": icon})
 
-	if kivy_platform == 'android':
-		logger.info('Android storage permission check')
-		try:
-			from android.storage import primary_external_storage_path
+    if kivy_platform == "android":
+        logger.info("Android storage permission check")
+        try:
+            from android.storage import primary_external_storage_path
 
-			request_android_permissions()
-			android_storage_path = primary_external_storage_path()
-			if android_storage_path and os.path.exists(android_storage_path):
-				entries.append({
-					'name': tr._('Storage'),
-					'path': str(android_storage_path),
-					'icon': 'data/folder-home.png',
-				})
-		except Exception as e:
-			logger.error('Get Android Storage Error: %s', e)
+            request_android_permissions()
+            android_storage_path = primary_external_storage_path()
+            if android_storage_path and os.path.exists(android_storage_path):
+                entries.append(
+                    {
+                        "name": tr._("Storage"),
+                        "path": str(android_storage_path),
+                        "icon": "data/folder-home.png",
+                    }
+                )
+        except Exception as e:
+            logger.error("Get Android Storage Error: %s", e)
 
-	for drive in ['%s:' % d for d in string.ascii_uppercase if os.path.exists('%s:' % d)]:
-		entries.append({'name': drive, 'path': drive, 'icon': ''})
+    for drive in ["%s:" % d for d in string.ascii_uppercase if os.path.exists("%s:" % d)]:
+        entries.append({"name": drive, "path": drive, "icon": ""})
 
-	return entries
+    return entries
 
 
 def load_recent_local_directories(*, seed_if_empty=True):
-	"""Load recent local directories from Kivy Config (optionally seed defaults)."""
-	from kivy.config import Config
-	from kivy.utils import platform as kivy_platform
+    """Load recent local directories from Kivy Config (optionally seed defaults)."""
+    from kivy.config import Config
+    from kivy.utils import platform as kivy_platform
 
-	dirs = []
-	if Config.has_section('carvera'):
-		for index in range(RECENT_LOCAL_DIR_SLOTS):
-			key = 'local_folder_' + str(index + 1)
-			if Config.has_option('carvera', key):
-				folder = Config.get('carvera', key)
-				if folder:
-					dirs.append(folder)
+    dirs = []
+    if Config.has_section("carvera"):
+        for index in range(RECENT_LOCAL_DIR_SLOTS):
+            key = "local_folder_" + str(index + 1)
+            if Config.has_option("carvera", key):
+                folder = Config.get("carvera", key)
+                if folder:
+                    dirs.append(folder)
 
-	if seed_if_empty and not dirs:
-		if kivy_platform == 'android':
-			default = str(os.path.abspath('carveracontroller/gcodes'))
-		else:
-			default = str(os.path.abspath('./gcodes'))
-		dirs = update_recent_local_directory_list(dirs, default)
-		persist_recent_local_directories(dirs)
+    if seed_if_empty and not dirs:
+        if kivy_platform == "android":
+            default = str(os.path.abspath("carveracontroller/gcodes"))
+        else:
+            default = str(os.path.abspath("./gcodes"))
+        dirs = update_recent_local_directory_list(dirs, default)
+        persist_recent_local_directories(dirs)
 
-	return dirs
+    return dirs
 
 
 def update_recent_local_directory_list(dirs, new_dir):
-	"""Return dirs with new_dir moved to the front (max RECENT_LOCAL_DIR_SLOTS)."""
-	dirs = list(dirs)
-	if new_dir in dirs:
-		if dirs[0] == new_dir:
-			return dirs
-		dirs.remove(new_dir)
-	dirs.insert(0, new_dir)
-	del dirs[RECENT_LOCAL_DIR_SLOTS:]
-	return dirs
+    """Return dirs with new_dir moved to the front (max RECENT_LOCAL_DIR_SLOTS)."""
+    dirs = list(dirs)
+    if new_dir in dirs:
+        if dirs[0] == new_dir:
+            return dirs
+        dirs.remove(new_dir)
+    dirs.insert(0, new_dir)
+    del dirs[RECENT_LOCAL_DIR_SLOTS:]
+    return dirs
 
 
 def persist_recent_local_directories(dirs):
-	"""Write recent local directories to Kivy Config."""
-	from kivy.config import Config
+    """Write recent local directories to Kivy Config."""
+    from kivy.config import Config
 
-	for index in range(RECENT_LOCAL_DIR_SLOTS):
-		key = 'local_folder_' + str(index + 1)
-		if index < len(dirs):
-			Config.set('carvera', key, dirs[index])
-		else:
-			Config.set('carvera', key, '')
-	Config.write()
+    for index in range(RECENT_LOCAL_DIR_SLOTS):
+        key = "local_folder_" + str(index + 1)
+        if index < len(dirs):
+            Config.set("carvera", key, dirs[index])
+        else:
+            Config.set("carvera", key, "")
+    Config.write()
 
 
 def record_recent_local_directory(new_dir):
-	"""Promote a directory to the top of the shared recent-local list."""
-	dirs = load_recent_local_directories(seed_if_empty=True)
-	dirs = update_recent_local_directory_list(dirs, new_dir)
-	persist_recent_local_directories(dirs)
-	return dirs
+    """Promote a directory to the top of the shared recent-local list."""
+    dirs = load_recent_local_directories(seed_if_empty=True)
+    dirs = update_recent_local_directory_list(dirs, new_dir)
+    persist_recent_local_directories(dirs)
+    return dirs
 
 
 def fill_local_dir_dropdown(dropdown, common_dirs, recent_dirs):
-	"""Populate a DropDown with common and recent local directories."""
-	from carveracontroller.translation import tr
-	from carveracontroller.ui.DirectoryView import DirectoryView
-	from carveracontroller.ui.DropDownSplitter import DropDownSplitter
+    """Populate a DropDown with common and recent local directories."""
+    from carveracontroller.translation import tr
+    from carveracontroller.ui.DirectoryView import DirectoryView
+    from carveracontroller.ui.DropDownSplitter import DropDownSplitter
 
-	dropdown.clear_widgets()
+    dropdown.clear_widgets()
 
-	for common_dir in common_dirs:
-		btn = DirectoryView(
-			full_path=common_dir['path'],
-			data_text=common_dir['name'],
-			data_icon=common_dir['icon'],
-			size_hint_y=None,
-			height='30dp',
-		)
-		path = common_dir['path']
-		btn.bind(on_release=lambda _btn, p=path: dropdown.select(p))
-		dropdown.add_widget(btn)
+    for common_dir in common_dirs:
+        btn = DirectoryView(
+            full_path=common_dir["path"],
+            data_text=common_dir["name"],
+            data_icon=common_dir["icon"],
+            size_hint_y=None,
+            height="30dp",
+        )
+        path = common_dir["path"]
+        btn.bind(on_release=lambda _btn, p=path: dropdown.select(p))
+        dropdown.add_widget(btn)
 
-	dropdown.add_widget(DropDownSplitter(text='       ' + tr._('Recent Places')))
+    dropdown.add_widget(DropDownSplitter(text="       " + tr._("Recent Places")))
 
-	for recent_dir in recent_dirs:
-		btn = DirectoryView(
-			full_path=recent_dir,
-			data_text=os.path.basename(recent_dir),
-			data_icon='',
-			size_hint_y=None,
-			height='30dp',
-		)
-		btn.bind(on_release=lambda _btn, p=recent_dir: dropdown.select(p))
-		dropdown.add_widget(btn)
+    for recent_dir in recent_dirs:
+        btn = DirectoryView(
+            full_path=recent_dir,
+            data_text=os.path.basename(recent_dir),
+            data_icon="",
+            size_hint_y=None,
+            height="30dp",
+        )
+        btn.bind(on_release=lambda _btn, p=recent_dir: dropdown.select(p))
+        dropdown.add_widget(btn)
 
 
 def digitize_v(version):
     # Clean version string by removing non-numeric suffixes like 'c', 'rc', etc.
-    v_list = version.split('.')
+    v_list = version.split(".")
     cleaned_parts = []
     for part in v_list:
         # Extract only the numeric portion at the beginning
@@ -664,7 +677,7 @@ def digitize_v(version):
             else:
                 break
         cleaned_parts.append(int(numeric_part if numeric_part else "0"))
-    
+
     # Ensure we have at least 3 parts (major.minor.patch)
     while len(cleaned_parts) < 3:
         cleaned_parts.append(0)

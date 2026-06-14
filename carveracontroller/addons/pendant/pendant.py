@@ -1,17 +1,17 @@
+from __future__ import annotations
+
 import json
-from typing import Callable, Optional
-
 import logging
-logger = logging.getLogger(__name__)
+from collections.abc import Callable
 
-from carveracontroller.CNC import CNC
-from carveracontroller.Controller import Controller
-from carveracontroller.translation import tr
+logger = logging.getLogger(__name__)
 
 from kivy.app import App
 from kivy.clock import Clock
+from kivy.config import Config
 from kivy.core.window import Window
 from kivy.metrics import dp
+from kivy.uix.anchorlayout import AnchorLayout
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
@@ -19,17 +19,23 @@ from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.settings import SettingItem
 from kivy.uix.spinner import Spinner
-from kivy.uix.anchorlayout import AnchorLayout
-from kivy.config import Config
+
+from carveracontroller.CNC import CNC
+from carveracontroller.Controller import Controller
+from carveracontroller.translation import tr
 
 from . import gamepad as gamepad_module
 
 
 class OverrideController:
-    def __init__(self, get_value: Callable[[], float],
-                 set_value: Callable[[float], None],
-                 min_limit: int = 0, max_limit: int = 200,
-                 step: int = 10) -> None:
+    def __init__(
+        self,
+        get_value: Callable[[], float],
+        set_value: Callable[[float], None],
+        min_limit: int = 0,
+        max_limit: int = 200,
+        step: int = 10,
+    ) -> None:
         self._get_value = get_value
         self._set_value = set_value
         self._min_limit = min_limit
@@ -44,32 +50,38 @@ class OverrideController:
         new_value = max(self._get_value() - self._step, self._min_limit)
         self._set_value(new_value)
 
+
 class Pendant:
     """
     Base class for pendant devices.
-    
+
     The pendant system supports UI updates through callback functions:
     - update_ui_on_button_press: Called when any button is pressed with the button action
     - update_ui_on_jog_stop: Called when jogging stops
-    
+
     Button actions include:
     - "reset", "stop", "start_pause": Control buttons
-    - "mode_continuous", "mode_step": Jog mode buttons  
+    - "mode_continuous", "mode_step": Jog mode buttons
     - "feed_plus", "feed_minus", "spindle_plus", "spindle_minus": Override buttons
     - "m_home", "safe_z", "w_home": Movement buttons
     - "spindle_on_off", "probe_z": Function buttons
     """
-    def __init__(self, controller: Controller, cnc: CNC,
-                 feed_override: OverrideController,
-                 spindle_override: OverrideController,
-                 is_jogging_enabled: Callable[[], None],
-                 handle_run_pause_resume: Callable[[], None],
-                 handle_probe_z: Callable[[], None],
-                 open_probing_popup: Callable[[], None],
-                 report_connection: Callable[[], None],
-                 report_disconnection: Callable[[], None],
-                 update_ui_on_button_press: Callable[[str], None] = None,
-                 update_ui_on_jog_stop: Callable[[], None] = None) -> None:
+
+    def __init__(
+        self,
+        controller: Controller,
+        cnc: CNC,
+        feed_override: OverrideController,
+        spindle_override: OverrideController,
+        is_jogging_enabled: Callable[[], None],
+        handle_run_pause_resume: Callable[[], None],
+        handle_probe_z: Callable[[], None],
+        open_probing_popup: Callable[[], None],
+        report_connection: Callable[[], None],
+        report_disconnection: Callable[[], None],
+        update_ui_on_button_press: Callable[[str], None] = None,
+        update_ui_on_jog_stop: Callable[[], None] = None,
+    ) -> None:
         self._controller = controller
         self._cnc = cnc
         self._feed_override = feed_override
@@ -119,18 +131,22 @@ class NonePendant(Pendant):
 
 try:
     from . import whb04
+
     WHB04_SUPPORTED = True
 except Exception as e:
     logger.warning(f"WHB04 pendant not supported: {e}")
     WHB04_SUPPORTED = False
 
 if WHB04_SUPPORTED:
+
     class WHB04(Pendant):
         def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
 
             self._is_spindle_running = False
-            self._last_jog_direction = 0  # Track previous jog direction (0 = no direction, positive = CW, negative = CCW)
+            self._last_jog_direction = (
+                0  # Track previous jog direction (0 = no direction, positive = CW, negative = CCW)
+            )
 
             self._daemon = whb04.Daemon(self.executor)
 
@@ -159,14 +175,14 @@ if WHB04_SUPPORTED:
             # daemon.set_display_feedrate(self._cnc.vars["curfeed"])
             # rbeard-ewa fix unhandled exception for bad feedrate
             try:
-              raw_feed = float(self._cnc.vars.get("curfeed", 0))
-              safe_feed = max(0.0, min(raw_feed, 9999.0))
-              daemon.set_display_feedrate(safe_feed)
+                raw_feed = float(self._cnc.vars.get("curfeed", 0))
+                safe_feed = max(0.0, min(raw_feed, 9999.0))
+                daemon.set_display_feedrate(safe_feed)
             except ValueError:
-              pass
+                pass
             # end of feedrate fix
             daemon.set_display_spindle_speed(self._cnc.vars["curspindle"])
-            
+
             # Update the step indicator to reflect current jog mode
             if self._controller.jog_mode == self._controller.JOG_MODE_CONTINUOUS:
                 self._jog_mode = self._controller.JOG_MODE_CONTINUOUS
@@ -183,26 +199,28 @@ if WHB04_SUPPORTED:
 
             if axis not in "XYZA":
                 return
-            
+
             if self._controller.jog_mode != self._jog_mode:
                 self._controller.jog_mode = self._jog_mode
-            
+
             # Detect direction change for continuous jog
             if self._controller.jog_mode == self._controller.JOG_MODE_CONTINUOUS:
                 # Determine current direction (positive = CW, negative = CCW)
                 current_direction = 1 if steps > 0 else (-1 if steps < 0 else 0)
-                
+
                 # Check if direction has changed and continuous jog is active
-                if (self._last_jog_direction != 0 and 
-                    current_direction != 0 and 
-                    self._last_jog_direction != current_direction and
-                    self._controller.continuous_jog_active):
+                if (
+                    self._last_jog_direction != 0
+                    and current_direction != 0
+                    and self._last_jog_direction != current_direction
+                    and self._controller.continuous_jog_active
+                ):
                     self._controller.stopContinuousJog()
-                
+
                 # Update direction tracking
                 if current_direction != 0:
                     self._last_jog_direction = current_direction
-                
+
                 distance = steps
                 feed = self._controller.jog_speed * daemon.step_size_value
             else:
@@ -217,7 +235,7 @@ if WHB04_SUPPORTED:
                 if not self._controller.continuous_jog_active:
                     if feed > 0 and self._controller.jog_speed < 10000:
                         if axis == "Z":
-                            feed = min(800*daemon.step_size_value, feed)
+                            feed = min(800 * daemon.step_size_value, feed)
                         self._controller.startContinuousJog(f"{axis}{distance}", feed)
                     elif feed == 0 or self._controller.jog_speed == 10000:
                         if axis == "Z":
@@ -226,7 +244,9 @@ if WHB04_SUPPORTED:
                             self._controller.startContinuousJog(f"{axis}{distance}", None, f"S{daemon.step_size_value}")
             else:
                 if daemon.step_size == whb04.StepSize.LEAD:
-                    self._controller.jog(f"{axis}{round(steps * 0.1,3)}", round(abs(steps * 0.1 / 0.05) * 60 * 0.97, 3))
+                    self._controller.jog(
+                        f"{axis}{round(steps * 0.1, 3)}", round(abs(steps * 0.1 / 0.05) * 60 * 0.97, 3)
+                    )
                 else:
                     self._controller.jog(f"{axis}{round(distance, 3)}")
 
@@ -316,7 +336,7 @@ if WHB04_SUPPORTED:
                     whb04.Button.W_HOME,
                     whb04.Button.S_ON_OFF,
                     whb04.Button.PROBE_Z,
-                    whb04.Button.MACRO_10
+                    whb04.Button.MACRO_10,
                 ]
                 if button not in MACROS:
                     return
@@ -339,16 +359,16 @@ if WHB04_SUPPORTED:
             print(f"\nERROR: {message}\n", flush=True)
 
             scroll = ScrollView(size_hint=(1, 1))
-            lbl = Label(text=message, halign='left', valign='top', size_hint_y=None)
+            lbl = Label(text=message, halign="left", valign="top", size_hint_y=None)
             lbl.bind(
-                width=lambda w, v: setattr(w, 'text_size', (v, None)),
-                texture_size=lambda w, v: setattr(w, 'height', v[1]),
+                width=lambda w, v: setattr(w, "text_size", (v, None)),
+                texture_size=lambda w, v: setattr(w, "height", v[1]),
             )
             scroll.add_widget(lbl)
 
             btn = Button(text="Exit", size_hint_y=None, height=dp(44))
 
-            content = BoxLayout(orientation='vertical', spacing=dp(10), padding=dp(10))
+            content = BoxLayout(orientation="vertical", spacing=dp(10), padding=dp(10))
             content.add_widget(scroll)
             content.add_widget(btn)
 
@@ -363,13 +383,13 @@ if WHB04_SUPPORTED:
 
 
 class GamepadPendant(Pendant):
-    DEFAULT_MAX_JOG_SPEED = 3000        # mm/min
-    DEFAULT_Z_MAX_SPEED = 800           # mm/min cap for Z in continuous mode
-    STEP_SIZES = [0.01, 0.1, 1.0, 10.0] # step sizes in mm
-    STEP_SIZE_SPEED_FRACTION = {        # speed fractions for continuous jog
+    DEFAULT_MAX_JOG_SPEED = 3000  # mm/min
+    DEFAULT_Z_MAX_SPEED = 800  # mm/min cap for Z in continuous mode
+    STEP_SIZES = [0.01, 0.1, 1.0, 10.0]  # step sizes in mm
+    STEP_SIZE_SPEED_FRACTION = {  # speed fractions for continuous jog
         0.01: 0.02,
-        0.1:  0.10,
-        1.0:  0.30,
+        0.1: 0.10,
+        1.0: 0.30,
         10.0: 1.0,
     }
 
@@ -377,7 +397,7 @@ class GamepadPendant(Pendant):
         super().__init__(*args, **kwargs)
 
         self._last_jog_direction = {}  # action -> direction sign
-        self._active_continuous_jog_action: Optional[str] = None
+        self._active_continuous_jog_action: str | None = None
 
         deadzone = 0.15
         try:
@@ -463,14 +483,16 @@ class GamepadPendant(Pendant):
         distance = self.current_step_size * direction
         self._controller.jog(f"{axis}{round(distance, 4)}")
 
-    def _handle_continuous_jog(self, action: str, axis: str,
-                               value: float, direction: int) -> None:
+    def _handle_continuous_jog(self, action: str, axis: str, value: float, direction: int) -> None:
         prev_direction = self._last_jog_direction.get(action, 0)
         self._last_jog_direction[action] = direction
 
-        if prev_direction != 0 and prev_direction != direction \
-                and self._controller.continuous_jog_active \
-                and action == self._active_continuous_jog_action:
+        if (
+            prev_direction != 0
+            and prev_direction != direction
+            and self._controller.continuous_jog_active
+            and action == self._active_continuous_jog_action
+        ):
             self._controller.stopContinuousJog()
 
         if self._controller.continuous_jog_active:
@@ -608,10 +630,12 @@ class GamepadPendant(Pendant):
     # Helpers
 
     @staticmethod
-    def _action_to_axis(action: str) -> Optional[str]:
+    def _action_to_axis(action: str) -> str | None:
         mapping = {
-            "jog_x": "X", "jog_y": "Y",
-            "jog_z": "Z", "jog_a": "A",
+            "jog_x": "X",
+            "jog_y": "Y",
+            "jog_z": "Z",
+            "jog_a": "A",
         }
         return mapping.get(action)
 
@@ -626,6 +650,7 @@ class GamepadPendant(Pendant):
             return -value
         return value
 
+
 SUPPORTED_PENDANTS = {
     "None": NonePendant,
     "Gamepad": GamepadPendant,
@@ -634,6 +659,7 @@ SUPPORTED_PENDANTS = {
 if WHB04_SUPPORTED:
     SUPPORTED_PENDANTS["WHB04"] = WHB04
 
+
 class SettingPendantSelector(SettingItem):
     # Populated by load_pendant_config from pendant_config.json.
     # Maps setting key -> list of pendant type names that should show it.
@@ -641,9 +667,9 @@ class SettingPendantSelector(SettingItem):
     pendant_types_map = {}
 
     def __init__(self, **kwargs):
-        wrapper = AnchorLayout(anchor_y='center', anchor_x='left')
+        wrapper = AnchorLayout(anchor_y="center", anchor_x="left")
 
-        self.spinner = Spinner(text="None", values=list(SUPPORTED_PENDANTS.keys()), size_hint=(1, None), height='36dp')
+        self.spinner = Spinner(text="None", values=list(SUPPORTED_PENDANTS.keys()), size_hint=(1, None), height="36dp")
         super().__init__(**kwargs)
         self.spinner.bind(text=self.on_spinner_select)
         wrapper.add_widget(self.spinner)
@@ -661,7 +687,7 @@ class SettingPendantSelector(SettingItem):
         Clock.schedule_once(lambda _: self._update_sibling_visibility(value), 0)
 
     def _update_sibling_visibility(self, pendant_type: str) -> None:
-        if not hasattr(self, 'panel') or self.panel is None:
+        if not hasattr(self, "panel") or self.panel is None:
             return
 
         if self._widget_order is None:
@@ -669,7 +695,7 @@ class SettingPendantSelector(SettingItem):
 
         self.panel.clear_widgets()
         for widget in self._widget_order:
-            key = getattr(widget, 'key', None)
+            key = getattr(widget, "key", None)
             if key is not None and widget is not self:
                 allowed = self.pendant_types_map.get(key)
                 if allowed is not None and pendant_type not in allowed:
@@ -682,8 +708,7 @@ class GamepadBindingsPopup(Popup):
 
     AXIS_LISTEN_THRESHOLD = 0.6
 
-    def __init__(self, current_bindings: dict, on_save: Callable[[dict], None],
-                 manager=None, **kwargs) -> None:
+    def __init__(self, current_bindings: dict, on_save: Callable[[dict], None], manager=None, **kwargs) -> None:
         kwargs.setdefault("title", "Gamepad Bindings")
         kwargs.setdefault("size_hint", (0.9, 0.9))
         kwargs.setdefault("auto_dismiss", False)
@@ -700,18 +725,24 @@ class GamepadBindingsPopup(Popup):
         self._build_ui()
 
     def _build_ui(self) -> None:
-        root = BoxLayout(orientation='vertical', spacing=dp(8), padding=dp(10))
+        root = BoxLayout(orientation="vertical", spacing=dp(8), padding=dp(10))
 
         scroll = ScrollView(size_hint=(1, 1))
         self._list_layout = BoxLayout(
-            orientation='vertical', size_hint_y=None, spacing=dp(4), padding=[0, 0, dp(12), 0])
-        self._list_layout.bind(minimum_height=self._list_layout.setter('height'))
+            orientation="vertical", size_hint_y=None, spacing=dp(4), padding=[0, 0, dp(12), 0]
+        )
+        self._list_layout.bind(minimum_height=self._list_layout.setter("height"))
 
         for group_name, actions in gamepad_module.BINDING_GROUPS:
             header = Label(
-                text=f"[b]{tr._(group_name)}[/b]", markup=True,
-                size_hint_y=None, height=dp(32), halign='left', valign='middle')
-            header.bind(size=lambda w, s: setattr(w, 'text_size', s))
+                text=f"[b]{tr._(group_name)}[/b]",
+                markup=True,
+                size_hint_y=None,
+                height=dp(32),
+                halign="left",
+                valign="middle",
+            )
+            header.bind(size=lambda w, s: setattr(w, "text_size", s))
             self._list_layout.add_widget(header)
 
             for action in actions:
@@ -751,14 +782,13 @@ class GamepadBindingsPopup(Popup):
         label_text = tr._(gamepad_module.ACTION_LABELS.get(action, action))
         current = self._describe_binding(action)
 
-        row = BoxLayout(orientation='horizontal', size_hint_y=None, height=dp(36),
-                        spacing=dp(6))
+        row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(36), spacing=dp(6))
 
-        name_lbl = Label(text=label_text, size_hint_x=0.35, halign='left', valign='middle')
-        name_lbl.bind(size=lambda w, s: setattr(w, 'text_size', s))
+        name_lbl = Label(text=label_text, size_hint_x=0.35, halign="left", valign="middle")
+        name_lbl.bind(size=lambda w, s: setattr(w, "text_size", s))
 
-        binding_lbl = Label(text=current, size_hint_x=0.35, halign='center', valign='middle')
-        binding_lbl.bind(size=lambda w, s: setattr(w, 'text_size', s))
+        binding_lbl = Label(text=current, size_hint_x=0.35, halign="center", valign="middle")
+        binding_lbl.bind(size=lambda w, s: setattr(w, "text_size", s))
 
         bind_btn = Button(text=tr._("Bind..."), size_hint_x=0.15)
         bind_btn.bind(on_release=lambda btn, a=action, bl=binding_lbl: self._start_listening(a, btn, bl))
@@ -778,18 +808,13 @@ class GamepadBindingsPopup(Popup):
             mapping = self._bindings.get(category, {})
             for input_id, bound_action in mapping.items():
                 if bound_action == action:
-                    itype = "axis" if category == "axes" else \
-                            "trigger" if category == "triggers" else "button"
+                    itype = "axis" if category == "axes" else "trigger" if category == "triggers" else "button"
                     return gamepad_module.format_input_label(itype, input_id)
 
         hat = self._bindings.get("hat", {})
-        hat_dirs = [
-            d for d in ("up", "down", "left", "right")
-            if hat.get(d) == action
-        ]
+        hat_dirs = [d for d in ("up", "down", "left", "right") if hat.get(d) == action]
         if hat_dirs:
-            return ", ".join(
-                gamepad_module.format_input_label("hat", d) for d in hat_dirs)
+            return ", ".join(gamepad_module.format_input_label("hat", d) for d in hat_dirs)
 
         return tr._("Unbound")
 
@@ -852,7 +877,7 @@ class GamepadBindingsPopup(Popup):
             self._remove_action_binding(action)
             self._bindings.setdefault("buttons", {})[input_id] = action
         elif category == "hat":
-            pair = (gamepad_module.hat_axis_pair(input_id) if action.startswith("jog_") else None)
+            pair = gamepad_module.hat_axis_pair(input_id) if action.startswith("jog_") else None
             if pair:
                 # Jog on D-Pad: bind both directions on the same hat axis.
                 self._remove_action_binding(action)
@@ -961,17 +986,14 @@ class SettingGamepadBindings(SettingItem):
         self.size_hint_y = None
         self.height = dp(60)
 
-        wrapper = AnchorLayout(anchor_y='center', anchor_x='left')
+        wrapper = AnchorLayout(anchor_y="center", anchor_x="left")
 
         inner = BoxLayout(
-            orientation='horizontal', spacing=dp(10),
-            size_hint=(1, None), height=dp(40), padding=[dp(10), 0])
+            orientation="horizontal", spacing=dp(10), size_hint=(1, None), height=dp(40), padding=[dp(10), 0]
+        )
 
-        self.summary_label = Label(
-            text=self._get_summary(), halign='left', valign='middle',
-            size_hint=(1, 1))
-        self.summary_label.bind(
-            size=lambda w, s: setattr(w, 'text_size', s))
+        self.summary_label = Label(text=self._get_summary(), halign="left", valign="middle", size_hint=(1, 1))
+        self.summary_label.bind(size=lambda w, s: setattr(w, "text_size", s))
 
         btn = Button(text=tr._("Configure..."), size_hint=(None, 1), width=dp(130))
         btn.bind(on_release=self._open_popup)
@@ -982,7 +1004,7 @@ class SettingGamepadBindings(SettingItem):
         self.add_widget(wrapper)
 
     def _get_summary(self) -> str:
-        raw = self.value if hasattr(self, 'value') else ""
+        raw = self.value if hasattr(self, "value") else ""
         if not raw:
             return tr._("Default (Xbox 360)")
         try:
@@ -1002,15 +1024,12 @@ class SettingGamepadBindings(SettingItem):
         manager = None
         try:
             pendant = App.get_running_app().root.pendant
-            if hasattr(pendant, '_manager'):
+            if hasattr(pendant, "_manager"):
                 manager = pendant._manager
         except Exception:
             pass
 
-        popup = GamepadBindingsPopup(
-            current_bindings=current,
-            on_save=self._save_bindings,
-            manager=manager)
+        popup = GamepadBindingsPopup(current_bindings=current, on_save=self._save_bindings, manager=manager)
         popup.open()
 
     def _save_bindings(self, bindings: dict) -> None:
@@ -1023,5 +1042,5 @@ class SettingGamepadBindings(SettingItem):
         self.value = new_value
 
     def on_value(self, instance, value):
-        if hasattr(self, 'summary_label'):
+        if hasattr(self, "summary_label"):
             self.summary_label.text = self._get_summary()

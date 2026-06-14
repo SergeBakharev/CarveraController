@@ -17,10 +17,11 @@ import logging
 import os
 import subprocess
 import sys
+from collections.abc import Iterable
 from ctypes import CDLL, c_char_p, c_int, c_uint, c_void_p
 from ctypes.util import find_library
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +29,11 @@ SDL_INIT_VIDEO = 0x00000020
 SDL_INIT_JOYSTICK = 0x00000200
 _KIVY_SDL_BITS = SDL_INIT_VIDEO | SDL_INIT_JOYSTICK
 
-_sdl2_dll: Optional[Any] = None  # CDLL, or False after permanent load failure
-_joystick_slots_opened: int = 0 # Count of contiguous indices [0..n) we have successfully SDL_JoystickOpen'd.
+_sdl2_dll: Any | None = None  # CDLL, or False after permanent load failure
+_joystick_slots_opened: int = 0  # Count of contiguous indices [0..n) we have successfully SDL_JoystickOpen'd.
 
 
-def _kivy_window_module_path() -> Optional[str]:
+def _kivy_window_module_path() -> str | None:
     try:
         from kivy.core.window import _window_sdl2 as mod
     except ImportError:
@@ -128,7 +129,7 @@ def _is_kivy_initialized_sdl(dll: Any) -> tuple[bool, int]:
     return (mask & _KIVY_SDL_BITS) == _KIVY_SDL_BITS, mask
 
 
-def _load_sdl2() -> Optional[Any]:
+def _load_sdl2() -> Any | None:
     global _sdl2_dll
     if _sdl2_dll is False:
         return None

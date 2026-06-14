@@ -18,7 +18,6 @@ from .stock_geometry import (
     stock_rect_from_origin_corner,
 )
 
-
 MILLING_CLIMB = "climb"
 MILLING_CONVENTIONAL = "conventional"
 MILLING_BOTH = "both"
@@ -88,9 +87,7 @@ def compute_facing_envelope(p: FacingParams) -> FacingEnvelope:
     if pattern not in (PATTERN_RASTER_X, PATTERN_RASTER_Y, PATTERN_SPIRAL):
         raise ValueError(tr._("Unknown facing pattern."))
     if pattern == PATTERN_SPIRAL and p.milling_direction == MILLING_BOTH:
-        raise ValueError(
-            tr._("Spiral facing requires Climb or Conventional milling, not Both.")
-        )
+        raise ValueError(tr._("Spiral facing requires Climb or Conventional milling, not Both."))
 
     nx0, ny0, nx1, ny1 = stock_rect_from_origin_corner(w, sl, p.stock_origin_corner)
     x0 = nx0 - mx
@@ -101,11 +98,7 @@ def compute_facing_envelope(p: FacingParams) -> FacingEnvelope:
     xa, xb = _inset_span(x0, x1, rad)
     ya, yb = _inset_span(y0, y1, rad)
     if xa >= xb - 1e-6 or ya >= yb - 1e-6:
-        raise ValueError(
-            tr._(
-                "Facing area too small for tool diameter (after margins and radius)."
-            )
-        )
+        raise ValueError(tr._("Facing area too small for tool diameter (after margins and radius)."))
 
     total_cut = p.rough_total_depth_mm + p.margin_z_mm
     if total_cut <= 0:
@@ -181,10 +174,10 @@ def _cols_along_y(corner: str, xa: float, xb: float, step: float) -> list[float]
 def _climb_is_forward(corner: str, raster_along_x: bool) -> bool:
     """Whether forward (xa->xb / ya->yb = increasing coordinate) is the climb direction
 
-      Raster along X, stepover +Y (bl/br): climb = -X  -> forward=False
-      Raster along X, stepover -Y (tl/tr): climb = +X  -> forward=True
-      Raster along Y, stepover +X (bl/tl): climb = +Y  -> forward=True
-      Raster along Y, stepover -X (br/tr): climb = -Y  -> forward=False
+    Raster along X, stepover +Y (bl/br): climb = -X  -> forward=False
+    Raster along X, stepover -Y (tl/tr): climb = +X  -> forward=True
+    Raster along Y, stepover +X (bl/tl): climb = +Y  -> forward=True
+    Raster along Y, stepover -X (br/tr): climb = -Y  -> forward=False
     """
     if raster_along_x:
         return corner in (CORNER_TL, CORNER_TR)
@@ -262,8 +255,7 @@ def iter_spiral_rect_passes(
                 ((R, T), (L, T)),
                 ((L, T), (L, B)),
             )
-        for seg in segments:
-            yield seg
+        yield from segments
 
         k += 1
         L2 = xa + k * step
@@ -316,10 +308,14 @@ def generate_facing_gcode(p: FacingParams) -> str:
     if p.spindle_spinup_dwell_s > 0:
         lines.append(f"G4 P{p.spindle_spinup_dwell_s:d}")
 
-    retract_between_passes = env.pattern in (
-        PATTERN_RASTER_X,
-        PATTERN_RASTER_Y,
-    ) and env.milling_direction != MILLING_BOTH
+    retract_between_passes = (
+        env.pattern
+        in (
+            PATTERN_RASTER_X,
+            PATTERN_RASTER_Y,
+        )
+        and env.milling_direction != MILLING_BOTH
+    )
 
     def emit_layer(z_cut: float, step: float, feed: float, plunge_f: float) -> None:
         first = True

@@ -1,8 +1,9 @@
 from kivy.uix.boxlayout import BoxLayout
 
 from carveracontroller.addons.probing.operations.ConfigUtils import ConfigUtils
-from carveracontroller.addons.probing.operations.InsideCorner.InsideCornerParameterDefinitions import \
-    InsideCornerParameterDefinitions
+from carveracontroller.addons.probing.operations.InsideCorner.InsideCornerParameterDefinitions import (
+    InsideCornerParameterDefinitions,
+)
 
 
 class InsideCornerSettings(BoxLayout):
@@ -12,7 +13,7 @@ class InsideCornerSettings(BoxLayout):
     def __init__(self, **kwargs):
         self.config = ConfigUtils.load_config(self.config_filename)
         self.config = self.order_config(self.config)
-        super(InsideCornerSettings, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
     def setting_changed(self, key: str, value: float):
         param = getattr(InsideCornerParameterDefinitions, key, None)
@@ -37,7 +38,6 @@ class InsideCornerSettings(BoxLayout):
             return str(self.config[param.code])
         self.setting_changed(key, param.default)
         return param.default
-
 
     def get_config(self):
         return self.config

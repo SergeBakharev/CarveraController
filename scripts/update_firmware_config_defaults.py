@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 ROOT_PATH = Path(__file__).resolve().parents[1]
 DEFAULT_C1_JSON = ROOT_PATH / "carveracontroller" / "config_c1.json"
 DEFAULT_CA1_JSON = ROOT_PATH / "carveracontroller" / "config_ca1.json"
@@ -159,10 +158,7 @@ def print_results(results: dict[str, UpdateResult]) -> None:
         action = "would update" if not result.written and result.changed else "updated"
         if not result.changed:
             action = "up to date"
-        print(
-            f"{model}: {action} {result.changed} defaults in {result.path} "
-            f"({result.unchanged} already matched)"
-        )
+        print(f"{model}: {action} {result.changed} defaults in {result.path} ({result.unchanged} already matched)")
         if result.missing:
             print(f"{model}: no active firmware default for: {', '.join(result.missing)}")
 

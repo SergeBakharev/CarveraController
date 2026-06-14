@@ -31,9 +31,7 @@ def export_json(session: ProbeScanSession) -> str:
 def export_csv(session: ProbeScanSession) -> str:
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(
-        ["id", "kind", "label", "x", "y", "z", "r", "diameter_x", "diameter_y", "extra"]
-    )
+    w.writerow(["id", "kind", "label", "x", "y", "z", "r", "diameter_x", "diameter_y", "extra"])
     for f in session.features:
         p = f.payload
         x = p.get("x", p.get("cx", ""))
@@ -58,9 +56,7 @@ def export_csv(session: ProbeScanSession) -> str:
             "diameter_y",
         }
         extra = {k: v for k, v in p.items() if k not in extra_keys}
-        w.writerow(
-            [f.id, f.kind.value, f.label, x, y, z, r, d_x, d_y, str(extra)]
-        )
+        w.writerow([f.id, f.kind.value, f.label, x, y, z, r, d_x, d_y, str(extra)])
     return buf.getvalue()
 
 

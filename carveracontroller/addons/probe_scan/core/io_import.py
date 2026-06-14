@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ezdxf.entities import DXFEntity
 
-from .io_export import DXF_LAYERS
 from .features import payload_referenced_feature_ids
+from .io_export import DXF_LAYERS
 from .session import (
     FeatureKind,
     ProbeScanFeature,
@@ -58,9 +58,7 @@ def load_session_from_path(path: str) -> tuple[ProbeScanSession, ImportReport]:
         return import_csv(text)
     if ext == ".dxf":
         return import_dxf(text)
-    raise ValueError(
-        f"Unsupported file extension {ext!r} (use .json, .csv, or .dxf)"
-    )
+    raise ValueError(f"Unsupported file extension {ext!r} (use .json, .csv, or .dxf)")
 
 
 def import_csv(text: str) -> tuple[ProbeScanSession, ImportReport]:
@@ -72,7 +70,7 @@ def import_csv(text: str) -> tuple[ProbeScanSession, ImportReport]:
     if reader.fieldnames is None:
         raise ValueError("CSV has no header row")
     headers = {h.strip().lower() for h in reader.fieldnames if h}
-    if not _CSV_REQUIRED <= headers:
+    if not headers >= _CSV_REQUIRED:
         missing = ", ".join(sorted(_CSV_REQUIRED - headers))
         raise ValueError(f"CSV missing required columns: {missing}")
 
@@ -118,13 +116,9 @@ def import_csv(text: str) -> tuple[ProbeScanSession, ImportReport]:
                 if isinstance(parsed, dict):
                     payload.update(parsed)
                 else:
-                    report.warnings.append(
-                        f"Feature {feat_id}: extra is not a dict; ignored"
-                    )
+                    report.warnings.append(f"Feature {feat_id}: extra is not a dict; ignored")
             except (SyntaxError, ValueError) as e:
-                report.warnings.append(
-                    f"Feature {feat_id}: could not parse extra ({e})"
-                )
+                report.warnings.append(f"Feature {feat_id}: could not parse extra ({e})")
 
         _merge_csv_geometry(kind, payload, row, col, report)
 
@@ -160,9 +154,7 @@ def _merge_csv_geometry(
         try:
             return float(s.replace(",", "."))
         except ValueError:
-            report.warnings.append(
-                f"Feature {feat_id}: invalid number in {field}: {s!r}"
-            )
+            report.warnings.append(f"Feature {feat_id}: invalid number in {field}: {s!r}")
             return None
 
     if kind in (FeatureKind.CIRCLE, FeatureKind.DERIVED_CIRCLE, FeatureKind.ELLIPSE):
@@ -229,21 +221,11 @@ def import_dxf(text: str) -> tuple[ProbeScanSession, ImportReport]:
     _import_dxf_probed_points(by_layer.get("PROBED_POINTS", []), features, report, consumed)
     _import_dxf_probed_corners(by_layer.get("PROBED_CORNERS", []), features, report, consumed)
     _import_dxf_probed_angles(by_layer.get("PROBED_ANGLES", []), features, report, consumed)
-    _import_dxf_probed_centers(
-        by_layer.get("PROBED_CENTERS", []), features, report, registry, consumed
-    )
-    _import_dxf_segments(
-        by_layer.get("CONSTRUCTED_SEGMENTS", []), features, report, registry, consumed
-    )
-    _import_dxf_polylines(
-        by_layer.get("CONSTRUCTED_POLYLINES", []), features, report, registry, consumed
-    )
-    _import_dxf_derived_circles(
-        by_layer.get("CONSTRUCTED_CIRCLES", []), features, report, consumed
-    )
-    _import_dxf_derived_points(
-        by_layer.get("CONSTRUCTED_POINTS", []), features, report, registry, consumed
-    )
+    _import_dxf_probed_centers(by_layer.get("PROBED_CENTERS", []), features, report, registry, consumed)
+    _import_dxf_segments(by_layer.get("CONSTRUCTED_SEGMENTS", []), features, report, registry, consumed)
+    _import_dxf_polylines(by_layer.get("CONSTRUCTED_POLYLINES", []), features, report, registry, consumed)
+    _import_dxf_derived_circles(by_layer.get("CONSTRUCTED_CIRCLES", []), features, report, consumed)
+    _import_dxf_derived_points(by_layer.get("CONSTRUCTED_POINTS", []), features, report, registry, consumed)
 
     # Generic fallback for other layers
     for ent in entities:
@@ -266,11 +248,7 @@ def import_dxf(text: str) -> tuple[ProbeScanSession, ImportReport]:
         elif dtype == "CIRCLE":
             center = ent.dxf.center
             r = float(ent.dxf.radius)
-            kind = (
-                FeatureKind.DERIVED_CIRCLE
-                if "CONSTRUCT" in layer.upper()
-                else FeatureKind.CIRCLE
-            )
+            kind = FeatureKind.DERIVED_CIRCLE if "CONSTRUCT" in layer.upper() else FeatureKind.CIRCLE
             _add_circle_feature(
                 features,
                 report,
@@ -287,9 +265,7 @@ def import_dxf(text: str) -> tuple[ProbeScanSession, ImportReport]:
         elif dtype in ("LWPOLYLINE", "POLYLINE"):
             _add_polyline_entity(ent, features, report, registry)
         else:
-            report.warnings.append(
-                f"Skipped unsupported entity {dtype} on layer {layer!r}"
-            )
+            report.warnings.append(f"Skipped unsupported entity {dtype} on layer {layer!r}")
             report.skipped += 1
 
     session = ProbeScanSession(features=features)
@@ -334,11 +310,7 @@ class _PointRegistry:
             if coords is None:
                 continue
             fx, fy, fz = coords
-            if (
-                abs(fx - x) <= 1e-4
-                and abs(fy - y) <= 1e-4
-                and abs(fz - z) <= 1e-4
-            ):
+            if abs(fx - x) <= 1e-4 and abs(fy - y) <= 1e-4 and abs(fz - z) <= 1e-4:
                 return feat.id
 
         label = self._next_label(prefix)
@@ -398,9 +370,7 @@ def _import_dxf_probed_angles(
     for ent in entities:
         dtype = ent.dxftype()
         if dtype not in ("TEXT", "MTEXT"):
-            report.warnings.append(
-                f"Skipped non-text entity on PROBED_ANGLES: {dtype}"
-            )
+            report.warnings.append(f"Skipped non-text entity on PROBED_ANGLES: {dtype}")
             report.skipped += 1
             continue
         consumed.add(ent)
@@ -443,9 +413,7 @@ def _import_dxf_probed_corners(
         consumed.add(ent)
         loc = ent.dxf.location
         n += 1
-        features.append(
-            ProbeScanFeature.new_corner(f"K{n}", float(loc.x), float(loc.y))
-        )
+        features.append(ProbeScanFeature.new_corner(f"K{n}", float(loc.x), float(loc.y)))
 
 
 def _import_dxf_probed_centers(
@@ -458,15 +426,9 @@ def _import_dxf_probed_centers(
     circles = [e for e in entities if e.dxftype() == "CIRCLE"]
     ellipses = [e for e in entities if e.dxftype() == "ELLIPSE"]
     points = [e for e in entities if e.dxftype() == "POINT"]
-    other = [
-        e
-        for e in entities
-        if e.dxftype() not in ("CIRCLE", "ELLIPSE", "POINT")
-    ]
+    other = [e for e in entities if e.dxftype() not in ("CIRCLE", "ELLIPSE", "POINT")]
     for ent in other:
-        report.warnings.append(
-            f"Skipped unsupported entity on PROBED_CENTERS: {ent.dxftype()}"
-        )
+        report.warnings.append(f"Skipped unsupported entity on PROBED_CENTERS: {ent.dxftype()}")
         report.skipped += 1
 
     curve_centers: list[tuple[float, float, float]] = []
@@ -494,10 +456,7 @@ def _import_dxf_probed_centers(
         consumed.add(ent)
         loc = ent.dxf.location
         x, y, z = float(loc.x), float(loc.y), float(loc.z)
-        if any(
-            abs(x - cx) <= 1e-4 and abs(y - cy) <= 1e-4 and abs(z - cz) <= 1e-4
-            for cx, cy, cz in curve_centers
-        ):
+        if any(abs(x - cx) <= 1e-4 and abs(y - cy) <= 1e-4 and abs(z - cz) <= 1e-4 for cx, cy, cz in curve_centers):
             continue
         registry.snap(x, y, z, kind=FeatureKind.POINT, prefix="P")
 
@@ -512,9 +471,7 @@ def _import_dxf_segments(
     n = 0
     for ent in entities:
         if ent.dxftype() != "LINE":
-            report.warnings.append(
-                f"Skipped non-LINE on CONSTRUCTED_SEGMENTS: {ent.dxftype()}"
-            )
+            report.warnings.append(f"Skipped non-LINE on CONSTRUCTED_SEGMENTS: {ent.dxftype()}")
             report.skipped += 1
             continue
         consumed.add(ent)
@@ -556,9 +513,7 @@ def _import_dxf_polylines(
     for ent in entities:
         dtype = ent.dxftype()
         if dtype not in ("LWPOLYLINE", "POLYLINE"):
-            report.warnings.append(
-                f"Skipped non-polyline on CONSTRUCTED_POLYLINES: {dtype}"
-            )
+            report.warnings.append(f"Skipped non-polyline on CONSTRUCTED_POLYLINES: {dtype}")
             report.skipped += 1
             continue
         consumed.add(ent)
@@ -597,9 +552,7 @@ def _add_polyline_entity(
 
     if label is None:
         label = registry._next_label("PL")
-    features.append(
-        ProbeScanFeature.new_polyline(label, vertex_ids, closed=closed)
-    )
+    features.append(ProbeScanFeature.new_polyline(label, vertex_ids, closed=closed))
 
 
 def _import_dxf_derived_circles(
@@ -611,9 +564,7 @@ def _import_dxf_derived_circles(
     n = 0
     for ent in entities:
         if ent.dxftype() != "CIRCLE":
-            report.warnings.append(
-                f"Skipped non-CIRCLE on CONSTRUCTED_CIRCLES: {ent.dxftype()}"
-            )
+            report.warnings.append(f"Skipped non-CIRCLE on CONSTRUCTED_CIRCLES: {ent.dxftype()}")
             report.skipped += 1
             continue
         consumed.add(ent)
@@ -643,9 +594,7 @@ def _import_dxf_derived_points(
 ) -> None:
     for ent in entities:
         if ent.dxftype() != "POINT":
-            report.warnings.append(
-                f"Skipped non-POINT on CONSTRUCTED_POINTS: {ent.dxftype()}"
-            )
+            report.warnings.append(f"Skipped non-POINT on CONSTRUCTED_POINTS: {ent.dxftype()}")
             report.skipped += 1
             continue
         consumed.add(ent)
@@ -708,9 +657,7 @@ def _parse_axis_aligned_dxf_ellipse(
     elif abs(mx) <= 1e-9 and abs(my) > 1e-9:
         dx, dy = 2.0 * minor_len, 2.0 * major_len
     else:
-        report.warnings.append(
-            "Skipped rotated ELLIPSE (only axis-aligned ellipses are supported)"
-        )
+        report.warnings.append("Skipped rotated ELLIPSE (only axis-aligned ellipses are supported)")
         report.skipped += 1
         return None
     return cx, cy, dx, dy
@@ -736,6 +683,4 @@ def _validate_references(features: list[ProbeScanFeature], report: ImportReport)
     for feat in features:
         for ref in payload_referenced_feature_ids(feat.payload):
             if ref not in ids:
-                report.warnings.append(
-                    f"Feature {feat.id!r} references missing id {ref!r}"
-                )
+                report.warnings.append(f"Feature {feat.id!r} references missing id {ref!r}")

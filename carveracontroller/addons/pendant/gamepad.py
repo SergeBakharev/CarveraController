@@ -3,11 +3,11 @@ from __future__ import annotations
 import configparser
 import json
 import logging
-from typing import Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
 
 from kivy.clock import Clock
-from kivy.core.window import Window
 from kivy.config import Config
+from kivy.core.window import Window
 
 from carveracontroller.translation import tr
 
@@ -19,79 +19,87 @@ logger = logging.getLogger(__name__)
 AXIS_MAX = 32767
 
 # Preset bindings for common controllers
-PRESETS: List[Tuple[str, dict]] = [
-    ("Xbox 360 / Xbox One", {
-        "axes": {
-            "0": "jog_x",
-            "1": "jog_y",
-            "4": "jog_z",
-            "3": "jog_a",
+PRESETS: list[tuple[str, dict]] = [
+    (
+        "Xbox 360 / Xbox One",
+        {
+            "axes": {
+                "0": "jog_x",
+                "1": "jog_y",
+                "4": "jog_z",
+                "3": "jog_a",
+            },
+            "triggers": {
+                "2:+": "feed_minus",  # LT
+                "5:+": "feed_plus",  # RT
+            },
+            "buttons": {
+                "4": "step_size_down",  # LB
+                "5": "step_size_up",  # RB
+                "6": "mode_toggle",  # Back / View
+                "7": "spindle_on_off",  # Start / Menu
+            },
+            "hat": {},
         },
-        "triggers": {
-            "2:+": "feed_minus",   # LT
-            "5:+": "feed_plus",    # RT
+    ),
+    (
+        "PlayStation (DS4 / DualSense)",
+        {
+            "axes": {
+                "0": "jog_x",
+                "1": "jog_y",
+                "5": "jog_z",
+                "2": "jog_a",
+            },
+            "triggers": {
+                "3:+": "feed_minus",  # L2
+                "4:+": "feed_plus",  # R2
+            },
+            "buttons": {
+                "4": "step_size_down",  # L1
+                "5": "step_size_up",  # R1
+                "8": "mode_toggle",  # Share / Create
+                "9": "spindle_on_off",  # Options
+            },
+            "hat": {},
         },
-        "buttons": {
-            "4": "step_size_down",   # LB
-            "5": "step_size_up",     # RB
-            "6": "mode_toggle",      # Back / View
-            "7": "spindle_on_off",   # Start / Menu
+    ),
+    (
+        "Nintendo Switch Pro",
+        {
+            "axes": {
+                "0": "jog_x",
+                "1": "jog_y",
+                "3": "jog_z",
+                "2": "jog_a",
+            },
+            "triggers": {},
+            "buttons": {
+                "4": "step_size_down",  # L
+                "5": "step_size_up",  # R
+                "6": "feed_minus",  # ZL
+                "7": "feed_plus",  # ZR
+                "8": "mode_toggle",  # Minus
+                "9": "spindle_on_off",  # Plus
+            },
+            "hat": {},
         },
-        "hat": {},
-    }),
-
-    ("PlayStation (DS4 / DualSense)", {
-        "axes": {
-            "0": "jog_x",
-            "1": "jog_y",
-            "5": "jog_z",
-            "2": "jog_a",
-        },
-        "triggers": {
-            "3:+": "feed_minus",   # L2
-            "4:+": "feed_plus",    # R2
-        },
-        "buttons": {
-            "4": "step_size_down",   # L1
-            "5": "step_size_up",     # R1
-            "8": "mode_toggle",      # Share / Create
-            "9": "spindle_on_off",   # Options
-        },
-        "hat": {},
-    }),
-
-    ("Nintendo Switch Pro", {
-        "axes": {
-            "0": "jog_x",
-            "1": "jog_y",
-            "3": "jog_z",
-            "2": "jog_a",
-        },
-        "triggers": {},
-        "buttons": {
-            "4": "step_size_down",   # L
-            "5": "step_size_up",     # R
-            "6": "feed_minus",       # ZL
-            "7": "feed_plus",        # ZR
-            "8": "mode_toggle",      # Minus
-            "9": "spindle_on_off",   # Plus
-        },
-        "hat": {},
-    }),
+    ),
 ]
 
 
-def preset_names() -> List[str]:
+def preset_names() -> list[str]:
     """Return the ordered list of available preset names."""
     return [name for name, _ in PRESETS]
 
 
-def preset_bindings(name: str) -> Optional[dict]:
+def preset_bindings(name: str) -> dict | None:
     """Return a deep copy of the bindings dict for the named preset, or None."""
     for preset_name, bindings in PRESETS:
         if preset_name == name:
             return json.loads(json.dumps(bindings))
     return None
+
 
 # Human-readable labels for actions (used by the bindings configuration UI)
 ACTION_LABELS = {
@@ -127,7 +135,7 @@ ACTION_LABELS = {
 }
 
 
-def hat_axis_pair(direction: str) -> Optional[Tuple[str, str]]:
+def hat_axis_pair(direction: str) -> tuple[str, str] | None:
     """Return left+right or up+down for ``direction``, or None if unknown."""
     if direction in ("left", "right"):
         return ("left", "right")
@@ -140,25 +148,41 @@ def hat_axis_pair(direction: str) -> Optional[Tuple[str, str]]:
 BINDING_GROUPS = [
     ("Jogging", ["jog_x", "jog_y", "jog_z", "jog_a"]),
     ("Overrides", ["feed_plus", "feed_minus", "spindle_plus", "spindle_minus"]),
-    ("Controls", ["start_pause", "stop", "reset", "mode_toggle",
-                  "probe_z", "m_home", "w_home", "safe_z",
-                  "spindle_on_off", "step_size_up", "step_size_down"]),
-    ("Macros", ["macro_1", "macro_2", "macro_3", "macro_4", "macro_5",
-                "macro_6", "macro_7", "macro_8", "macro_9", "macro_10"]),
+    (
+        "Controls",
+        [
+            "start_pause",
+            "stop",
+            "reset",
+            "mode_toggle",
+            "probe_z",
+            "m_home",
+            "w_home",
+            "safe_z",
+            "spindle_on_off",
+            "step_size_up",
+            "step_size_down",
+        ],
+    ),
+    (
+        "Macros",
+        ["macro_1", "macro_2", "macro_3", "macro_4", "macro_5", "macro_6", "macro_7", "macro_8", "macro_9", "macro_10"],
+    ),
 ]
+
 
 def format_input_label(input_type: str, input_id: str) -> str:
     """Return a human-readable label for a raw gamepad input."""
     if input_type == "axis":
         return tr._("Axis {0}").format(input_id)
-    elif input_type == "trigger":
+    if input_type == "trigger":
         axis_id, direction = split_trigger_id(input_id)
         if direction in ("+", "-"):
             return tr._("Trigger Axis {0}{1}").format(axis_id, direction)
         return tr._("Trigger Axis {0}").format(axis_id)
-    elif input_type == "button":
+    if input_type == "button":
         return tr._("Button {0}").format(input_id)
-    elif input_type == "hat":
+    if input_type == "hat":
         return tr._("D-Pad {0}").format(input_id.capitalize())
     return f"{input_type} {input_id}"
 
@@ -170,7 +194,7 @@ def trigger_input_id(axis_id: int, direction: str) -> str:
     return f"{axis_id}:{direction}"
 
 
-def split_trigger_id(input_id: str) -> Tuple[str, Optional[str]]:
+def split_trigger_id(input_id: str) -> tuple[str, str | None]:
     """Split a trigger binding key into axis id and optional direction."""
     axis_id, sep, direction = input_id.partition(":")
     if sep and direction in ("+", "-"):
@@ -232,7 +256,7 @@ class GamepadBindings:
         }
     """
 
-    def __init__(self, bindings: Optional[dict] = None) -> None:
+    def __init__(self, bindings: dict | None = None) -> None:
         self._bindings = bindings or default_bindings()
 
     @classmethod
@@ -248,10 +272,10 @@ class GamepadBindings:
                 logger.warning("Invalid gamepad_bindings config, using defaults")
         return cls()
 
-    def axis_action(self, axis_id: int) -> Optional[str]:
+    def axis_action(self, axis_id: int) -> str | None:
         return self._bindings.get("axes", {}).get(str(axis_id))
 
-    def trigger_action(self, axis_id: int, direction: str) -> Optional[str]:
+    def trigger_action(self, axis_id: int, direction: str) -> str | None:
         trigger_map = self._bindings.get("triggers", {})
         action = trigger_map.get(trigger_input_id(axis_id, direction))
         if action:
@@ -264,10 +288,10 @@ class GamepadBindings:
 
         return None
 
-    def button_action(self, button_id: int) -> Optional[str]:
+    def button_action(self, button_id: int) -> str | None:
         return self._bindings.get("buttons", {}).get(str(button_id))
 
-    def hat_action(self, dx: int, dy: int) -> Optional[str]:
+    def hat_action(self, dx: int, dy: int) -> str | None:
         hat_map = self._bindings.get("hat", {})
         if dy > 0:
             return hat_map.get("up")
@@ -293,25 +317,24 @@ class GamepadManager:
     and translates them into callbacks via configurable bindings.
     """
 
-    def __init__(self, bindings: Optional[GamepadBindings] = None,
-                 deadzone: float = 0.15) -> None:
+    def __init__(self, bindings: GamepadBindings | None = None, deadzone: float = 0.15) -> None:
         self._bindings = bindings or GamepadBindings()
         self._deadzone = max(0.01, min(deadzone, 0.99))
-        self._active_stick: Optional[int] = None
+        self._active_stick: int | None = None
         self._connected = False
 
         # Current normalised axis values (axis_id -> float in -1..1)
-        self._axis_values: Dict[int, float] = {}
+        self._axis_values: dict[int, float] = {}
 
         # Track which jog axes are "held" past the deadzone (for step-mode
         # one-press-one-move). Maps action name -> direction sign (+1/-1).
-        self._held_axes: Dict[str, int] = {}
+        self._held_axes: dict[str, int] = {}
 
         # Track trigger "held" state for one-shot behaviour
-        self._held_triggers: Dict[str, bool] = {}
+        self._held_triggers: dict[str, bool] = {}
 
         # Track hat held state
-        self._hat_held: Dict[str, bool] = {}
+        self._hat_held: dict[str, bool] = {}
 
         # When True, axis/button/trigger/hat events are received (for
         # connection detection) but no action callbacks are fired.  Set while
@@ -320,13 +343,12 @@ class GamepadManager:
         self._paused: bool = False
 
         # Callbacks (set by the pendant class)
-        self.on_connect: Optional[Callable[[], None]] = None
-        self.on_jog_axis: Optional[Callable[[str, float], None]] = None
-        self.on_jog_stop: Optional[Callable[[str], None]] = None
-        self.on_button_action: Optional[Callable[[str], None]] = None
+        self.on_connect: Callable[[], None] | None = None
+        self.on_jog_axis: Callable[[str, float], None] | None = None
+        self.on_jog_stop: Callable[[str], None] | None = None
+        self.on_button_action: Callable[[str], None] | None = None
 
-        self._joystick_rescan_ev = Clock.schedule_interval(
-            self._rescan_sdl_joysticks, 1.0)
+        self._joystick_rescan_ev = Clock.schedule_interval(self._rescan_sdl_joysticks, 1.0)
         ensure_sdl_joysticks_open()
         self._bind_events()
 
@@ -491,8 +513,10 @@ class GamepadManager:
 
         # Release any previously held hat directions that are no longer active
         still_pressed = {
-            "up": dy > 0, "down": dy < 0,
-            "left": dx < 0, "right": dx > 0,
+            "up": dy > 0,
+            "down": dy < 0,
+            "left": dx < 0,
+            "right": dx > 0,
         }
         for direction in list(self._hat_held.keys()):
             if self._hat_held[direction] and not still_pressed.get(direction, False):
@@ -507,8 +531,7 @@ class GamepadManager:
                         self.on_jog_stop(hat_action)
 
         # Press new hat directions
-        for direction, cond in [("up", dy > 0), ("down", dy < 0),
-                                ("left", dx < 0), ("right", dx > 0)]:
+        for direction, cond in [("up", dy > 0), ("down", dy < 0), ("left", dx < 0), ("right", dx > 0)]:
             if cond and not self._hat_held.get(direction, False):
                 self._hat_held[direction] = True
                 hat_dx = -1 if direction == "left" else 1 if direction == "right" else 0

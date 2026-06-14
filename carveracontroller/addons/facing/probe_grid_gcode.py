@@ -89,11 +89,7 @@ def probe_grid_z_datum_shift_after_probe_gcode() -> str:
     - ``#105`` is the highest sampled surface Z tracked
     - ``G10 L20 P0`` sets the WCS origin so that highest point becomes Z=0.
     """
-    return (
-        "M400\n"
-        "(Shift Z to highest grid sample)\n"
-        "G10 L20 P0 Z[#5023-#105]"
-    )
+    return "M400\n(Shift Z to highest grid sample)\nG10 L20 P0 Z[#5023-#105]"
 
 
 def generate_probe_grid_gcode(p: ProbeGridParams, *, end_program: bool = True) -> str:
