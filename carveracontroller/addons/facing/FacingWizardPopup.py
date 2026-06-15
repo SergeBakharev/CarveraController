@@ -28,6 +28,8 @@ from carveracontroller.CNC import (
 )
 from carveracontroller.translation import tr
 
+# Loads facing_preview_sketch so Factory registers widget name "FacingSketch" for KV before Builder applies rules.
+from . import facing_preview_sketch as _facing_preview_sketch
 from .facing_gcode import (
     MILLING_BOTH,
     MILLING_CLIMB,
@@ -39,6 +41,16 @@ from .facing_gcode import (
     compute_facing_envelope,
     facing_toolpath_xy_polyline,
     generate_facing_gcode,
+)
+from .facing_presets import (
+    apply_preset_data,
+    delete_preset_by_name,
+    get_preset_by_name,
+    load_store,
+    preset_data_from_popup,
+    save_store,
+    sorted_preset_names,
+    upsert_preset,
 )
 from .probe_grid_gcode import (
     ProbeGridParams,
@@ -54,19 +66,6 @@ from .stock_geometry import (
     rect_with_xy_margin,
     stock_rect_from_origin_corner,
 )
-from .facing_presets import (
-    apply_preset_data,
-    delete_preset_by_name,
-    get_preset_by_name,
-    load_store,
-    preset_data_from_popup,
-    save_store,
-    sorted_preset_names,
-    upsert_preset,
-)
-
-# Loads facing_preview_sketch so Factory registers widget name "FacingSketch" for KV before Builder applies rules.
-from . import facing_preview_sketch as _facing_preview_sketch
 
 logger = logging.getLogger(__name__)
 
@@ -423,9 +422,7 @@ class FacingWizardPopup(ModalView):
             )
 
         content.ids.btn_cancel.bind(on_release=lambda *_: save_popup.dismiss())
-        content.ids.btn_save.bind(
-            on_release=lambda *_: self._try_save_preset(save_popup, content)
-        )
+        content.ids.btn_save.bind(on_release=lambda *_: self._try_save_preset(save_popup, content))
         save_popup.open()
         Clock.schedule_once(_fit_popup_height, 0.05)
 
@@ -574,11 +571,7 @@ class FacingWizardPopup(ModalView):
             return
         pat = self._pattern_from_ui()
         if pat == PATTERN_SPIRAL:
-            filtered = [
-                (lab, v)
-                for lab, v in self._milling_direction_pairs_list
-                if v != MILLING_BOTH
-            ]
+            filtered = [(lab, v) for lab, v in self._milling_direction_pairs_list if v != MILLING_BOTH]
             new_values = [p[0] for p in filtered]
             if list(spmd.values) != new_values:
                 spmd.values = new_values
@@ -614,7 +607,7 @@ class FacingWizardPopup(ModalView):
         """
         Tool change after Z probe, before facing.
         Default: M6 … C1 with optional collet S and optional repeat count R.
-        If any setter offset (X/Y/Z) is given: M6 followed by M491 
+        If any setter offset (X/Y/Z) is given: M6 followed by M491
         """
         self._ensure_wizard_lists()
         t_text = self.ids.txt_m6_t.text.strip().replace(",", ".")
@@ -680,17 +673,13 @@ class FacingWizardPopup(ModalView):
 
         try:
             ids = self.ids
-            ids.facing_preview_sketch
+            _preview_sketch = ids.facing_preview_sketch
         except Exception:
             logger.debug("facing preview bind: ids not ready, retrying")
             Clock.schedule_once(lambda _dt: self._bind_preview_inputs(), 0.12)
             return
 
-        if (
-            "raster_x_btn" not in ids
-            or "raster_y_btn" not in ids
-            or "raster_spiral_btn" not in ids
-        ):
+        if "raster_x_btn" not in ids or "raster_y_btn" not in ids or "raster_spiral_btn" not in ids:
             logger.debug("facing preview bind: tab widgets missing, retrying")
             Clock.schedule_once(lambda _dt: self._bind_preview_inputs(), 0.12)
             return
@@ -819,7 +808,9 @@ class FacingWizardPopup(ModalView):
             tool_diameter_mm=_parse_float_widget(self.ids.txt_tool_d, tr._("Facing tool diameter (mm)")),
             clearance_z_mm=_parse_float_widget(self.ids.txt_clear, tr._("Clearance Z (mm)")),
             spindle_rpm=_parse_float_widget(self.ids.txt_spindle, tr._("Spindle RPM")),
-            spindle_spinup_dwell_s=_parse_non_negative_int_widget(self.ids.txt_spindle_dwell, tr._("Spindle dwell (s)")),
+            spindle_spinup_dwell_s=_parse_non_negative_int_widget(
+                self.ids.txt_spindle_dwell, tr._("Spindle dwell (s)")
+            ),
             pattern=self._pattern_from_ui(),
             milling_direction=self._milling_direction_from_ui(),
             rough_feed_mm_min=_parse_float_widget(self.ids.txt_rough_f, tr._("Rough feed (mm/min)")),
@@ -952,7 +943,7 @@ class FacingWizardPopup(ModalView):
             self.dismiss()
             self._switch_to_gcode_viewer_screen()
             app.selected_local_filename = path
-            app.selected_remote_filename = ''
+            app.selected_remote_filename = ""
             root.progress_popup.progress_value = 0
             root.progress_popup.btn_cancel.disabled = True
             root.progress_popup.progress_text = tr._("Loading file") + "\n%s" % path

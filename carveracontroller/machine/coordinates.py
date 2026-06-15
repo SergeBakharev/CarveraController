@@ -1,16 +1,18 @@
 """Operations for setting WCS axis offsets, rapid A axis moves, and tool number
 selection."""
 
-from typing import Optional, Protocol
+from __future__ import annotations
+
+from typing import Protocol
 
 
 class CoordinateController(Protocol):
     def wcs_set(
         self,
-        x: Optional[float],
-        y: Optional[float],
-        z: Optional[float],
-        a: Optional[float],
+        x: float | None,
+        y: float | None,
+        z: float | None,
+        a: float | None,
     ) -> None: ...
 
     def wcs_set_a(self, a: float) -> None: ...

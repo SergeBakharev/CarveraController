@@ -1,5 +1,7 @@
 from enum import Enum
+
 from carveracontroller.addons.probing.operations.Bore.BoreOperation import BoreOperation
+
 
 class BoreOperationType(Enum):
     CenterX = BoreOperation("Bore - Center X", True, False, "")

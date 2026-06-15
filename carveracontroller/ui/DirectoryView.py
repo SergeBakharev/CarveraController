@@ -9,10 +9,10 @@ from carveracontroller.addons.tooltips.Tooltips import ToolTipButton
 
 class DirectoryView(BoxLayout, ToolTipButton):
     selected = BooleanProperty(False)
-    data_text = StringProperty('')
-    data_icon = StringProperty('data/folder-32.png')
-    full_path = StringProperty('')
+    data_text = StringProperty("")
+    data_icon = StringProperty("data/folder-32.png")
+    full_path = StringProperty("")
 
 
-if 'DirectoryView' not in Factory.classes:
-    Factory.register('DirectoryView', cls=DirectoryView)
+if "DirectoryView" not in Factory.classes:
+    Factory.register("DirectoryView", cls=DirectoryView)

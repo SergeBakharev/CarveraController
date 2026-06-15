@@ -145,9 +145,7 @@ class ProbeScanPreviewSketch(Widget):
         wy = self._last_cy + (ly - ih / 2.0) / sc
         return wx, wy
 
-    def _seg_dist_px(
-        self, x1: float, y1: float, x2: float, y2: float, tx: float, ty: float
-    ) -> float:
+    def _seg_dist_px(self, x1: float, y1: float, x2: float, y2: float, tx: float, ty: float) -> float:
         """Screen-pixel distance from (tx, ty) to segment (x1,y1)-(x2,y2)."""
         u1, v1 = self._world_to_px(x1, y1)
         u2, v2 = self._world_to_px(x2, y2)
@@ -180,9 +178,7 @@ class ProbeScanPreviewSketch(Widget):
         dist_ring_px = abs(rho - 1.0) * min(aa, bb) * sc
         return min(dist_centre_px, dist_ring_px)
 
-    def _hit_radius_for_feature(
-        self, f: ProbeScanFeature, by_id: dict[str, ProbeScanFeature]
-    ) -> float:
+    def _hit_radius_for_feature(self, f: ProbeScanFeature, by_id: dict[str, ProbeScanFeature]) -> float:
         """Screen-space hit radius in pixels for a given feature."""
         sc = abs(self._last_scale)
         geom = resolve_geometry(f, by_id)
@@ -200,9 +196,7 @@ class ProbeScanPreviewSketch(Widget):
         # SegmentGeom, PolylineGeom
         return dp(20)
 
-    def _distance_to_feature_px(
-        self, f: ProbeScanFeature, by_id: dict, tx: float, ty: float
-    ) -> float:
+    def _distance_to_feature_px(self, f: ProbeScanFeature, by_id: dict, tx: float, ty: float) -> float:
         """Minimum screen-pixel distance from (tx, ty) to feature geometry."""
         geom = resolve_geometry(f, by_id)
         if geom is None:
@@ -220,10 +214,7 @@ class ProbeScanPreviewSketch(Widget):
             edges = list(zip(geom.vertices, geom.vertices[1:]))
             if geom.closed:
                 edges.append((geom.vertices[-1], geom.vertices[0]))
-            return min(
-                self._seg_dist_px(ax, ay, bx, by, tx, ty)
-                for (ax, ay), (bx, by) in edges
-            )
+            return min(self._seg_dist_px(ax, ay, bx, by, tx, ty) for (ax, ay), (bx, by) in edges)
         return float("inf")
 
     def on_touch_down(self, touch):
@@ -265,8 +256,7 @@ class ProbeScanPreviewSketch(Widget):
             if geom.kind == FeatureKind.CORNER:
                 s = max(5.5, abs(scale) * 0.52)
                 Line(
-                    points=[u - s, v - s, u + s, v - s, u + s, v + s,
-                            u - s, v + s, u - s, v - s],
+                    points=[u - s, v - s, u + s, v - s, u + s, v + s, u - s, v + s, u - s, v - s],
                     width=lw,
                 )
             else:
@@ -293,11 +283,7 @@ class ProbeScanPreviewSketch(Widget):
                 a, b = px(vx, vy)
                 pts_px.extend([a, b])
             if len(pts_px) >= 4:
-                line_pts = (
-                    pts_px + pts_px[:2]
-                    if geom.closed and len(pts_px) >= 6
-                    else pts_px
-                )
+                line_pts = pts_px + pts_px[:2] if geom.closed and len(pts_px) >= 6 else pts_px
                 Line(points=line_pts, width=lw)
 
     def _selection_badge_anchor_px(
@@ -348,11 +334,7 @@ class ProbeScanPreviewSketch(Widget):
                 clear = s + dp(14)
             if isinstance(geom, LabelGeom):
                 clear += dp(10)
-            ang = (
-                math.pi / 4
-                + (ord_idx % 4) * (math.pi / 2)
-                + (ord_idx // 4) * 0.22
-            )
+            ang = math.pi / 4 + (ord_idx % 4) * (math.pi / 2) + (ord_idx // 4) * 0.22
             return au + math.cos(ang) * clear, av + math.sin(ang) * clear
 
         # For non-point geometries, compute a radial offset from canvas centre.
@@ -406,9 +388,7 @@ class ProbeScanPreviewSketch(Widget):
             if anchor is None:
                 continue
             au, av = anchor
-            tu, tv = self._selection_badge_layout_px(
-                sf, by_id, px, scale, iw, ih, ord_idx, au, av
-            )
+            tu, tv = self._selection_badge_layout_px(sf, by_id, px, scale, iw, ih, ord_idx, au, av)
 
             col = _SEL_ORDER_PALETTE[ord_idx % len(_SEL_ORDER_PALETTE)]
             try:
@@ -530,9 +510,7 @@ class ProbeScanPreviewSketch(Widget):
             by_id = index_by_id(self._features)
             # Precompute all geometries once for both drawing passes.
             feature_geoms: list[tuple[ProbeScanFeature, FeatureGeom]] = [
-                (f, resolve_geometry(f, by_id))
-                for f in self._features
-                if self._is_visible(f)
+                (f, resolve_geometry(f, by_id)) for f in self._features if self._is_visible(f)
             ]
 
             # First pass: constructed/derived geometry (drawn underneath)
@@ -550,11 +528,7 @@ class ProbeScanPreviewSketch(Widget):
                         pts_px.extend([a, b])
                     if len(pts_px) >= 4:
                         Color(0.45, 0.72, 0.55, 1)
-                        line_pts = (
-                            pts_px + pts_px[:2]
-                            if geom.closed and len(pts_px) >= 6
-                            else pts_px
-                        )
+                        line_pts = pts_px + pts_px[:2] if geom.closed and len(pts_px) >= 6 else pts_px
                         Line(points=line_pts, width=1.3)
 
                 elif isinstance(geom, CircleGeom) and geom.kind == FeatureKind.DERIVED_CIRCLE:
@@ -580,9 +554,7 @@ class ProbeScanPreviewSketch(Widget):
                     Line(points=[u - s, v, u + s, v], width=1.4)
                     Line(points=[u, v - s, u, v + s], width=1.4)
 
-                elif isinstance(geom, CircleGeom) and geom.kind in (
-                    FeatureKind.CIRCLE, FeatureKind.ELLIPSE
-                ):
+                elif isinstance(geom, CircleGeom) and geom.kind in (FeatureKind.CIRCLE, FeatureKind.ELLIPSE):
                     Color(0.55, 0.8, 0.45, 1)
                     Line(
                         points=_ellipse_polyline_px(geom.cx, geom.cy, geom.rx, geom.ry, px),
@@ -594,8 +566,7 @@ class ProbeScanPreviewSketch(Widget):
                     s = max(4.0, abs(scale) * 0.45)
                     Color(0.95, 0.75, 0.35, 1)
                     Line(
-                        points=[u - s, v - s, u + s, v - s, u + s, v + s,
-                                u - s, v + s, u - s, v - s],
+                        points=[u - s, v - s, u + s, v - s, u + s, v + s, u - s, v + s, u - s, v - s],
                         width=1.2,
                     )
 
@@ -626,9 +597,7 @@ class ProbeScanPreviewSketch(Widget):
             if self._focus_id:
                 ff = by_id.get(self._focus_id)
                 if ff is not None and self._is_visible(ff):
-                    self._draw_feature_highlight(
-                        ff, by_id, px, scale, (1.0, 1.0, 1.0, 0.93), 3.0
-                    )
+                    self._draw_feature_highlight(ff, by_id, px, scale, (1.0, 1.0, 1.0, 0.93), 3.0)
 
             if self._selection_ids:
                 self._draw_selection_order_badges(by_id, px, scale, iw, ih)

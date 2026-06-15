@@ -1,5 +1,7 @@
 """Top-down XY sketch for facing wizard preview (work coordinates, mm)."""
 
+from __future__ import annotations
+
 import math
 
 from kivy.factory import Factory
@@ -71,9 +73,7 @@ class FacingXYPreviewSketch(Widget):
         probe_geom: ProbeGridGeometry | None,
         toolpath,
     ):
-        min_x, min_y, max_x, max_y = self._bbox(
-            stock_rect, machining_rect, facing, probe_geom, toolpath
-        )
+        min_x, min_y, max_x, max_y = self._bbox(stock_rect, machining_rect, facing, probe_geom, toolpath)
         pad_frac = 0.06
         span_x = max(max_x - min_x, 1e-6)
         span_y = max(max_y - min_y, 1e-6)
@@ -95,10 +95,7 @@ class FacingXYPreviewSketch(Widget):
             )
 
         nx0, ny0, nx1, ny1 = stock_rect
-        if (
-            machining_rect is not None
-            and not self._same_rect(stock_rect, machining_rect)
-        ):
+        if machining_rect is not None and not self._same_rect(stock_rect, machining_rect):
             mx0, my0, mx1, my1 = machining_rect
             p_bl = px(mx0, my0)
             p_br = px(mx1, my0)

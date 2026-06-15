@@ -7,14 +7,14 @@ import os
 
 from kivy.graphics.transformation import Matrix
 
-from ..Objloader import ObjFile
+from carveracontroller.Objloader import ObjFile
 
-FACE_POS_X = 'pos_x'
-FACE_NEG_X = 'neg_x'
-FACE_POS_Y = 'pos_y'
-FACE_NEG_Y = 'neg_y'
-FACE_POS_Z = 'pos_z'
-FACE_NEG_Z = 'neg_z'
+FACE_POS_X = "pos_x"
+FACE_NEG_X = "neg_x"
+FACE_POS_Y = "pos_y"
+FACE_NEG_Y = "neg_y"
+FACE_POS_Z = "pos_z"
+FACE_NEG_Z = "neg_z"
 
 # Normalized UV rects (u0, v0, u1, v1) — Kivy texture origin is bottom-left.
 ATLAS_UV = {
@@ -46,14 +46,15 @@ FACE_NORMALS = {
 }
 
 VERTEX_FORMAT = [
-    (b'v_pos', 3, 'float'),
-    (b'v_normal', 3, 'float'),
-    (b'v_tc0', 2, 'float'),
-    (b'v_uv_bounds', 4, 'float'),
+    (b"v_pos", 3, "float"),
+    (b"v_normal", 3, "float"),
+    (b"v_tc0", 2, "float"),
+    (b"v_uv_bounds", 4, "float"),
 ]
 
 # 3 pos + 3 normal + 2 uv + 4 uv bounds = 12
 VERTEX_STRIDE = 12
+
 
 def _clamp(v, lo, hi):
     return lo if v < lo else hi if v > hi else v
@@ -145,9 +146,19 @@ def _atlas_uv_for_vertex(face_id, x, y, z):
 
 def _write_vertex(vertices, slot, x, y, z, nx, ny, nz, u, v, bounds):
     i = slot * VERTEX_STRIDE
-    vertices[i:i + 12] = [
-        x, y, z, nx, ny, nz, u, v,
-        bounds[0], bounds[1], bounds[2], bounds[3],
+    vertices[i : i + 12] = [
+        x,
+        y,
+        z,
+        nx,
+        ny,
+        nz,
+        u,
+        v,
+        bounds[0],
+        bounds[1],
+        bounds[2],
+        bounds[3],
     ]
 
 
@@ -159,10 +170,16 @@ def _remap_atlas_uvs(vertices, indices):
         coords = []
         for slot in slots:
             i = slot * stride
-            coords.append((
-                vertices[i], vertices[i + 1], vertices[i + 2],
-                vertices[i + 3], vertices[i + 4], vertices[i + 5],
-            ))
+            coords.append(
+                (
+                    vertices[i],
+                    vertices[i + 1],
+                    vertices[i + 2],
+                    vertices[i + 3],
+                    vertices[i + 4],
+                    vertices[i + 5],
+                )
+            )
         face_id = _triangle_face_id(*coords[0][:3], *coords[1][:3], *coords[2][:3])
         bounds = _uv_bounds_for_face(face_id)
         for slot, (x, y, z, nx, ny, nz) in zip(slots, coords):
@@ -177,7 +194,7 @@ def load_mesh(obj_path):
         raise FileNotFoundError(obj_path)
     obj = ObjFile(obj_path)
     if not obj.objects:
-        raise ValueError(f'no meshes in {obj_path}')
+        raise ValueError(f"no meshes in {obj_path}")
     mesh = next(iter(obj.objects.values()))
     indices = list(mesh.indices)
     # ObjFile uses 8 floats/vert; expand to our stride before remapping UVs.
@@ -185,7 +202,7 @@ def load_mesh(obj_path):
     vertices = [0.0] * (len(mesh.vertices) // src_stride * VERTEX_STRIDE)
     for slot in range(len(mesh.vertices) // src_stride):
         si, di = slot * src_stride, slot * VERTEX_STRIDE
-        vertices[di:di + 8] = mesh.vertices[si:si + 8]
+        vertices[di : di + 8] = mesh.vertices[si : si + 8]
     _remap_atlas_uvs(vertices, indices)
     return vertices, indices
 
@@ -232,7 +249,7 @@ def pick_face(ndc_x, ndc_y, view_mat, proj_mat, cube_scale):
         (FACE_NEG_Z, 2, -half_extent),
     )
 
-    best_t = float('inf')
+    best_t = float("inf")
     best_face = FACE_POS_Y
 
     for face_id, axis, plane in planes:

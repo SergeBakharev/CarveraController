@@ -2,6 +2,8 @@
 Named facing wizard presets storage
 """
 
+from __future__ import annotations
+
 import uuid
 from typing import Any
 
@@ -101,9 +103,7 @@ def normalize_preset_data(data: dict[str, Any]) -> dict[str, Any]:
     for k in DEFAULT_PRESET_DATA:
         if k in data:
             merged[k] = data[k]
-    corner = str(
-        merged.get("stock_origin_corner", default_values.DEFAULT_STOCK_ORIGIN_CORNER)
-    ).strip().lower()
+    corner = str(merged.get("stock_origin_corner", default_values.DEFAULT_STOCK_ORIGIN_CORNER)).strip().lower()
     if corner not in {CORNER_BL, CORNER_BR, CORNER_TL, CORNER_TR}:
         corner = default_values.DEFAULT_STOCK_ORIGIN_CORNER
     merged["stock_origin_corner"] = corner

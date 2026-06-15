@@ -6,6 +6,7 @@ from functools import partial
 
 from kivy.app import App
 from kivy.clock import Clock
+from kivy.factory import Factory
 from kivy.graphics import Color, Rectangle
 from kivy.metrics import dp, sp
 from kivy.properties import BooleanProperty, StringProperty
@@ -19,12 +20,10 @@ from kivy.uix.popup import Popup
 from kivy.uix.textinput import TextInput
 from kivy.uix.togglebutton import ToggleButton
 
-from kivy.factory import Factory
-
+from carveracontroller.addons.probing.operations.ConfigUtils import get_machine_config_hint
 from carveracontroller.CNC import CNC
 from carveracontroller.Controller import Controller
 from carveracontroller.main import is_ios
-from carveracontroller.addons.probing.operations.ConfigUtils import get_machine_config_hint
 from carveracontroller.serial_listeners import (
     register_serial_listener,
     unregister_serial_listener,
@@ -36,6 +35,7 @@ from carveracontroller.ui.LocalFilePicker import (
 )
 
 from ..core.features import (
+    DEFAULT_CIRCLE_CLASSIFY_TOLERANCE_MM,
     ConstructButtonStates,
     compute_construct_button_states,
     construct_circumcircle,
@@ -48,7 +48,6 @@ from ..core.features import (
     features_referencing_id,
     index_by_id,
     mcs_xyz_to_wcs_xyz,
-    DEFAULT_CIRCLE_CLASSIFY_TOLERANCE_MM,
 )
 from ..core.gcode import (
     PROBE_VAR_ANGLE,
@@ -88,7 +87,6 @@ _SESSION_FILE_FILTERS = {
 
 
 class ProbeScanIconToggle(ToggleButton):
-
     image = StringProperty("")
 
     def __init__(self, **kwargs):
@@ -108,13 +106,10 @@ if "ProbeScanIconToggle" not in Factory.classes:
     Factory.register("ProbeScanIconToggle", cls=ProbeScanIconToggle)
 
 if "ProbeScanSketchVisibilityToggle" not in Factory.classes:
-    Factory.register(
-        "ProbeScanSketchVisibilityToggle", cls=ProbeScanSketchVisibilityToggle
-    )
+    Factory.register("ProbeScanSketchVisibilityToggle", cls=ProbeScanSketchVisibilityToggle)
 
 
 class JogProbeScanPopup(ModalView):
-
     _jog_height_tracking_inited = False
 
     def on_kv_post(self, base_widget):
@@ -152,6 +147,7 @@ class JogProbeScanPopup(ModalView):
 
         inner.bind(minimum_height=on_geom, width=on_width)
         self._snap_modal_height_to_inner()
+
 
 if "JogProbeScanPopup" not in Factory.classes:
     Factory.register("JogProbeScanPopup", cls=JogProbeScanPopup)
@@ -307,22 +303,12 @@ class ProbeScanPopup(ModalView):
         return []
 
     @staticmethod
-    def _feature_row_label_text(
-        line1: str, line2: str, *, visible: bool, detail_font: float
-    ) -> tuple[str, bool]:
-        title = (
-            line1
-            if visible
-            else f"[color={_HIDDEN_FEATURE_LABEL_COLOR}]{line1}[/color]"
-        )
+    def _feature_row_label_text(line1: str, line2: str, *, visible: bool, detail_font: float) -> tuple[str, bool]:
+        title = line1 if visible else f"[color={_HIDDEN_FEATURE_LABEL_COLOR}]{line1}[/color]"
         if not line2:
             return title, not visible
         detail_color = "78797f" if visible else _HIDDEN_FEATURE_LABEL_COLOR
-        text = (
-            f"{title}\n"
-            f"[color={detail_color}][size={int(round(detail_font))}]"
-            f"{line2}[/size][/color]"
-        )
+        text = f"{title}\n[color={detail_color}][size={int(round(detail_font))}]{line2}[/size][/color]"
         return text, True
 
     def _sketch_hidden_ids(self) -> set[str]:
@@ -352,9 +338,7 @@ class ProbeScanPopup(ModalView):
                 feat = next((f for f in self.session.features if f.id == fid), None)
                 fc.rgba = (
                     _FEATURE_ROW_FOCUS_RGBA_ON
-                    if feat is not None
-                    and feat.sketch_visible
-                    and fid == fid_focus
+                    if feat is not None and feat.sketch_visible and fid == fid_focus
                     else _FEATURE_ROW_FOCUS_RGBA_OFF
                 )
         except Exception:
@@ -418,9 +402,7 @@ class ProbeScanPopup(ModalView):
         root = App.get_running_app().root
         cp = root.confirm_popup
         cp.lb_title.text = tr._("Probing in progress")
-        cp.lb_content.text = tr._(
-            "A probe operation is still running. Close anyway and discard any result?"
-        )
+        cp.lb_content.text = tr._("A probe operation is still running. Close anyway and discard any result?")
 
         def on_confirm(*_args):
             self._cancel_probe_run()
@@ -482,10 +464,7 @@ class ProbeScanPopup(ModalView):
             wx = float(CNC.vars.get("wx", 0.0))
             wy = float(CNC.vars.get("wy", 0.0))
             wz = float(CNC.vars.get("wz", 0.0))
-            lbl.text = (
-                f"[b]{tr._('Current position')}[/b]\n"
-                f"X  {wx:+.4f}   Y  {wy:+.4f}   Z  {wz:+.4f}"
-            )
+            lbl.text = f"[b]{tr._('Current position')}[/b]\nX  {wx:+.4f}   Y  {wy:+.4f}   Z  {wz:+.4f}"
         except Exception:
             logger.debug("Could not refresh live position label", exc_info=True)
 
@@ -572,9 +551,7 @@ class ProbeScanPopup(ModalView):
 
         Clock.schedule_once(_ui, 0)
 
-    def _on_probe_abort(
-        self, op: str, values: list[float], var_keys: list[str]
-    ) -> None:
+    def _on_probe_abort(self, op: str, values: list[float], var_keys: list[str]) -> None:
         self._runner.pre_complete()
         saved_token = self._runner.get_active_token()
 
@@ -584,9 +561,7 @@ class ProbeScanPopup(ModalView):
             self._cancel_probe_run()
             if values:
                 self._toast(
-                    tr._("Probe ended with incomplete data ({got}/{exp}).").format(
-                        got=len(values), exp=len(var_keys)
-                    )
+                    tr._("Probe ended with incomplete data ({got}/{exp}).").format(got=len(values), exp=len(var_keys))
                 )
             else:
                 self._toast(tr._("Probe failed or was cancelled."))
@@ -613,9 +588,7 @@ class ProbeScanPopup(ModalView):
             return None
         return tol
 
-    def _m461_m462_probe_labels(
-        self, op: str, preset: str
-    ) -> dict[str, str] | None:
+    def _m461_m462_probe_labels(self, op: str, preset: str) -> dict[str, str] | None:
         """Labels for M461/M462 feature construction."""
         bore = op == "M461"
         labels = {
@@ -637,9 +610,7 @@ class ProbeScanPopup(ModalView):
         elif preset == "CenterY":
             seg = tr._("Bore Y (M461)") if bore else tr._("Boss Y (M462)")
         elif preset in ("CenterBore", "CenterBoss"):
-            labels["curve_label"] = (
-                tr._("Bore center (M461)") if bore else tr._("Boss center (M462)")
-            )
+            labels["curve_label"] = tr._("Bore center (M461)") if bore else tr._("Boss center (M462)")
             return labels
         elif preset == "CenterPocket":
             h_seg = tr._("Pocket X (M461)")
@@ -664,17 +635,15 @@ class ProbeScanPopup(ModalView):
         labels["v_endpoint_b_label"] = f"{v_seg} · B"
         return labels
 
-    def _append_probe_result(
-        self, op: str, vd: dict[str, float], var_keys: list[str] | None = None
-    ) -> bool:
+    def _append_probe_result(self, op: str, vd: dict[str, float], var_keys: list[str] | None = None) -> bool:
         """Apply probe values to the session. Returns True when a feature was added."""
         if op == "M466":
             mx = float(CNC.vars.get("mx", 0.0))
             my = float(CNC.vars.get("my", 0.0))
             mz = float(CNC.vars.get("mz", 0.0))
-            x_m = vd[PROBE_VAR_CENTER_X] if PROBE_VAR_CENTER_X in vd else mx
-            y_m = vd[PROBE_VAR_CENTER_Y] if PROBE_VAR_CENTER_Y in vd else my
-            z_m = vd[PROBE_VAR_CENTER_Z] if PROBE_VAR_CENTER_Z in vd else mz
+            x_m = vd.get(PROBE_VAR_CENTER_X, mx)
+            y_m = vd.get(PROBE_VAR_CENTER_Y, my)
+            z_m = vd.get(PROBE_VAR_CENTER_Z, mz)
             wx, wy, wz = mcs_xyz_to_wcs_xyz(x_m, y_m, z_m)
             f = ProbeScanFeature.new_point(
                 tr._("Touch probe (M466)"),
@@ -686,7 +655,7 @@ class ProbeScanPopup(ModalView):
             self.session.features.append(f)
             self._refresh_feature_ui()
             return True
-        elif op in ("M461", "M462"):
+        if op in ("M461", "M462"):
             preset = self._m461_preset if op == "M461" else self._m462_preset
             if not preset:
                 self._toast_need_probing_option()
@@ -722,21 +691,19 @@ class ProbeScanPopup(ModalView):
             self.session.features.extend(feats)
             self._refresh_feature_ui()
             return True
-        elif op in ("M463", "M464"):
+        if op in ("M463", "M464"):
             xm = float(vd.get(PROBE_VAR_CENTER_X, 0.0))
             ym = float(vd.get(PROBE_VAR_CENTER_Y, 0.0))
             wx, wy, _ = mcs_xyz_to_wcs_xyz(xm, ym, 0.0)
             f = ProbeScanFeature.new_corner(
-                tr._("Inside corner (M463)")
-                if op == "M463"
-                else tr._("Outside corner (M464)"),
+                tr._("Inside corner (M463)") if op == "M463" else tr._("Outside corner (M464)"),
                 wx,
                 wy,
             )
             self.session.features.append(f)
             self._refresh_feature_ui()
             return True
-        elif op == "M465":
+        if op == "M465":
             mx = float(CNC.vars.get("mx", 0.0))
             my = float(CNC.vars.get("my", 0.0))
             mz = float(CNC.vars.get("mz", 0.0))
@@ -759,9 +726,7 @@ class ProbeScanPopup(ModalView):
         visible = {f.id for f in self.session.features if f.sketch_visible}
         if self._preview_focus_id is not None and self._preview_focus_id not in visible:
             self._preview_focus_id = None
-        self._selection_order[:] = [
-            x for x in self._selection_order if x in avail and x in visible
-        ]
+        self._selection_order[:] = [x for x in self._selection_order if x in avail and x in visible]
 
     def _recompute_construct_buttons(self) -> None:
         states: ConstructButtonStates = compute_construct_button_states(
@@ -817,8 +782,7 @@ class ProbeScanPopup(ModalView):
                     fc = Color(
                         *(
                             _FEATURE_ROW_FOCUS_RGBA_ON
-                            if feat.sketch_visible
-                            and feat.id == self._preview_focus_id
+                            if feat.sketch_visible and feat.id == self._preview_focus_id
                             else _FEATURE_ROW_FOCUS_RGBA_OFF
                         )
                     )
@@ -875,9 +839,7 @@ class ProbeScanPopup(ModalView):
                     disabled=self.is_probing,
                 )
                 vis_btn.opacity = 1.0 if feat.sketch_visible else 0.38
-                vis_btn.bind(
-                    on_release=partial(self._on_sketch_visibility_toggle, feat.id)
-                )
+                vis_btn.bind(on_release=partial(self._on_sketch_visibility_toggle, feat.id))
                 row.add_widget(vis_btn)
                 rename_btn = Button(
                     text=tr._("Rename"),
@@ -916,9 +878,7 @@ class ProbeScanPopup(ModalView):
         widget.opacity = 1.0 if visible else 0.38
         if not visible:
             if fid in self._selection_order:
-                self._selection_order[:] = [
-                    x for x in self._selection_order if x != fid
-                ]
+                self._selection_order[:] = [x for x in self._selection_order if x != fid]
             if self._preview_focus_id == fid:
                 self._preview_focus_id = None
             self._recompute_construct_buttons()
@@ -936,9 +896,7 @@ class ProbeScanPopup(ModalView):
             if fid not in self._selection_order:
                 self._selection_order.append(fid)
         else:
-            self._selection_order[:] = [
-                x for x in self._selection_order if x != fid
-            ]
+            self._selection_order[:] = [x for x in self._selection_order if x != fid]
         self._recompute_construct_buttons()
         self._sync_sketch_preview()
 
@@ -1062,12 +1020,7 @@ class ProbeScanPopup(ModalView):
         if blockers:
             preview = ", ".join(blockers[:5])
             suffix = "…" if len(blockers) > 5 else ""
-            self._toast(
-                tr._("Cannot delete: referenced by constructed features.")
-                + "\n"
-                + preview
-                + suffix
-            )
+            self._toast(tr._("Cannot delete: referenced by constructed features.") + "\n" + preview + suffix)
             return
         self.session.features[:] = [f for f in self.session.features if f.id != fid]
         self._selection_order[:] = [x for x in self._selection_order if x != fid]
@@ -1195,15 +1148,15 @@ class ProbeScanPopup(ModalView):
                 logger.debug("Could not update tip diameter hint for t%s_d", prefix)
 
     def _read_common_probe_opts(self, prefix: str) -> dict:
-        return dict(
-            h=_parse_optional_float_text(self.ids[f"t{prefix}_h"]) or "",
-            c=_parse_optional_float_text(self.ids[f"t{prefix}_c"]) or "",
-            f_probe=_parse_float_field(self.ids[f"t{prefix}_f"], 300.0),
-            k_rapid=_parse_float_field(self.ids[f"t{prefix}_k"], 800.0),
-            l_repeat=_parse_optional_float_text(self.ids[f"t{prefix}_l"]) or "",
-            r_retract=_parse_optional_float_text(self.ids[f"t{prefix}_r"]) or "",
-            d_tip=_parse_optional_float_text(self.ids[f"t{prefix}_d"]) or "",
-        )
+        return {
+            "h": _parse_optional_float_text(self.ids[f"t{prefix}_h"]) or "",
+            "c": _parse_optional_float_text(self.ids[f"t{prefix}_c"]) or "",
+            "f_probe": _parse_float_field(self.ids[f"t{prefix}_f"], 300.0),
+            "k_rapid": _parse_float_field(self.ids[f"t{prefix}_k"], 800.0),
+            "l_repeat": _parse_optional_float_text(self.ids[f"t{prefix}_l"]) or "",
+            "r_retract": _parse_optional_float_text(self.ids[f"t{prefix}_r"]) or "",
+            "d_tip": _parse_optional_float_text(self.ids[f"t{prefix}_d"]) or "",
+        }
 
     def on_probe_axis466(self):
         try:
@@ -1228,9 +1181,7 @@ class ProbeScanPopup(ModalView):
                 return
             opts = self._read_common_probe_opts("466")
             e_o = _parse_optional_float_text(self.ids.t466_e)
-            self._run_gcode_program(
-                build_m466(x=x_cmd, y=y_cmd, e=e_o or "", **opts)
-            )
+            self._run_gcode_program(build_m466(x=x_cmd, y=y_cmd, e=e_o or "", **opts))
         except Exception as e:
             self._toast(str(e))
 
@@ -1266,9 +1217,7 @@ class ProbeScanPopup(ModalView):
                 float(y_cmd)
             opts = self._read_common_probe_opts("461")
             e_o = _parse_optional_float_text(self.ids.t461_e)
-            self._run_gcode_program(
-                build_m461(x=x_cmd, y=y_cmd, e=e_o or "", **opts)
-            )
+            self._run_gcode_program(build_m461(x=x_cmd, y=y_cmd, e=e_o or "", **opts))
         except Exception as e:
             self._toast(str(e))
 
@@ -1307,8 +1256,10 @@ class ProbeScanPopup(ModalView):
             j_o = _parse_optional_float_text(self.ids.t462_j)
             self._run_gcode_program(
                 build_m462(
-                    x=x_cmd, y=y_cmd,
-                    e_depth=e_o or "", j_clearance=j_o or "",
+                    x=x_cmd,
+                    y=y_cmd,
+                    e_depth=e_o or "",
+                    j_clearance=j_o or "",
                     **opts,
                 )
             )
@@ -1325,9 +1276,7 @@ class ProbeScanPopup(ModalView):
             x, y = _corner_deltas_from_quadrant(self._m463_quadrant, mx, my)
             opts = self._read_common_probe_opts("463")
             e_o = _parse_optional_float_text(self.ids.t463_e)
-            self._run_gcode_program(
-                build_m463(x, y, e=e_o or "", **opts)
-            )
+            self._run_gcode_program(build_m463(x, y, e=e_o or "", **opts))
         except Exception as e:
             self._toast(str(e))
 
@@ -1341,9 +1290,7 @@ class ProbeScanPopup(ModalView):
             x, y = _corner_deltas_from_quadrant(self._m464_quadrant, mx, my)
             opts = self._read_common_probe_opts("464")
             e_o = _parse_optional_float_text(self.ids.t464_e)
-            self._run_gcode_program(
-                build_m464(x, y, e=e_o or "", **opts)
-            )
+            self._run_gcode_program(build_m464(x, y, e=e_o or "", **opts))
         except Exception as e:
             self._toast(str(e))
 
@@ -1372,9 +1319,7 @@ class ProbeScanPopup(ModalView):
             e_o = _parse_optional_float_text(self.ids.t465_e)
             e_cmd = _signed_distance_for_command(e_o) if e_o is not None else ""
             opts = self._read_common_probe_opts("465")
-            self._run_gcode_program(
-                build_m465(x=xs_cmd, y=ys_cmd, e=e_cmd, **opts)
-            )
+            self._run_gcode_program(build_m465(x=xs_cmd, y=ys_cmd, e=e_cmd, **opts))
         except Exception as e:
             self._toast(str(e))
 
@@ -1451,9 +1396,7 @@ class ProbeScanPopup(ModalView):
         root = App.get_running_app().root
         cp = root.confirm_popup
         cp.lb_title.text = tr._("Reset probe scan?")
-        cp.lb_content.text = tr._(
-            "Clear all features from the current session?\nYou will lose unsaved work."
-        )
+        cp.lb_content.text = tr._("Clear all features from the current session?\nYou will lose unsaved work.")
 
         def on_confirm():
             if not self._guard_session_mutation():

@@ -148,9 +148,7 @@ def circle_circle_intersections_2d(
     return [(mx + rx, my + ry), (mx - rx, my - ry)]
 
 
-def midpoint_2d(
-    ax: float, ay: float, bx: float, by: float
-) -> tuple[float, float]:
+def midpoint_2d(ax: float, ay: float, bx: float, by: float) -> tuple[float, float]:
     """Midpoint between two 2D points."""
     return (ax + bx) / 2.0, (ay + by) / 2.0
 
@@ -238,7 +236,7 @@ def tangent_circle_to_circle_external_2d(
         # Corresponding touch on circle 2: project onto same tangent line direction.
         dx, dy = tp1[0] - sx, tp1[1] - sy
         L = math.hypot(dx, dy)
-        if L < tol:
+        if tol > L:
             continue
         ux, uy = dx / L, dy / L
         # Distance from S to tangent point on circle 2.
@@ -424,12 +422,7 @@ def ellipse_ellipse_intersections_2d(
             refine_root(seam_lo_t, 2.0 * math.pi, seam_lo_r, rho_end)
         else:
             refine_root(0.0, seam_hi_t, rho_end, seam_hi_r)
-    elif (
-        samples >= 3
-        and seam_prev2_r > seam_lo_r
-        and seam_lo_r > seam_hi_r
-        and seam_lo_r < tangency_tol
-    ):
+    elif samples >= 3 and seam_prev2_r > seam_lo_r and seam_lo_r > seam_hi_r and seam_lo_r < tangency_tol:
         refine_tangency((samples - 2) * dt, seam_lo_t)
     elif seam_lo_r > 0 and seam_hi_r > 0 and min(seam_lo_r, seam_hi_r) < tangency_tol:
         if seam_lo_r <= seam_hi_r:
@@ -502,9 +495,7 @@ def tangent_point_to_ellipse_2d(
             if d_hit > tol:
                 tx = cx + rx * math.cos(t_hit)
                 ty = cy + ry * math.sin(t_hit)
-                dup = any(
-                    math.hypot(tx - qx, ty - qy) < merge for qx, qy, _ in candidates
-                )
+                dup = any(math.hypot(tx - qx, ty - qy) < merge for qx, qy, _ in candidates)
                 if not dup:
                     candidates.append((tx, ty, d_hit))
         prev_t, prev_o = t, o

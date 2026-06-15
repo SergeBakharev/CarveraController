@@ -1,24 +1,26 @@
 # This module provides translation functionality for the Carvera Controller
 # application that can be shared across all modules in the application.
 
+from __future__ import annotations
+
+import gettext
 import locale
 import os
-import gettext
-from typing import Optional
+
 from kivy.lang import Observable
 
-
 LANGS = {
-    'en':  'English',
-    'zh-CN': '中文简体(Simplified Chinese)',
+    "en": "English",
+    "zh-CN": "中文简体(Simplified Chinese)",
 }
+
 
 class Lang(Observable):
     observers = []
     lang = None
 
     def __init__(self, defaultlang):
-        super(Lang, self).__init__()
+        super().__init__()
         self.ugettext = None
         self.lang = defaultlang
         self.switch_lang(self.lang)
@@ -30,7 +32,7 @@ class Lang(Observable):
         if name == "_":
             self.observers.append((func, args, kwargs))
         else:
-            return super(Lang, self).fbind(name, func, *args, **kwargs)
+            return super().fbind(name, func, *args, **kwargs)
 
     def funbind(self, name, func, args, **kwargs):
         if name == "_":
@@ -38,11 +40,11 @@ class Lang(Observable):
             if key in self.observers:
                 self.observers.remove(key)
         else:
-            return super(Lang, self).funbind(name, func, *args, **kwargs)
+            return super().funbind(name, func, *args, **kwargs)
 
     def switch_lang(self, lang):
         # get the right locales directory, and instanciate a gettext
-        locale_dir = os.path.join(os.path.dirname(__file__), 'locales')
+        locale_dir = os.path.join(os.path.dirname(__file__), "locales")
         locales = None
         try:
             locales = gettext.translation(lang, locale_dir, languages=[lang])
@@ -57,6 +59,7 @@ class Lang(Observable):
         for func, largs, kwargs in self.observers:
             func(largs, None, None)
 
+
 # Proxy class is needed to allow for from carveracontroller.translation import tr.
 # Without proxy, the initialization of the translation module would fail
 # because the tr object is copied from the module to the caller's namespace
@@ -67,22 +70,24 @@ class TrProxy:
             raise RuntimeError("Translation not initialized")
         return getattr(_translator, name)
 
-_translator: Optional[Lang] = Lang('en')
+
+_translator: Lang | None = Lang("en")
 tr = TrProxy()
 
-def init(langname: Optional[str] = None):
+
+def init(langname: str | None = None):
     if langname is None or langname not in LANGS:
         try:
             default_locale = locale.getdefaultlocale()
-            if default_locale != None:
-                for lang_key in LANGS.keys():
+            if default_locale is not None and default_locale[0] is not None:
+                for lang_key in LANGS:
                     if default_locale[0][0:2] in lang_key:
                         langname = lang_key
                         break
         except:
             pass
     if langname is None:
-        langname = 'en'
+        langname = "en"
 
     global _translator
     _translator = Lang(langname)

@@ -1,47 +1,41 @@
+import logging
+
 from kivy.clock import Clock
 from kivy.uix.modalview import ModalView
 
+from carveracontroller.translation import tr
+
 from ... import Controller
+from .operations.Angle.AngleOperationType import AngleOperationType
+from .operations.Angle.AngleSettings import AngleSettings
+from .operations.Bore.BoreOperationType import BoreOperationType
+from .operations.Bore.BoreSettings import BoreSettings
+from .operations.Boss.BossOperationType import BossOperationType
+from .operations.Boss.BossSettings import BossSettings
+from .operations.Calibration.CalibrationOperationType import CalibrationOperationType
+from .operations.Calibration.CalibrationSettings import CalibrationSettings
+from .operations.ConfigUtils import get_machine_config_hint
+from .operations.FourthAxis.FourthAxisOperationType import FourthAxisOperationType
+from .operations.FourthAxis.FourthAxisSettings import FourthAxisSettings
+from .operations.InsideCorner.InsideCornerOperationType import InsideCornerOperationType
+from .operations.InsideCorner.InsideCornerSettings import InsideCornerSettings
 from .operations.OperationsBase import OperationsBase
 from .operations.OutsideCorner.OutsideCornerOperationType import OutsideCornerOperationType
 from .operations.OutsideCorner.OutsideCornerSettings import OutsideCornerSettings
-from .operations.InsideCorner.InsideCornerSettings import InsideCornerSettings
-from .operations.SingleAxis.SingleAxisProbeOperationType import \
-    SingleAxisProbeOperationType
+from .operations.ProbeTip.ProbeTipOperationType import ProbeTipOperationType
+from .operations.ProbeTip.ProbeTipSettings import ProbeTipSettings
+from .operations.SingleAxis.SingleAxisProbeOperationType import SingleAxisProbeOperationType
 from .operations.SingleAxis.SingleAxisProbeSettings import SingleAxisProbeSettings
 from .preview.ProbingPreviewPopup import ProbingPreviewPopup
 
-from .operations.InsideCorner.InsideCornerOperationType import InsideCornerOperationType
-
-from .operations.Bore.BoreOperationType import BoreOperationType
-from .operations.Bore.BoreSettings import BoreSettings
-
-from .operations.Boss.BossOperationType import BossOperationType
-from .operations.Boss.BossSettings import BossSettings
-
-from .operations.Angle.AngleOperationType import AngleOperationType
-from .operations.Angle.AngleSettings import AngleSettings
-
-from .operations.Calibration.CalibrationOperationType import CalibrationOperationType
-from .operations.Calibration.CalibrationSettings import CalibrationSettings
-
-from .operations.ProbeTip.ProbeTipOperationType import ProbeTipOperationType
-from .operations.ProbeTip.ProbeTipSettings import ProbeTipSettings
-
-from .operations.FourthAxis.FourthAxisOperationType import FourthAxisOperationType
-from .operations.FourthAxis.FourthAxisSettings import FourthAxisSettings
-from .operations.ConfigUtils import get_machine_config_hint
-from carveracontroller.translation import tr
-
-import logging
 logger = logging.getLogger(__name__)
-
-from kivy.app import App
 
 import webbrowser
 
-class ProbingPopup(ModalView):
+from kivy.app import App
 
+
+class ProbingPopup(ModalView):
     controller: Controller
 
     def __init__(self, controller, **kwargs):
@@ -62,7 +56,7 @@ class ProbingPopup(ModalView):
         # wait on UI to finish loading
         Clock.schedule_once(self.delayed_bind, 0.1)
 
-        super(ProbingPopup, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
     def on_dismiss(self):
         App.get_running_app().root.restore_keyboard_jog_control()
@@ -99,14 +93,14 @@ class ProbingPopup(ModalView):
         super().open(*args, **kwargs)
 
     def delayed_bind_complete(self, dt):
-        #self.angle_settings = self.ids.angle_settings
-        #self.probeTipSettings = self.ids.probeTipSettings
+        # self.angle_settings = self.ids.angle_settings
+        # self.probeTipSettings = self.ids.probeTipSettings
         return
 
     def refresh_probe_tip_diameter_hints(self):
-        hint = get_machine_config_hint('zprobe.probe_tip_diameter') or tr._("config")
+        hint = get_machine_config_hint("zprobe.probe_tip_diameter") or tr._("config")
         for settings in self._settings_panels:
-            if settings and 'ProbeTipDiameter' in settings.ids:
+            if settings and "ProbeTipDiameter" in settings.ids:
                 settings.ids.ProbeTipDiameter.hint_text = hint
 
     def on_single_axis_probing_pressed(self, operation_key: str):
@@ -146,7 +140,7 @@ class ProbingPopup(ModalView):
     def on_probeTip_probing_pressed(self, operation_key: str):
         cfg = self.probeTipSettings.get_config()
         the_op = ProbeTipOperationType[operation_key].value
-        self.show_preview(the_op,cfg)
+        self.show_preview(the_op, cfg)
 
     def on_callibration_probing_pressed(self, operation_key: str):
         cfg = self.calibration_settings.get_config()
@@ -179,11 +173,10 @@ class ProbingPopup(ModalView):
         try:
             popup.ids.manual_rvPopup.data = app.mdi_data
         except IndexError:
-            logger.error('Recycle view layout change ignored')
-
+            logger.error("Recycle view layout change ignored")
 
         app.bind(mdi_data=lambda instance, value: self.on_mdi_data_changed(popup))
-    
+
     def on_mdi_data_changed(self, popup):
         try:
             popup.ids.manual_rvPopup.refresh_from_data()
@@ -193,6 +186,6 @@ class ProbingPopup(ModalView):
 
     def scroll_to_bottom(self, rv):
         try:
-            Clock.schedule_once(lambda dt: setattr(rv, 'scroll_y', 0), 0.01)
+            Clock.schedule_once(lambda dt: setattr(rv, "scroll_y", 0), 0.01)
         except Exception as e:
             print("Scroll failed:", e)

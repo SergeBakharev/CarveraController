@@ -8,5 +8,5 @@ class DropDownSplitter(Label):
     pass
 
 
-if 'DropDownSplitter' not in Factory.classes:
-    Factory.register('DropDownSplitter', cls=DropDownSplitter)
+if "DropDownSplitter" not in Factory.classes:
+    Factory.register("DropDownSplitter", cls=DropDownSplitter)

@@ -1,0 +1,46 @@
+name: Quality Gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - develop
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache Poetry virtual environment
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ runner.os }}-quality-py3.12-${{ hashFiles('poetry.lock') }}
+
+      - name: Install Linux test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgl1 libgles2 libmtdev1
+
+      - name: Install poetry and dependencies
+        uses: ./.github/actions/bootstrap-poetry
+        with:
+          os: linux
+          install-args: --only main,lint,test
+
+      - name: Run quality hooks
+        run: poetry run pre-commit run --all-files
+
+      - name: Run tests
+        run: xvfb-run -a -s "-screen 0 1920x1080x24 -nolisten tcp" poetry run python -m pytest tests

@@ -5,16 +5,12 @@ from carveracontroller.addons.probing.operations.OperationsBase import ProbeSett
 
 class FourthAxisParameterDefinitions:
     YTotalDistance = ProbeSettingDefinition(
-        "Y", "Y Probing Distance", True,
-        "Total probing distance; machine moves to +Y/2 and -Y/2 from current position."
+        "Y", "Y Probing Distance", True, "Total probing distance; machine moves to +Y/2 and -Y/2 from current position."
     )
-    ProbeHeight = ProbeSettingDefinition(
-        "H", "Probe Height", True,
-        "Distance to probe down from current position."
-    )
+    ProbeHeight = ProbeSettingDefinition("H", "Probe Height", True, "Distance to probe down from current position.")
     FeedRate = ProbeSettingDefinition("F", "Feed Rate", False, "Feed rate for probing (mm/min).")
     RapidFeedRate = ProbeSettingDefinition("K", "Rapid Rate", False, "Rapid feed rate for positioning (mm/min).")
     RepeatCount = ProbeSettingDefinition("L", "Repeat", False, "Number of probe cycles to repeat.")
     RetractDistance = ProbeSettingDefinition("R", "Retract", False, "Retract distance from touched surface (mm).")
-    RotateAfterProbe = ProbeSettingDefinition("V", "Rotate A after probe", False, "Rotate A axis after probing","1")
-    SaveAOffset = ProbeSettingDefinition("S", "Save A offset", False, "Save the A axis offset after probing","1")
+    RotateAfterProbe = ProbeSettingDefinition("V", "Rotate A after probe", False, "Rotate A axis after probing", "1")
+    SaveAOffset = ProbeSettingDefinition("S", "Save A offset", False, "Save the A axis offset after probing", "1")

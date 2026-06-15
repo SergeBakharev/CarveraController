@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
-from typing import Sequence
+from collections.abc import Callable, Sequence
 
 from kivy.app import App
 from kivy.factory import Factory
@@ -21,21 +20,21 @@ from carveracontroller.translation import tr
 class LocalFilePickerDirButton(ButtonBehavior, BoxLayout):
     """Compact folder shortcut button (common/recent places dropdown)."""
 
-    data_text = StringProperty('')
+    data_text = StringProperty("")
 
 
 class LocalFilePickerSheet(BoxLayout):
     """Folder browser with breadcrumb path bar and file name field."""
 
     curr_path_list = ListProperty([])
-    curr_dir_name = StringProperty('')
+    curr_dir_name = StringProperty("")
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.curr_full_path_list: list[str] = []
         self._common_dirs: list[dict] = []
         self._recent_dirs: list[str] = []
-        self._dir_dropdown = DropDown(auto_width=False, width='190dp')
+        self._dir_dropdown = DropDown(auto_width=False, width="190dp")
         self._dir_dropdown.bind(on_select=self._on_dir_dropdown_select)
 
     def _on_dir_dropdown_select(self, _dropdown, path: str) -> None:
@@ -54,7 +53,7 @@ class LocalFilePickerSheet(BoxLayout):
         full_paths, path_labels = Utils.directory_breadcrumb_paths(directory)
         self.curr_full_path_list = full_paths
         self.curr_path_list = path_labels
-        self.curr_dir_name = path_labels[-1] if path_labels else ''
+        self.curr_dir_name = path_labels[-1] if path_labels else ""
 
     def goto_path(self, index: int) -> None:
         if index < len(self.curr_full_path_list):

@@ -1,10 +1,12 @@
-from pyobjus import autoclass, protocol
-from pyobjus.dylib_manager import load_framework, load_dylib, INCLUDE
-from pathlib import Path
 import ctypes
+from pathlib import Path
+
+from pyobjus import autoclass, protocol
+from pyobjus.dylib_manager import INCLUDE, load_dylib, load_framework
 
 # Present the document picker
 ios_lib = ctypes.CDLL(None)  # Load the main iOS application binary
+
 
 def pick_file():
     try:
