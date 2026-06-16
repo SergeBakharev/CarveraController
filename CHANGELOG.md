@@ -23,6 +23,7 @@
 - Fixed: Disable trackpad being treated as touchscreen on Linux
 - Fixed: Jogging was incorrectly blocked/allowed under certain conditions
 - Fixed: GCode parser: Do not set tool number to 7 after M321
+- Fixed: Fix potential crashes due to an undefined FuncSetting key"
 - Fixed: Fix incorrect "No Pendant" in UI when pendant is working
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file

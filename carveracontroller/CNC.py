@@ -282,10 +282,12 @@ class CNC:
         "st_cover": 0,
         "st_tool_sensor": 0,
         "st_e_stop": 0,
+        # Machine model/feature flags updated from status or model command
+        "MachineModel": 1,
+        "FuncSetting": 0,
+        "inch_mode": 0,
+        "absolute_mode": 0,
     }
-
-    # for feed override testing
-    # FIXME will not be needed after Grbl v1.0
 
     # ----------------------------------------------------------------------
     def __init__(self):

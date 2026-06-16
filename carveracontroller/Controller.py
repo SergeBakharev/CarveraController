@@ -1300,11 +1300,6 @@ class Controller:
             CNC.vars["FuncSetting"] = int(d["C"][1])
             CNC.vars["inch_mode"] = int(d["C"][2])
             CNC.vars["absolute_mode"] = int(d["C"][3])
-        else:
-            CNC.vars["MachineModel"] = 1
-            CNC.vars["FuncSetting"] = 0
-            CNC.vars["inch_mode"] = 0
-            CNC.vars["absolute_mode"] = 0
         if CNC.vars["inch_mode"] != 999:
             if CNC.vars["inch_mode"] == 1:
                 CNC.UnitScale = 25.4
