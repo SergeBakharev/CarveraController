@@ -1014,18 +1014,16 @@ class Controller:
 
         return (None, None)
 
-    def _get_last_movement_line_before(self, lines, start_line):
+    def _has_movement_after_line(self, lines, after_line, before_start_line):
         """
-        Return the 1-based line number of the last movement command (G0–G3) working backwards from start_line.
-        Uses _find_command_line_number for each movement command and returns the highest line number.
-        Returns None if no movement command found.
+        Return True if any G0–G3 command appears on a line strictly after after_line
+        and before before_start_line.
         """
-        last_line = None
         for cmd in ("G0", "G1", "G2", "G3"):
-            _, line_num = self._find_command_line_number(lines, start_line, cmd)
-            if line_num is not None and (last_line is None or line_num > last_line):
-                last_line = line_num
-        return last_line
+            _, line_num = self._find_command_line_number(lines, before_start_line, cmd)
+            if line_num is not None and line_num > after_line:
+                return True
+        return False
 
     def playStartLineCommand(self, filename, start_line, preview=False, lines=None):
         # Build the play command with proper formatting
@@ -1033,7 +1031,7 @@ class Controller:
         if "\\" in filename:
             play_command = "play %s" % "/".join(filename.split("\\")).replace(" ", "\x01")
 
-        # Position to move to before start: last movement line before start_line (from loaded lines), then from GcodeViewer
+        # Position to move to before start: derive from GcodeViewer state at (start_line - 1)
         try:
             start_line_int = int(start_line)
         except (ValueError, TypeError):
@@ -1042,12 +1040,9 @@ class Controller:
         if not lines:
             raise ValueError("Gcode lines required for resume-at-line")
 
-        prev_line = None
-        if start_line_int is not None:
-            prev_line = self._get_last_movement_line_before(lines, start_line_int)
-        if prev_line is None and start_line_int is not None:
-            prev_line = max(1, start_line_int - 1)
-        prev_line = max(1, prev_line) if prev_line else None
+        # Use the line immediately before start_line so that _get_line_position_from_gcode_viewer
+        # returns the machine state after executing through that line.
+        prev_line = max(1, start_line_int - 1) if start_line_int is not None else None
         position = self._get_line_position_from_gcode_viewer(prev_line) if prev_line else (None, None, None, None)
         x, y, z, a = position
 
@@ -1193,7 +1188,7 @@ class Controller:
 
         # Add G1 movement into the Z position if tool change line is before than any movements
         # If no movements have occured between tool change and prev_line then the Z position isn't correct
-        if z is not None and (m6_line is None or prev_line > m6_line):
+        if z is not None and (m6_line is None or self._has_movement_after_line(lines, m6_line, start_line_int)):
             additional_commands.append(f"buffer G1 Z{z:.3f}")
 
         # the goto command in firmware is bugged in versions < 2.1.0c and Makera releases
