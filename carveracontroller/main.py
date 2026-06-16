@@ -3974,9 +3974,18 @@ class Makera(RelativeLayout):
                                 self.controller._baud_upgrade_attempted = True
                                 self.controller.request_baud_upgrade(int(baud_str))
 
-                    remote_model = re.search("del = [a-zA-Z0-9]+", line)
+                    remote_model = re.search(r"model = (\w+), (\d+), (\d+), (\d+)", line)
                     if remote_model != None:
-                        detected_model = remote_model[0].split("=")[1]
+                        detected_model = remote_model.group(1)
+                        CNC.vars["MachineModel"] = int(remote_model.group(2))
+                        CNC.vars["FuncSetting"] = int(remote_model.group(3))
+                        logger.info(
+                            f"Machine information: "
+                            f"Model: {detected_model}, "
+                            f"Model ID: {CNC.vars['MachineModel']}, "
+                            f"FuncSetting: {CNC.vars['FuncSetting']}, "
+                            f"Extra: {remote_model.group(4)}"
+                        )
                         Clock.schedule_once(partial(self.setUIForModel, detected_model), 0)
 
                     remote_filetype = re.search("ftype = [a-zA-Z0-9]+", line)
