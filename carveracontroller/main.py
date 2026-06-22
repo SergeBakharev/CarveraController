@@ -193,6 +193,7 @@ from .CNC import (
     CNC,
     GCODE_DEFAULT_COLORS,
     LASER_TOOL_NUMBER,
+    OCODE_PATTERN,
     PROBE_3D_TOOL_NUMBER,
     ZPROBE_TOOL_NUMBER,
     escape_gcode_markup,
@@ -2908,6 +2909,7 @@ class Makera(RelativeLayout):
 
     used_tools = ListProperty()
     upcoming_tool = 0
+    file_has_ocodes = False
     tool_change_markers = []
 
     # Custom property to monitor CNC light state
@@ -3493,7 +3495,7 @@ class Makera(RelativeLayout):
             # Show confirmation dialog for beta resume playback feature
             self.open_resume_playback_confirm_popup(file_name, start_line)
         else:
-            self.controller.playCommand(file_name)
+            self.controller.playCommand(file_name, has_ocodes=self.file_has_ocodes)
 
     # -----------------------------------------------------------------------
     def apply(self, buffer=False):
@@ -6753,7 +6755,9 @@ class Makera(RelativeLayout):
             return
 
         try:
-            commands = self.controller.playStartLineCommand(file_name, start_line, preview=True, lines=self.lines)
+            commands = self.controller.playStartLineCommand(
+                file_name, start_line, preview=True, lines=self.lines, has_ocodes=self.file_has_ocodes
+            )
         except Exception as e:
             self.show_message_popup(tr._(f"Resume-at-line cannot run:\n\n{e}"), False)
             return
@@ -6779,7 +6783,9 @@ class Makera(RelativeLayout):
             self._show_resume_gcode_not_loaded_popup()
             return
         try:
-            self.controller.playStartLineCommand(file_name, start_line, lines=self.lines)
+            self.controller.playStartLineCommand(
+                file_name, start_line, lines=self.lines, has_ocodes=self.file_has_ocodes
+            )
         except Exception as e:
             self.show_message_popup(tr._(f"Resume-at-line failed:\n\n{e}"), False)
 
@@ -7043,6 +7049,7 @@ class Makera(RelativeLayout):
     def load_gcode_file(self, filepath):
         self.load_event.set()
         self.upcoming_tool = 0
+        self.file_has_ocodes = False
         self.used_tools = []
         self.tool_change_markers = []
         Clock.schedule_once(self.load_start)
@@ -7081,6 +7088,8 @@ class Makera(RelativeLayout):
             for line in self.lines:
                 if self.load_canceled:
                     break
+                if not self.file_has_ocodes and OCODE_PATTERN.search(line):
+                    self.file_has_ocodes = True
                 prev_tool = self.cnc.tool
                 self.cnc.parseLine(line, line_no)
                 if self.upcoming_tool == 0:

@@ -609,10 +609,11 @@ class Controller:
     def resumeCommand(self):
         self.executeCommand("resume\n")
 
-    def playCommand(self, filename):
-        play_command = "play %s\n" % filename.replace(" ", "\x01")
+    def playCommand(self, filename, has_ocodes=False):
+        flag = " -O" if has_ocodes else ""
+        play_command = "play %s%s\n" % (filename.replace(" ", "\x01"), flag)
         if "\\" in filename:
-            play_command = "play %s\n" % "/".join(filename.split("\\")).replace(" ", "\x01")
+            play_command = "play %s%s\n" % ("/".join(filename.split("\\")).replace(" ", "\x01"), flag)
         self.executeCommand(self.escape(play_command))
 
     def _binary_find_left(self, array, key):
@@ -1027,11 +1028,12 @@ class Controller:
                 last_line = line_num
         return last_line
 
-    def playStartLineCommand(self, filename, start_line, preview=False, lines=None):
+    def playStartLineCommand(self, filename, start_line, preview=False, lines=None, has_ocodes=False):
         # Build the play command with proper formatting
-        play_command = "play %s\n" % filename.replace(" ", "\x01")
+        flag = " -O" if has_ocodes else ""
+        play_command = "play %s%s\n" % (filename.replace(" ", "\x01"), flag)
         if "\\" in filename:
-            play_command = "play %s" % "/".join(filename.split("\\")).replace(" ", "\x01")
+            play_command = "play %s%s" % ("/".join(filename.split("\\")).replace(" ", "\x01"), flag)
 
         # Position to move to before start: last movement line before start_line (from loaded lines), then from GcodeViewer
         try:
