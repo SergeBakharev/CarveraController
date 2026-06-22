@@ -11,6 +11,7 @@ _O_KEYWORDS = (
     r"elseif|endwhile|endrepeat|endsub|endif|continue|"
     r"repeat|while|break|call|else|sub|do|if"
 )
+OCODE_PATTERN = re.compile(r"(?:^|\s)[Oo]\d+\s+(?:" + _O_KEYWORDS + r")\b")
 
 _MATH_KEYWORDS_COMPACT = r"xor|and|nor|mod|eq|ne|gt|ge|lt|le|or"
 _MATH_KEYWORDS_FUNCTIONS = r"sqrt|round|asin|acos|atan|sin|cos|tan|abs|fix|fup|ln|exp"
