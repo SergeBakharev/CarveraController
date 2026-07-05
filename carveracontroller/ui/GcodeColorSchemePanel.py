@@ -178,6 +178,24 @@ def _make_legend_row(entry):
 class GcodeColorSchemePanel(BoxLayout):
     """Dropdown plus scrollable legend for the active toolpath color scheme."""
 
+    def _is_hidden(self):
+        return not self.opacity
+
+    def on_touch_down(self, touch):
+        if self._is_hidden():
+            return False
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if self._is_hidden():
+            return False
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self._is_hidden():
+            return False
+        return super().on_touch_up(touch)
+
     def refresh(self, makera_root):
         legend_box = self.ids.legend_box
         legend_box.clear_widgets()
