@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 import re
 from collections.abc import Callable, Sequence
 
@@ -74,34 +73,20 @@ def parse_probe_program(lines: Sequence[str]) -> str:
 
 RE_CMM_START = re.compile(r"CMMProbe\s+START\s+(\S+)\s+(.+)", re.IGNORECASE)
 RE_CMM_END = re.compile(r"CMMProbe\s+END\s*", re.IGNORECASE)
-_RE_FLOAT = re.compile(r"^[-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?\s*$")
-_RE_RESULT_EQ = re.compile(
-    r"result\s*=\s*([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)",
-    re.IGNORECASE,
-)
+_RE_VAR_EQ = re.compile(r"#([0-9]+)\s*=\s*(-?[0-9]*\.?[0-9]+)")
 
 
-def extract_float_line(line: str) -> float | None:
-    """Parse a lone float line or firmware-style ``result = <float>``."""
-    s = line.strip()
-    if _RE_FLOAT.match(s):
-        try:
-            v = float(s)
-            if math.isnan(v) or math.isinf(v):
-                return None
-            return v
-        except ValueError:
-            return None
-    m = _RE_RESULT_EQ.search(s)
-    if m:
-        try:
-            v = float(m.group(1))
-        except ValueError:
-            return None
-        if math.isnan(v) or math.isinf(v):
-            return None
-        return v
-    return None
+def extract_result_line(line: str) -> tuple[str, float] | None:
+    """Parse an ``M118.1`` result line into ``(var_key, value)``.
+
+    ``var_key`` is the ``#`` variable index (without the ``#``) echoed by the
+    firmware (e.g. ``#151 = 12.345`` -> ``("151", 12.345)``). Returns ``None``
+    when the line is not a parseable variable result.
+    """
+    m = _RE_VAR_EQ.search(line.strip())
+    if not m:
+        return None
+    return m.group(1), float(m.group(2))
 
 
 def extract_probe_start_meta(line: str) -> tuple[str, list[str]] | None:
@@ -122,8 +107,8 @@ class M118ProbeCapture:
 
     def __init__(
         self,
-        on_complete: Callable[[str, list[float], list[str]], None],
-        on_abort: Callable[[str, list[float], list[str]], None] | None = None,
+        on_complete: Callable[[str, dict[str, float], list[str]], None],
+        on_abort: Callable[[str, dict[str, float], list[str]], None] | None = None,
     ):
         self._on_complete = on_complete
         self._on_abort = on_abort
@@ -132,7 +117,7 @@ class M118ProbeCapture:
         self._op: str | None = None
         self._expected: int = 0
         self._var_keys: list[str] = []
-        self._buf: list[float] = []
+        self._values: dict[str, float] = {}
 
     def prime_upstream(self, op: str, var_keys: list[str]) -> None:
         """Arm capture from outgoing G-code; ignores serial START while host-armed."""
@@ -152,7 +137,7 @@ class M118ProbeCapture:
         self._op = None
         self._expected = 0
         self._var_keys.clear()
-        self._buf.clear()
+        self._values.clear()
 
     def feed_line(self, msg_kind: int, line: str) -> None:
         if msg_kind == Controller.MSG_ERROR:
@@ -171,46 +156,37 @@ class M118ProbeCapture:
             if self._expected == 0 or not self._var_keys:
                 self.reset()
                 return
-            self._buf.clear()
+            self._values.clear()
             return
 
         if RE_CMM_END.search(s):
             # Stale END from a prior run can arrive right after prime_upstream.
-            if self._host_armed and not self._buf:
+            if self._host_armed and not self._values:
                 return
             if self._active and self._expected > 0:
-                if len(self._buf) < self._expected and self._on_abort is not None:
+                if len(self._values) < self._expected and self._on_abort is not None:
                     try:
-                        self._on_abort(
-                            self._op or "",
-                            list(self._buf),
-                            list(self._var_keys),
-                        )
+                        self._on_abort(self._op or "", dict(self._values), list(self._var_keys))
                     except Exception:
                         _logger.exception("M118 probe capture abort callback")
             self.reset()
             return
 
         if self._active and self._op:
-            v = extract_float_line(s)
-            if v is not None and len(self._buf) < self._expected:
-                self._buf.append(v)
-                if len(self._buf) == self._expected:
-                    try:
-                        self._on_complete(self._op, list(self._buf), list(self._var_keys))
-                    except Exception:
-                        _logger.exception("M118 probe capture callback")
-                    self.reset()
-
-
-def map_values_to_dict(op: str, values: list[float], var_keys: list[str] | None = None) -> dict[str, float]:
-    """Map captured floats to # variable indices in order."""
-    keys = var_keys if var_keys else VAR_SETS.get(op.upper(), [])
-    out: dict[str, float] = {}
-    for i, k in enumerate(keys):
-        if i < len(values):
-            out[k] = values[i]
-    return out
+            parsed = extract_result_line(s)
+            if parsed is None:
+                return
+            key, v = parsed
+            # Ignore echoes for variables we didn't request or already captured.
+            if key not in self._var_keys or key in self._values:
+                return
+            self._values[key] = v
+            if len(self._values) == self._expected:
+                try:
+                    self._on_complete(self._op, dict(self._values), list(self._var_keys))
+                except Exception:
+                    _logger.exception("M118 probe capture callback")
+                self.reset()
 
 
 def _fmt(v: float | int | str) -> str:
