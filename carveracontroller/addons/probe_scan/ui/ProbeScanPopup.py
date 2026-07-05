@@ -62,7 +62,6 @@ from ..core.gcode import (
     build_m465,
     build_m466,
     extract_probe_start_meta,
-    map_values_to_dict,
     split_execute_lines,
 )
 from ..core.io_export import export_csv, export_dxf, export_json
@@ -536,22 +535,21 @@ class ProbeScanPopup(ModalView):
         for ln in lines:
             self.controller.executeCommand(ln + "\n")
 
-    def _on_probe_values(self, op: str, values: list[float], var_keys: list[str]):
+    def _on_probe_values(self, op: str, values: dict[str, float], var_keys: list[str]):
         self._runner.pre_complete()
         saved_token = self._runner.get_active_token()
 
         def _ui(_dt):
             if not self._runner.is_token_valid(saved_token):
                 return
-            vd = map_values_to_dict(op, values, var_keys)
-            if self._append_probe_result(op, vd, var_keys):
+            if self._append_probe_result(op, values, var_keys):
                 self._runner.complete()
             else:
                 self._runner.cancel()
 
         Clock.schedule_once(_ui, 0)
 
-    def _on_probe_abort(self, op: str, values: list[float], var_keys: list[str]) -> None:
+    def _on_probe_abort(self, op: str, values: dict[str, float], var_keys: list[str]) -> None:
         self._runner.pre_complete()
         saved_token = self._runner.get_active_token()
 
@@ -1316,8 +1314,9 @@ class ProbeScanPopup(ModalView):
             else:
                 self._toast_need_probing_option()
                 return
-            e_o = _parse_optional_float_text(self.ids.t465_e)
-            e_cmd = _signed_distance_for_command(e_o) if e_o is not None else ""
+            e_field = self.ids.t465_e
+            e_val = _parse_optional_float_text(e_field) or e_field.hint_text.strip().replace(",", ".") or "2"
+            e_cmd = _distance_for_command(e_val, negate=(v in ("above", "right")))
             opts = self._read_common_probe_opts("465")
             self._run_gcode_program(build_m465(x=xs_cmd, y=ys_cmd, e=e_cmd, **opts))
         except Exception as e:
