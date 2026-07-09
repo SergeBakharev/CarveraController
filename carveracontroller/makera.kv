@@ -4281,23 +4281,24 @@
                                         icon: 'data/eye.png'
                                         disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
                                         on_release:
-                                            self.active = not self.active
                                             if self.active:\
-                                            t1.min_active = True;\
-                                            t2.min_active = True;\
-                                            t3.min_active = True;\
-                                            t4.min_active = True;\
-                                            t5.min_active = True;\
-                                            t6.min_active = True;\
-                                            laser.min_active = True;
-                                            else:\
                                             t1.min_active = False;\
                                             t2.min_active = False;\
                                             t3.min_active = False;\
                                             t4.min_active = False;\
                                             t5.min_active = False;\
                                             t6.min_active = False;\
-                                            laser.min_active = False;
+                                            laser.min_active = False;\
+                                            app.root.show_other_tools = False;
+                                            else:\
+                                            t1.min_active = True;\
+                                            t2.min_active = True;\
+                                            t3.min_active = True;\
+                                            t4.min_active = True;\
+                                            t5.min_active = True;\
+                                            t6.min_active = True;\
+                                            laser.min_active = True;\
+                                            app.root.show_other_tools = True;
                                             app.root.filter_tool()
                             BoxLayout:
                                 id: gcode_ctl_bar

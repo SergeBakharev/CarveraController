@@ -7165,6 +7165,7 @@ class Makera(RelativeLayout):
         ]
         for tool_button in tool_buttons:
             tool_button.min_active = True
+        self.show_other_tools = True
         self.float_layout.hide_all.active = True
 
     def refresh_gcode_color_legend(self, *_args):
@@ -7185,7 +7186,11 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def filter_tool(self):
-        mask = 0.0
+        # Build the mask for tool visibility
+        #   1..1_000_000 -> T1..T6 + laser (1 digit per tool)
+        #   10_000_000   -> Other tools without a button (T0, T7, T8, ...)
+        OTHER_TOOLS_FLAG = 10000000.0
+
         tool_buttons = [
             self.float_layout.t1,
             self.float_layout.t2,
@@ -7195,23 +7200,23 @@ class Makera(RelativeLayout):
             self.float_layout.t6,
             self.float_layout.laser,
         ]
-        enabled_tools = []
         visible_tools = []
         for index, tool_button in enumerate(tool_buttons, start=1):
-            if not tool_button.disabled:
-                enabled_tools.append(index)
-                if tool_button.min_active:
-                    visible_tools.append(index)
-        if len(enabled_tools) > 0 and enabled_tools == visible_tools:
-            self.float_layout.hide_all.active = True
-        else:
-            self.float_layout.hide_all.active = False
+            if not tool_button.disabled and tool_button.min_active:
+                visible_tools.append(index)
 
-        if len(enabled_tools) > 0 and len(visible_tools) == 0:
-            mask = 10000000.0
-        else:
-            for tool in visible_tools:
-                mask = mask + 10 ** (tool - 1)
+        show_other_tools = getattr(self, "show_other_tools", True)
+
+        # The show/hide-all button is "on" whenever anything is visible. Clicking
+        # it then hides everything, and shows everything when nothing is visible.
+        self.float_layout.hide_all.active = show_other_tools or len(visible_tools) > 0
+
+        mask = 0.0
+        for tool in visible_tools:
+            mask = mask + 10 ** (tool - 1)
+        if show_other_tools:
+            mask = mask + OTHER_TOOLS_FLAG
+
         self.gcode_viewer.set_display_mask(mask)
 
     # -----------------------------------------------------------------------
