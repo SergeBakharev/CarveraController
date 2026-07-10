@@ -1159,8 +1159,9 @@ class GCodeViewer(Widget):
 
             # rendering line meshes
             self.linemesh["display_count"] = -1.0
-            # 0 means display all thing
-            self.linemesh["vertex_type_display"] = 0.0
+
+            # Show all tools by default (T1-T6 + laser + other tools)
+            self.linemesh["vertex_type_display"] = 11111111.0
 
             self.pointermesh["offset"] = (-self.lines_center[0], -self.lines_center[1], -self.lines_center[2])
 

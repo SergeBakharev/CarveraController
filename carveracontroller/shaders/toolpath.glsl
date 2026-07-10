@@ -95,22 +95,19 @@ float mask_digit(float mask, float place)
 
 bool is_vertex_type_enabled(float vertex_type, float type_mask)
 {
+    // A set decimal digit means "show this tool"; mask 0 therefore hides all.
     float mask = floor(type_mask + 0.1);
     float vtype = floor(vertex_type + 0.1);
-    if (mask < 0.5) {
-        return true;
-    }
-    if (vtype < 0.5) {
-        return false;
-    }
-    if (abs(vtype - 1.0) < 0.5 && mask_digit(mask, 1.0) >= 1.0) return true;
-    if (abs(vtype - 2.0) < 0.5 && mask_digit(mask, 10.0) >= 1.0) return true;
-    if (abs(vtype - 3.0) < 0.5 && mask_digit(mask, 100.0) >= 1.0) return true;
-    if (abs(vtype - 4.0) < 0.5 && mask_digit(mask, 1000.0) >= 1.0) return true;
-    if (abs(vtype - 5.0) < 0.5 && mask_digit(mask, 10000.0) >= 1.0) return true;
-    if (abs(vtype - 6.0) < 0.5 && mask_digit(mask, 100000.0) >= 1.0) return true;
-    if (abs(vtype - 8888.0) < 0.5 && mask_digit(mask, 1000000.0) >= 1.0) return true;
-    return false;
+    // T1-T6 and the laser each have a dedicated toolbar button/digit.
+    if (abs(vtype - 1.0) < 0.5) return mask_digit(mask, 1.0) >= 1.0;
+    if (abs(vtype - 2.0) < 0.5) return mask_digit(mask, 10.0) >= 1.0;
+    if (abs(vtype - 3.0) < 0.5) return mask_digit(mask, 100.0) >= 1.0;
+    if (abs(vtype - 4.0) < 0.5) return mask_digit(mask, 1000.0) >= 1.0;
+    if (abs(vtype - 5.0) < 0.5) return mask_digit(mask, 10000.0) >= 1.0;
+    if (abs(vtype - 6.0) < 0.5) return mask_digit(mask, 100000.0) >= 1.0;
+    if (abs(vtype - 8888.0) < 0.5) return mask_digit(mask, 1000000.0) >= 1.0;
+    // Tools without a dedicated button (T0, T7, T8, ...) share the next digit.
+    return mask_digit(mask, 10000000.0) >= 1.0;
 }
 
 void main()
