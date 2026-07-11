@@ -493,6 +493,16 @@ class Controller:
     def calibrateToolCommand(self):
         self.executeCommand("M491\n")
 
+    def calibrate_tool_advanced_command(self, repeat_count=1, x_offset=0.0, y_offset=0.0):
+        parts = ["M491"]
+        if x_offset != 0:
+            parts.append("X%g" % x_offset)
+        if y_offset != 0:
+            parts.append("Y%g" % y_offset)
+        if repeat_count != 1:
+            parts.append("R%d" % repeat_count)
+        self.executeCommand(" ".join(parts) + "\n")
+
     def clampToolCommand(self):
         self.executeCommand("M490.1\n")
 

@@ -17,6 +17,7 @@
 #:include ui/DropDownSplitter.kv
 #:include addons/probing/ProbingPopup.kv
 #:include ui/popups/set_position/set_position.kv
+#:include ui/popups/adv_calibrate/adv_calibrate.kv
 #:include addons/probe_scan/ui/ProbeScanPopup.kv
 #:include addons/facing/FacingWizardPopup.kv
 
@@ -855,6 +856,14 @@
         on_release:
             root.select('Third Item')
             app.root.controller.calibrateToolCommand()
+    Button:
+        text: tr._('Adv Calibrate')
+        size_hint_y: None
+        height: '40dp'
+        disabled: not app.is_community_firmware
+        on_release:
+            root.select('Third Item')
+            app.root.open_adv_calibrate_popup()
     Button:
         text: tr._('Drop')
         size_hint_y: None
