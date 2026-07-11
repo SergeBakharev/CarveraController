@@ -2919,6 +2919,9 @@ class Makera(RelativeLayout):
     _remaining_anchor_sec = 0.0
     _remaining_anchor_time = 0.0
     _progress_smooth_clock = None
+    _progress_timers_paused = False
+    _progress_remaining_frozen = 0.0
+    _progress_elapsed_frozen = 0
 
     show_update = True
     instantFSoverride = True
@@ -5442,6 +5445,27 @@ class Makera(RelativeLayout):
             self.progressFinish()
 
     # --------------------------------------------------------------`---------
+    _PROGRESS_TIMER_PAUSED_STATES = frozenset({"Hold", "Pause", "Wait", "Tool"})
+
+    def _job_progress_timers_paused(self, app):
+        return app.playing and app.state in self._PROGRESS_TIMER_PAUSED_STATES
+
+    def _current_remaining_sec(self):
+        return max(0.0, self._remaining_anchor_sec - (time.time() - self._remaining_anchor_time))
+
+    def _sync_progress_timer_pause(self, app):
+        """Freeze or resume elapsed/remaining timers when job playback is paused."""
+        timers_paused = self._job_progress_timers_paused(app)
+        if timers_paused:
+            if not self._progress_timers_paused:
+                self._progress_timers_paused = True
+                self._progress_remaining_frozen = self._current_remaining_sec()
+                self._progress_elapsed_frozen = CNC.vars["playedseconds"]
+        elif self._progress_timers_paused:
+            self._progress_timers_paused = False
+            self._remaining_anchor_sec = self._progress_remaining_frozen
+            self._remaining_anchor_time = time.time()
+
     def _update_progress_smooth(self, dt):
         """Refresh elapsed/remaining display every second while playing."""
         app = App.get_running_app()
@@ -5451,16 +5475,15 @@ class Makera(RelativeLayout):
             or not self.selected_file_line_count
         ):
             return
-        remaining_display = max(0.0, self._remaining_anchor_sec - (time.time() - self._remaining_anchor_time))
+        self._sync_progress_timer_pause(app)
+        if self._progress_timers_paused:
+            remaining_display = self._progress_remaining_frozen
+            elapsed_display = self._progress_elapsed_frozen
+        else:
+            remaining_display = self._current_remaining_sec()
+            elapsed_display = CNC.vars["playedseconds"]
         filename = os.path.basename(app.selected_remote_filename or app.selected_local_filename)
-        self.progress_info = " {} ( {}/{} - {}%, {} elapsed, {} to go )".format(
-            filename,
-            self.played_lines,
-            self.selected_file_line_count,
-            int(self.wpb_play.value),
-            Utils.second2hour(CNC.vars["playedseconds"]),
-            Utils.second2hour(int(remaining_display)),
-        )
+        self.progress_info = f" {filename} ( {self.played_lines}/{self.selected_file_line_count} - {int(self.wpb_play.value)}%, {Utils.second2hour(elapsed_display)} elapsed, {Utils.second2hour(int(remaining_display))} to go )"
 
     # --------------------------------------------------------------`---------
     def updateCompressProgress(self, value):
@@ -5497,6 +5520,9 @@ class Makera(RelativeLayout):
                 self.pausing = 1 if app.state == "Pause" else 0
                 self.waiting = 1 if app.state == "Wait" else 0
                 self.tooling = 1 if app.state == "Tool" else 0
+                if app.playing:
+                    self._sync_progress_timer_pause(app)
+                    self._update_progress_smooth(0)
                 # update status
                 self.status_data_view.main_text = app.state
                 if app.state == NOT_CONNECTED:
@@ -5824,6 +5850,7 @@ class Makera(RelativeLayout):
                     self.played_lines = 0  # Reset after updating
 
                 app.playing = False
+                self._progress_timers_paused = False
                 self.wpb_margin.value = 0
                 self.wpb_zprobe.value = 0
                 self.wpb_leveling.value = 0
@@ -5868,12 +5895,16 @@ class Makera(RelativeLayout):
                         else:
                             self._remaining_anchor_sec = 0.0
                         self._remaining_anchor_time = now
+                        if self._progress_timers_paused:
+                            self._progress_remaining_frozen = self._current_remaining_sec()
+                            self._progress_elapsed_frozen = CNC.vars["playedseconds"]
                 if (
                     (app.selected_remote_filename != "" or app.selected_local_filename != "")
                     and self.selected_file_line_count > 0
                     and self._progress_smooth_clock is None
                 ):
                     self._progress_smooth_clock = Clock.schedule_interval(self._update_progress_smooth, 1.0)
+                self._sync_progress_timer_pause(app)
                 # playing margin
                 if CNC.vars["atc_state"] == 4:
                     self.wpb_margin.value += 14
