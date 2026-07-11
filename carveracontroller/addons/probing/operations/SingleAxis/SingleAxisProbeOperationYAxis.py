@@ -15,7 +15,6 @@ class SingleAxisProbeOperationYAxis(OperationsBase):
         self.y_is_negative_move = y_is_negative_move
 
     def generate(self, input_config: dict[str, float]):
-
         config = copy.deepcopy(input_config)
 
         # remove other axes for clarity
@@ -27,7 +26,6 @@ class SingleAxisProbeOperationYAxis(OperationsBase):
         return "M466" + self.config_to_gcode(config)
 
     def get_missing_config(self, config: dict[str, float]):
-
         definition = SingleAxisProbeParameterDefinitions.YAxisDistance
         if not definition.code in config or len(config[definition.code]) == 0:
             return definition

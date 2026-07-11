@@ -7,18 +7,13 @@ PARENPAT = re.compile(r"(\(.*?\))")
 SEMIPAT = re.compile(r"(;.*)")
 CMDPAT = re.compile(r"([A-Za-z]+)")
 
-_O_KEYWORDS = (
-    r"elseif|endwhile|endrepeat|endsub|endif|continue|"
-    r"repeat|while|break|call|else|sub|do|if"
-)
+_O_KEYWORDS = r"elseif|endwhile|endrepeat|endsub|endif|continue|" r"repeat|while|break|call|else|sub|do|if"
 OCODE_PATTERN = re.compile(r"(?:^|\s)[Oo]\d+\s+(?:" + _O_KEYWORDS + r")\b")
 
 _MATH_KEYWORDS_COMPACT = r"xor|and|nor|mod|eq|ne|gt|ge|lt|le|or"
 _MATH_KEYWORDS_FUNCTIONS = r"sqrt|round|asin|acos|atan|sin|cos|tan|abs|fix|fup|ln|exp"
 _MATH_KEYWORDS_SPACED = (
-    r"sqrt|round|asin|acos|atan|xor|and|nor|mod|"
-    r"sin|cos|tan|abs|fix|fup|exp|"
-    r"eq|ne|gt|ge|lt|le|ln|or"
+    r"sqrt|round|asin|acos|atan|xor|and|nor|mod|" r"sin|cos|tan|abs|fix|fup|exp|" r"eq|ne|gt|ge|lt|le|ln|or"
 )
 
 GCODE_TOKEN_RE = re.compile(

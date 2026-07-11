@@ -81,7 +81,6 @@ class WIFIStream:
 
     # ----------------------------------------------------------------------
     def __init__(self, log_sent_receive=False):
-
         self.modem = XMODEM(self.getc, self.putc, "xmodem8k")
 
         handler = logging.StreamHandler(sys.stdout)

@@ -20,7 +20,6 @@ class ProbeTipOperationBore(OperationsBase):
         self.invert_direction = invert_direction
 
     def generate(self, input_config: dict[str, float]):
-
         config = copy.deepcopy(input_config)
 
         if self.requires_x:
@@ -33,7 +32,6 @@ class ProbeTipOperationBore(OperationsBase):
         return "M460.1" + self.config_to_gcode(config)
 
     def get_missing_config(self, config: dict[str, float]):
-
         if self.requires_x:
             definition = ProbeTipParameterDefinitions.XAxisDistance
             if not definition.code in config:
@@ -63,7 +61,6 @@ class ProbeTipOperationBoss(OperationsBase):
         self.invert_direction = invert_direction
 
     def generate(self, input_config: dict[str, float]):
-
         config = copy.deepcopy(input_config)
 
         if self.requires_x:
@@ -76,7 +73,6 @@ class ProbeTipOperationBoss(OperationsBase):
         return "M460.2" + self.config_to_gcode(config)
 
     def get_missing_config(self, config: dict[str, float]):
-
         if self.requires_x:
             definition = ProbeTipParameterDefinitions.XAxisDistance
             if not definition.code in config:
@@ -106,7 +102,6 @@ class ProbeTipOperationAnchor(OperationsBase):
         self.invert_direction = invert_direction
 
     def generate(self, input_config: dict[str, float]):
-
         config = copy.deepcopy(input_config)
 
         if self.requires_x:
@@ -119,7 +114,6 @@ class ProbeTipOperationAnchor(OperationsBase):
         return "M460.3" + self.config_to_gcode(config)
 
     def get_missing_config(self, config: dict[str, float]):
-
         if self.requires_x:
             definition = ProbeTipParameterDefinitions.XAxisDistance
             if not definition.code in config:

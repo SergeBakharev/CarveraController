@@ -3293,7 +3293,6 @@ class Makera(RelativeLayout):
         self.config_popup.settings_panel.add_json_panel(tr._("Pendant"), Config, data=json.dumps(pendant_config))
 
     def _update_macro_button_text(self):
-
         for macro_config_key in ["touch_macro_1", "touch_macro_2", "touch_macro_3"]:
             macro_value = Config.get("carvera", macro_config_key)
             if macro_value:

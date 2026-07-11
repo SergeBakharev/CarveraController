@@ -4,7 +4,6 @@ import math
 
 
 def arcball_camera_look_to(eye, look, up, flags):
-
     look_len = math.sqrt(look[0] * look[0] + look[1] * look[1] + look[2] * look[2])
     up_len = math.sqrt(up[0] * up[0] + up[1] * up[1] + up[2] * up[2])
     # up'' = normalize(up)

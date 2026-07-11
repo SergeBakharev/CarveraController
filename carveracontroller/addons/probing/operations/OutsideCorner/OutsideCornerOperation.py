@@ -19,7 +19,6 @@ class OutsideCornerOperation(OperationsBase):
         self.y_is_negative_move = y_is_negative_move
 
     def generate(self, input_config: dict[str, float]):
-
         config = copy.deepcopy(input_config)
 
         super().apply_direction(OutsideCornerParameterDefinitions.XAxisDistance.code, config, self.x_is_negative_move)
@@ -29,7 +28,6 @@ class OutsideCornerOperation(OperationsBase):
         return "M464" + self.config_to_gcode(config)
 
     def get_missing_config(self, config: dict[str, float]):
-
         required_definitions = {
             name: value
             for name, value in OutsideCornerParameterDefinitions.__dict__.items()
