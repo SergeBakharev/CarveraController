@@ -4786,6 +4786,51 @@ class Makera(RelativeLayout):
             content.add_widget(btns)
             popup.open()
 
+        if (
+            app.is_community_firmware
+            and version
+            and self.ctl_version
+            and not Utils.is_unversioned_controller(self.ctl_version)
+            and not Utils.is_dev_version_pair(version, self.ctl_version)
+            and Utils.digitize_major_minor(version) > Utils.digitize_major_minor(self.ctl_version)
+        ):
+            content = BoxLayout(orientation="vertical", padding=dp(15))
+            lbl = Label(
+                text=tr._(
+                    "This is an unsupported configuration.\n"
+                    "The machine firmware is newer than this Controller.\n\n"
+                    "Firmware: v%s\n"
+                    "Controller: v%s\n\n"
+                    "Please update the Controller to a matching version."
+                )
+                % (version, self.ctl_version),
+                halign="center",
+                valign="middle",
+            )
+            lbl.bind(size=lambda inst, val: setattr(inst, "text_size", val))
+            content.add_widget(lbl)
+            btns = BoxLayout(size_hint_y=0.4)
+            popup = Popup(
+                title=tr._("Unsupported Configuration"),
+                content=content,
+                size_hint=(0.5, 0.4),
+                auto_dismiss=False,
+            )
+            btn_dont_show = Button(text=tr._("Don't Show Again"))
+            btn_dont_show.bind(
+                on_release=lambda *a: (
+                    Config.set("carvera", "show_firmware_check", "0"),
+                    Config.write(),
+                    popup.dismiss(),
+                )
+            )
+            btn_continue = Button(text=tr._("Continue"))
+            btn_continue.bind(on_release=lambda *a: popup.dismiss())
+            btns.add_widget(btn_dont_show)
+            btns.add_widget(btn_continue)
+            content.add_widget(btns)
+            popup.open()
+
     # -----------------------------------------------------------------------
     def setUIForModel(self, model, *args):
         app = App.get_running_app()
