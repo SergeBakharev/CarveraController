@@ -104,9 +104,9 @@ def test_panel_set_value_defers_config_write(reg_type, cls, initial, new_value, 
 
     panel.set_value("test", "key", new_value)
 
-    assert config.get("test", "key") == initial, (
-        f"{reg_type}: Config was written before Apply. Deferred semantics broken — Discard would not revert."
-    )
+    assert (
+        config.get("test", "key") == initial
+    ), f"{reg_type}: Config was written before Apply. Deferred semantics broken — Discard would not revert."
 
 
 def test_pendant_spinner_change_propagates():
@@ -119,7 +119,7 @@ def test_pendant_spinner_change_propagates():
     # text changes fire the bound on_spinner_select callback.
     item.spinner.text = "WHB04"
 
-    assert str(item.value) == "WHB04", (
-        "Pendant change did not reach widget.value — would silently drop user selections on restart."
-    )
+    assert (
+        str(item.value) == "WHB04"
+    ), "Pendant change did not reach widget.value — would silently drop user selections on restart."
     assert config.get("test", "key") == "None", "Config write must remain deferred"

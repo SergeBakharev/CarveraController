@@ -332,7 +332,6 @@ AXIS_OBJ_PATH = _gcode_viewer_asset("axis.obj")
 
 class MeshManager:
     def __init__(self):
-
         ##data container
 
         self.positions = []
@@ -523,7 +522,6 @@ class MeshManager:
             self.raw_feed_rates.append(feed)
 
     def parse_line_data(self, linedata):
-
         # position (raw G-code coordinates)
         raw_pos = [linedata[0], linedata[1], linedata[2]]
 
@@ -1521,7 +1519,6 @@ class GCodeViewer(Widget):
 
     # repeat this function every 1/60 s
     def _on_frame_tick(self, _):
-
         # Recompute projection only when it is actually stale (resize / zoom / pan).
         if self._proj_dirty:
             self.update_proj()

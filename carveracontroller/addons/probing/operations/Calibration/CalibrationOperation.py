@@ -20,7 +20,6 @@ class CalibrationOperationFourthY(OperationsBase):
         self.invert_direction = invert_direction
 
     def generate(self, input_config: dict[str, float]):
-
         config = copy.deepcopy(input_config)
 
         config[CalibrationParameterDefinitions.XAxisDistance.code] = ""
@@ -30,7 +29,6 @@ class CalibrationOperationFourthY(OperationsBase):
         return "M469.4 " + self.config_to_gcode(config) + "\n Make sure 4th Axis and 3 axis probe are installed"
 
     def get_missing_config(self, config: dict[str, float]):
-
         if self.requires_x:
             definition = CalibrationParameterDefinitions.XAxisDistance
             if not definition.code in config:
@@ -60,7 +58,6 @@ class CalibrationOperationFourthZ(OperationsBase):
         self.invert_direction = invert_direction
 
     def generate(self, input_config: dict[str, float]):
-
         config = copy.deepcopy(input_config)
 
         config[CalibrationParameterDefinitions.YAxisDistance.code] = ""
@@ -69,7 +66,6 @@ class CalibrationOperationFourthZ(OperationsBase):
         return "M469.5 " + self.config_to_gcode(config) + "\n Make sure 4th Axis in on has a pin in the chuck"
 
     def get_missing_config(self, config: dict[str, float]):
-
         if self.requires_x:
             definition = CalibrationParameterDefinitions.XAxisDistance
             if not definition.code in config:
@@ -99,7 +95,6 @@ class CalibrationOperationAnchor1(OperationsBase):
         self.invert_direction = invert_direction
 
     def generate(self, input_config: dict[str, float]):
-
         config = copy.deepcopy(input_config)
 
         config[CalibrationParameterDefinitions.YAxisDistance.code] = ""
@@ -112,7 +107,6 @@ class CalibrationOperationAnchor1(OperationsBase):
         return "M469.1" + self.config_to_gcode(config) + "\n Make sure Anchor 1 and 3 axis probe are installed"
 
     def get_missing_config(self, config: dict[str, float]):
-
         if self.requires_x:
             definition = CalibrationParameterDefinitions.XAxisDistance
             if not definition.code in config:
@@ -142,7 +136,6 @@ class CalibrationOperationAnchor2(OperationsBase):
         self.invert_direction = invert_direction
 
     def generate(self, input_config: dict[str, float]):
-
         config = copy.deepcopy(input_config)
 
         config[CalibrationParameterDefinitions.YAxisDistance.code] = ""
@@ -155,7 +148,6 @@ class CalibrationOperationAnchor2(OperationsBase):
         return "M469.2" + self.config_to_gcode(config) + "\n Make sure Anchor 2 and 3 axis probe are installed"
 
     def get_missing_config(self, config: dict[str, float]):
-
         if self.requires_x:
             definition = CalibrationParameterDefinitions.XAxisDistance
             if not definition.code in config:

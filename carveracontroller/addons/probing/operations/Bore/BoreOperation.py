@@ -17,7 +17,6 @@ class BoreOperation(OperationsBase):
         self.requires_y = requires_y
 
     def generate(self, input_config: dict[str, float]):
-
         config = copy.deepcopy(input_config)
 
         if not self.requires_x:

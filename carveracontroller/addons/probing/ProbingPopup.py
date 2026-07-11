@@ -114,25 +114,21 @@ class ProbingPopup(ModalView):
         self.show_preview(the_op, cfg)
 
     def on_outside_corner_probing_pressed(self, operation_key: str):
-
         cfg = self.outside_corner_settings.get_config()
         the_op = OutsideCornerOperationType[operation_key].value
         self.show_preview(the_op, cfg)
 
     def on_bore_probing_pressed(self, operation_key: str):
-
         cfg = self.bore_settings.get_config()
         the_op = BoreOperationType[operation_key].value
         self.show_preview(the_op, cfg)
 
     def on_boss_probing_pressed(self, operation_key: str):
-
         cfg = self.boss_settings.get_config()
         the_op = BossOperationType[operation_key].value
         self.show_preview(the_op, cfg)
 
     def on_angle_probing_pressed(self, operation_key: str):
-
         cfg = self.angle_settings.get_config()
         the_op = AngleOperationType[operation_key].value
         self.show_preview(the_op, cfg)
