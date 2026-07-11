@@ -192,7 +192,7 @@ if WHB04_SUPPORTED:
                 daemon.set_display_step_indicator(whb04.StepIndicator.STEP)
 
         def _handle_jogging(self, daemon: whb04.Daemon, steps: int) -> None:
-            if not self._is_jogging_enabled():
+            if not self._is_jogging_enabled() and not self._controller.continuous_jog_active:
                 return
 
             axis = daemon.active_axis_name
