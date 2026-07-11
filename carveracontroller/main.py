@@ -218,6 +218,7 @@ from .Controller import (
 from .GcodeViewer import GCodeViewer
 from .ui import widget_helpers
 from .ui.PlayProgressBar import play_percent_from_line, tool_change_markers_to_percents
+from .ui.popups.adv_calibrate import AdvCalibratePopup
 from .ui.popups.set_position import (
     ChangeToolPopup,
     MoveAPopup,
@@ -3059,6 +3060,7 @@ class Makera(RelativeLayout):
         self.probing_popup = ProbingPopup(self.controller)
         self.probe_scan_popup = None
         self.facing_popup = FacingWizardPopup()
+        self.adv_calibrate_popup = AdvCalibratePopup()
         self.wcs_settings_popup = WCSSettingsPopup(self.controller, self.wcs_names)
         self.set_rotation_popup = SetRotationPopup(self.controller, self.cnc)
         self.comports_drop_down = DropDown(auto_width=False, width="250dp")
@@ -3407,6 +3409,13 @@ class Makera(RelativeLayout):
         self._pre_modal_keyboard_jog = self.keyboard_jog_control
         self.toggle_keyboard_jog_control(True)
         self.facing_popup.open()
+
+    def open_adv_calibrate_popup(self):
+        app = App.get_running_app()
+        if not app.is_community_firmware:
+            self.show_message_popup(tr._("Adv Calibrate requires the Community firmware."), False)
+            return
+        self.adv_calibrate_popup.open()
 
     def open_update_popup(self):
         self.upgrade_popup.check_button.disabled = False
