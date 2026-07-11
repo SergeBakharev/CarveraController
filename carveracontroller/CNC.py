@@ -154,6 +154,9 @@ class CNC:
         "anchor_length",
         "worksize_x",
         "worksize_y",
+        "clearance_x",
+        "clearance_y",
+        "clearance_z",
         "rotation_offset_x",
         "rotation_offset_y",
     ]
@@ -327,6 +330,12 @@ class CNC:
         self.totalTime = 0.0
         self.coordinates = []
         self.last_xyz = (-10000, -10000, -10000)
+        self.has_motion = False
+
+    # ----------------------------------------------------------------------
+    def _safe_z_wcs(self):
+        """WCS Z equivalent of coordinate.clearance_z (MCS clearance height from config.txt)."""
+        return float(CNC.vars.get("clearance_z", -3.0)) - CNC.vars.get("wcoz", 0.0)
 
     # ----------------------------------------------------------------------
     def resetMargins(self):
@@ -360,6 +369,21 @@ class CNC:
 
         # calculate path
         xyzs = self.motionPath()
+
+        if len(xyzs) > 0 and not self.has_motion:
+            # Parser assumes the machine starts at WCS origin; skip visualising
+            # travel from that assumed position on the first motion command.
+            self.has_motion = True
+            if self.gcode in (0, 1, 2, 3):
+                end = xyzs[-1]
+                if not self.z_command:
+                    # Playback reaches clearance height (coordinate.clearance_z) before the first XY move.
+                    safe_z = self._safe_z_wcs()
+                    end = (end[0], end[1], safe_z, end[3])
+                    self.zval = safe_z
+                xyzs = [end]
+            elif self.gcode in (81, 82, 83, 85, 86, 89) and len(xyzs) > 1:
+                xyzs = xyzs[1:]
 
         if len(xyzs) > 0:
             for xyz in xyzs:
@@ -398,6 +422,7 @@ class CNC:
     def motionStart(self, cmds):
         self.mval = 0  # reset m command
         self.tool_cmd = False
+        self.z_command = False
         for cmd in cmds:
             c = cmd[0].upper()
             try:
@@ -418,6 +443,7 @@ class CNC:
                 self.dy = self.yval - self.y
 
             elif c == "Z":
+                self.z_command = True
                 self.zval = value * self.unit
                 if not self.absolute:
                     self.zval += self.z

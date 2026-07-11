@@ -27,6 +27,7 @@
 - Fixed: Fix potential crashes due to an undefined FuncSetting key"
 - Fixed: Fix incorrect "No Pendant" in UI when pendant is working
 - Fixed: Fix invalid initial coordinates when resuming in the middle of a modal command
+- Fixed: 3D Visualisation of GCode movement would always show the initial movement as originating from the WCS Origin, this doesn't match reality. Now the Visualisation correctly shows the line as originating from above the first movement command at the configured clearance_z (default of MCS Z-3)
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file
 
