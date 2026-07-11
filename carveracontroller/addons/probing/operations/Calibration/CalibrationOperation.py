@@ -11,6 +11,7 @@ from carveracontroller.addons.probing.operations.SingleAxis.SingleAxisProbeParam
 
 class CalibrationOperationFourthY(OperationsBase):
     imagePath: str
+    ALLOWED_PARAMS = ("R", "C", "D", "Y", "Z", "I", "F")
 
     def __init__(self, title, requires_x, requires_y, invert_direction, image_path, **kwargs):
         self.title = title
@@ -20,13 +21,9 @@ class CalibrationOperationFourthY(OperationsBase):
         self.invert_direction = invert_direction
 
     def generate(self, input_config: dict[str, float]):
-        config = copy.deepcopy(input_config)
+        config = {key: input_config[key] for key in self.ALLOWED_PARAMS if key in input_config}
 
-        config[CalibrationParameterDefinitions.XAxisDistance.code] = ""
-        config[CalibrationParameterDefinitions.PinDiameter.code] = ""
-        config[CalibrationParameterDefinitions.ClearanceY.code] = ""
-
-        return "M469.4 " + self.config_to_gcode(config) + "\n Make sure 4th Axis and 3 axis probe are installed"
+        return "M469.6 " + self.config_to_gcode(config) + "\n Make sure 4th Axis and 3 axis probe are installed"
 
     def get_missing_config(self, config: dict[str, float]):
         if self.requires_x:
