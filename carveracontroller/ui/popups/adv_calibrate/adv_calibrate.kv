@@ -34,11 +34,15 @@
                 BoxLayout:
                     size_hint_y: None
                     height: dp(28)
+                    Widget:
                     ProbeSettingLabel:
+                        size_hint_x: None
+                        width: dp(130)
                         label_text: tr._('Repeats (R):')
                     ToolTipTextInput:
                         id: txt_repeat
-                        size_hint_x: 0.55
+                        size_hint_x: None
+                        width: dp(90)
                         font_size: '14dp'
                         hint_text: tr._("1")
                         hint_text_color: (0.2, 0.5, 0.5, 0.5)
@@ -48,15 +52,20 @@
                         halign: 'right'
                         input_type: 'number'
                         input_filter: 'int'
+                    Widget:
 
                 BoxLayout:
                     size_hint_y: None
                     height: dp(28)
+                    Widget:
                     ProbeSettingLabel:
+                        size_hint_x: None
+                        width: dp(130)
                         label_text: tr._('X Offset:')
                     ToolTipTextInput:
                         id: txt_x_offset
-                        size_hint_x: 0.55
+                        size_hint_x: None
+                        width: dp(90)
                         font_size: '14dp'
                         hint_text: tr._("0")
                         hint_text_color: (0.2, 0.5, 0.5, 0.5)
@@ -66,15 +75,20 @@
                         halign: 'right'
                         input_type: 'number'
                         input_filter: 'float'
+                    Widget:
 
                 BoxLayout:
                     size_hint_y: None
                     height: dp(28)
+                    Widget:
                     ProbeSettingLabel:
+                        size_hint_x: None
+                        width: dp(130)
                         label_text: tr._('Y Offset:')
                     ToolTipTextInput:
                         id: txt_y_offset
-                        size_hint_x: 0.55
+                        size_hint_x: None
+                        width: dp(90)
                         font_size: '14dp'
                         hint_text: tr._("0")
                         hint_text_color: (0.2, 0.5, 0.5, 0.5)
@@ -84,6 +98,7 @@
                         halign: 'right'
                         input_type: 'number'
                         input_filter: 'float'
+                    Widget:
 
         Widget:
         BoxLayout:
