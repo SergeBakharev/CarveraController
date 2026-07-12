@@ -3961,16 +3961,11 @@ class Makera(RelativeLayout):
                     remote_version = re.search(r"version = [0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9\-_]*", line)
                     app = App.get_running_app()
                     if remote_version != None:
-                        if "c" in remote_version[0]:
-                            app.is_community_firmware = True
-                            self.controller.is_community_firmware = True
-                        else:
-                            app.is_community_firmware = False
-                            self.controller.is_community_firmware = False
+                        self.fw_version = remote_version[0].split("=")[1].strip()
+                        app.is_community_firmware = bool(self.fw_version) and "c" in self.fw_version.lower()
+                        self.controller.is_community_firmware = app.is_community_firmware
                         if not app.is_community_firmware or not CNC.can_rotate_wcs:
                             self.controller.viewWCS()
-                    if remote_version != None:
-                        self.fw_version = remote_version[0].split("=")[1].strip()
                         app.fw_version_digitized = Utils.digitize_v(self.fw_version)
                         logger.debug(f"Firmware Version detected as {self.fw_version}")
                         Clock.schedule_once(partial(self.onFirmwareDetected, self.fw_version), 0)
@@ -5570,6 +5565,9 @@ class Makera(RelativeLayout):
                     self.fw_version = ""
                     app.model = ""
                     app.fw_version_digitized = 0
+                    app.is_community_firmware = False
+                    app.supports_auto_ext_out = False
+                    self.controller.is_community_firmware = False
                     self.machine_metadata_query_time = 0
 
                     # Clean up light toggle binding when disconnected
@@ -7346,6 +7344,7 @@ class MakeraApp(App):
     loading_page = BooleanProperty(False)
     model = StringProperty("")
     is_community_firmware = BooleanProperty(False)
+    supports_auto_ext_out = BooleanProperty(False)
     fw_version_digitized = NumericProperty(0)
     show_tooltips = BooleanProperty(True)
     tooltip_delay = NumericProperty(0.5)

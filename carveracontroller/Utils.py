@@ -665,8 +665,11 @@ def fill_local_dir_dropdown(dropdown, common_dirs, recent_dirs):
 
 
 def digitize_v(version):
-    # Clean version string by removing non-numeric suffixes like 'c', 'rc', etc.
-    v_list = version.split(".")
+    if not version:
+        return 0
+    # Strip pre-release suffixes (-RC1, etc.) before parsing numeric components.
+    base_version = version.split("-", 1)[0]
+    v_list = base_version.split(".")
     cleaned_parts = []
     for part in v_list:
         # Extract only the numeric portion at the beginning

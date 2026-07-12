@@ -746,7 +746,7 @@
         padding: '0.5dp'
         size_hint_y: None
         height: '40dp'
-        disabled: app.model == 'CA1'
+        disabled: not (app.is_community_firmware and app.fw_version_digitized >= digitize_v("2.2.0"))
         Switch:
             id: extout_switch
             canvas.before:
@@ -2959,7 +2959,7 @@
                     padding: '0.5dp'
                     size_hint_y: None
                     height: '30dp'
-                    disabled: app.model == 'CA1'
+                    disabled: not (app.is_community_firmware and app.fw_version_digitized >= digitize_v("2.2.0"))
                     Label:
                         text: tr._("Auto Ext. Out")
                         halign: "left"
