@@ -227,6 +227,7 @@ class CNC:
         "OvRapid": 100,
         "OvSpindle": 100,
         "vacuummode": 0,
+        "extoutmode": 0,
         "_OvChanged": False,
         "_OvFeed": 100,  # Override target values
         "_OvRapid": 100,

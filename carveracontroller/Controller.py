@@ -471,6 +471,12 @@ class Controller:
         else:
             self.executeCommand("M332\n")
 
+    def setExtOutMode(self, mode):
+        if mode:
+            self.executeCommand("M331.3\n")
+        else:
+            self.executeCommand("M332.3\n")
+
     def setLaserMode(self, mode):
         if mode:
             self.executeCommand("M321\n")
@@ -1356,10 +1362,13 @@ class Controller:
             CNC.vars["curspindle"] = float(d["S"][0])
             CNC.vars["tarspindle"] = float(d["S"][1])
             CNC.vars["OvSpindle"] = float(d["S"][2])
-            if len(d["S"]) > 3:
-                CNC.vars["vacuummode"] = int(d["S"][3])
-            if len(d["S"]) > 4:
-                CNC.vars["spindletemp"] = float(d["S"][4])
+            s_fields = d["S"]
+            if len(s_fields) > 3:
+                CNC.vars["vacuummode"] = int(s_fields[3])
+            if len(s_fields) >= 9 or len(s_fields) == 5:
+                CNC.vars["spindletemp"] = float(s_fields[4])
+            if len(s_fields) >= 8:
+                CNC.vars["extoutmode"] = int(s_fields[-1])
         if "T" in d:
             CNC.vars["tool"] = int(d["T"][0])
             CNC.vars["tlo"] = float(d["T"][1])

@@ -1038,6 +1038,7 @@ class CoordPopup(ModalView):
     config = {}
     mode = StringProperty()
     vacuummode = ObjectProperty()
+    extoutmode = ObjectProperty()
     origin_popup = ObjectProperty()
     zprobe_popup = ObjectProperty()
     auto_level_popup = ObjectProperty()
@@ -1160,6 +1161,11 @@ class CoordPopup(ModalView):
             self.vacuummode = True
         else:
             self.vacuummode = False
+
+        if CNC.vars["extoutmode"] == 1:
+            self.extoutmode = True
+        else:
+            self.extoutmode = False
 
         # init margin widgets
         self.cbx_margin.active = self.config["margin"]["active"]
@@ -2955,6 +2961,7 @@ class Makera(RelativeLayout):
         "feedrate_scale": [0.0, 100],
         "spindle_scale": [0.0, 100],
         "vacuum_mode": [0.0, 0],
+        "extout_mode": [0.0, 0],
         "laser_mode": [0.0, 0],
         "laser_scale": [0.0, 100],
         "laser_test": [0.0, 0],
@@ -5747,6 +5754,21 @@ class Makera(RelativeLayout):
                 if self.spindle_drop_down.vacuum_switch.active != CNC.vars["vacuummode"]:
                     self.spindle_drop_down.vacuum_switch.set_flag = True
                     self.spindle_drop_down.vacuum_switch.active = CNC.vars["vacuummode"]
+
+            elapsed = now - self.control_list["extout_mode"][0]
+            if elapsed < 2:
+                if elapsed > 0.5:
+                    self.controller.setExtOutMode(self.control_list["extout_mode"][1])
+                    self.control_list["extout_mode"][0] = now - 2
+            elif elapsed > 3:
+                if self.spindle_drop_down.extout_switch.active != CNC.vars["extoutmode"]:
+                    self.spindle_drop_down.extout_switch.set_flag = True
+                    self.spindle_drop_down.extout_switch.active = CNC.vars["extoutmode"]
+                if self.coord_popup._is_open:
+                    extout_switch_play = self.coord_popup.ids.extout_switch_play
+                    if extout_switch_play.active != CNC.vars["extoutmode"]:
+                        extout_switch_play.set_flag = True
+                        extout_switch_play.active = CNC.vars["extoutmode"]
 
             elapsed = now - self.control_list["spindle_scale"][0]
             if elapsed < 2:
