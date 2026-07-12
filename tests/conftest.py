@@ -59,6 +59,7 @@ def connected_idle_state():
     # Machine state
     CNC.vars["atc_state"] = 0
     CNC.vars["vacuummode"] = 0
+    CNC.vars["extoutmode"] = 0
     CNC.vars["wpvoltage"] = 3.3
     CNC.vars["active_coord_system"] = 0
     CNC.vars["rotation_angle"] = 0

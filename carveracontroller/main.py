@@ -1038,6 +1038,7 @@ class CoordPopup(ModalView):
     config = {}
     mode = StringProperty()
     vacuummode = ObjectProperty()
+    extoutmode = ObjectProperty()
     origin_popup = ObjectProperty()
     zprobe_popup = ObjectProperty()
     auto_level_popup = ObjectProperty()
@@ -1160,6 +1161,11 @@ class CoordPopup(ModalView):
             self.vacuummode = True
         else:
             self.vacuummode = False
+
+        if CNC.vars["extoutmode"] == 1:
+            self.extoutmode = True
+        else:
+            self.extoutmode = False
 
         # init margin widgets
         self.cbx_margin.active = self.config["margin"]["active"]
@@ -2955,6 +2961,7 @@ class Makera(RelativeLayout):
         "feedrate_scale": [0.0, 100],
         "spindle_scale": [0.0, 100],
         "vacuum_mode": [0.0, 0],
+        "extout_mode": [0.0, 0],
         "laser_mode": [0.0, 0],
         "laser_scale": [0.0, 100],
         "laser_test": [0.0, 0],
@@ -3954,16 +3961,11 @@ class Makera(RelativeLayout):
                     remote_version = re.search(r"version = [0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9\-_]*", line)
                     app = App.get_running_app()
                     if remote_version != None:
-                        if "c" in remote_version[0]:
-                            app.is_community_firmware = True
-                            self.controller.is_community_firmware = True
-                        else:
-                            app.is_community_firmware = False
-                            self.controller.is_community_firmware = False
+                        self.fw_version = remote_version[0].split("=")[1].strip()
+                        app.is_community_firmware = bool(self.fw_version) and "c" in self.fw_version.lower()
+                        self.controller.is_community_firmware = app.is_community_firmware
                         if not app.is_community_firmware or not CNC.can_rotate_wcs:
                             self.controller.viewWCS()
-                    if remote_version != None:
-                        self.fw_version = remote_version[0].split("=")[1].strip()
                         app.fw_version_digitized = Utils.digitize_v(self.fw_version)
                         logger.debug(f"Firmware Version detected as {self.fw_version}")
                         Clock.schedule_once(partial(self.onFirmwareDetected, self.fw_version), 0)
@@ -5563,6 +5565,9 @@ class Makera(RelativeLayout):
                     self.fw_version = ""
                     app.model = ""
                     app.fw_version_digitized = 0
+                    app.is_community_firmware = False
+                    app.supports_auto_ext_out = False
+                    self.controller.is_community_firmware = False
                     self.machine_metadata_query_time = 0
 
                     # Clean up light toggle binding when disconnected
@@ -5747,6 +5752,21 @@ class Makera(RelativeLayout):
                 if self.spindle_drop_down.vacuum_switch.active != CNC.vars["vacuummode"]:
                     self.spindle_drop_down.vacuum_switch.set_flag = True
                     self.spindle_drop_down.vacuum_switch.active = CNC.vars["vacuummode"]
+
+            elapsed = now - self.control_list["extout_mode"][0]
+            if elapsed < 2:
+                if elapsed > 0.5:
+                    self.controller.setExtOutMode(self.control_list["extout_mode"][1])
+                    self.control_list["extout_mode"][0] = now - 2
+            elif elapsed > 3:
+                if self.spindle_drop_down.extout_switch.active != CNC.vars["extoutmode"]:
+                    self.spindle_drop_down.extout_switch.set_flag = True
+                    self.spindle_drop_down.extout_switch.active = CNC.vars["extoutmode"]
+                if self.coord_popup._is_open:
+                    extout_switch_play = self.coord_popup.ids.extout_switch_play
+                    if extout_switch_play.active != CNC.vars["extoutmode"]:
+                        extout_switch_play.set_flag = True
+                        extout_switch_play.active = CNC.vars["extoutmode"]
 
             elapsed = now - self.control_list["spindle_scale"][0]
             if elapsed < 2:
@@ -7324,6 +7344,7 @@ class MakeraApp(App):
     loading_page = BooleanProperty(False)
     model = StringProperty("")
     is_community_firmware = BooleanProperty(False)
+    supports_auto_ext_out = BooleanProperty(False)
     fw_version_digitized = NumericProperty(0)
     show_tooltips = BooleanProperty(True)
     tooltip_delay = NumericProperty(0.5)

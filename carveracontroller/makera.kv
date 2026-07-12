@@ -684,6 +684,7 @@
 
 <SpindleDropDown>:
     vacuum_switch: vacuum_switch
+    extout_switch: extout_switch
     scale_slider: scale_slider
     status_scale: status_scale
     status_target: status_target
@@ -739,6 +740,25 @@
             on_active:
                 if self.set_flag: self.set_flag = False
                 else: app.root.update_control('vacuum_mode', self.active)
+    DropDownHint:
+        text: tr._(' Auto Ext. Out')
+    BoxLayout:
+        padding: '0.5dp'
+        size_hint_y: None
+        height: '40dp'
+        disabled: not (app.is_community_firmware and app.fw_version_digitized >= digitize_v("2.2.0"))
+        Switch:
+            id: extout_switch
+            canvas.before:
+                Color:
+                    rgba: 50/255, 50/255, 50/255, 1
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+            set_flag: False
+            on_active:
+                if self.set_flag: self.set_flag = False
+                else: app.root.update_control('extout_mode', self.active)
     DropDownHint:
         text: tr._('RPM Scaling')
     BoxLayout:
@@ -2934,6 +2954,39 @@
                         active: True if root.vacuummode == 1 else False
                         on_active:
                             app.root.update_control('vacuum_mode', self.active)
+
+                BoxLayout:
+                    padding: '0.5dp'
+                    size_hint_y: None
+                    height: '30dp'
+                    disabled: not (app.is_community_firmware and app.fw_version_digitized >= digitize_v("2.2.0"))
+                    Label:
+                        text: tr._("Auto Ext. Out")
+                        halign: "left"
+                        valign: "middle"
+                        font_size: '13sp'
+                        text_size: self.size
+
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                    ToolTipSwitch:
+                        id: extout_switch_play
+                        tooltip_txt: tr._("Automatically toggles on/off the External Output pin. This can be used to control a vacuum or compressor")
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                        set_flag: False
+                        active: True if root.extoutmode == 1 else False
+                        on_active:
+                            if self.set_flag: self.set_flag = False
+                            else: app.root.update_control('extout_mode', self.active)
 
                 Label:
                     size_hint_y: None

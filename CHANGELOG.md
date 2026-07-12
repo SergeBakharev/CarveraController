@@ -1,4 +1,3 @@
-[unreleased]
 - Enhancement: Add multi-select to the remote file browser
 - Enhancement: Display error message in halt popup. Requires halt errors to start with "ERROR: " in the firmware
 - Enhancement: Add popup notice when using stock firmware instead of the Community Firmware
@@ -17,6 +16,7 @@
 - Enhancement: New M469.6 4th Axis calibration routine finds the true 4th axis center now replaces the previous M469.4 4th axis head stock calibration
 - Enhancement: Advanced TLO Calibration option. Here you can set the offset to use from tool setter, and/or the number of repeat probings to use
 - Enhancement: Added a warning popup if the controller version is lower than the firmware. This is not a supported config
+- Enhancement: Added Auto Ext. Out toggle to spindle dropdown and Config and Run screen. This can be used to automatically run a vacuum or compressor when the spindle is running
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
 - Fixed: Repeated firmware checks now happen just once
 - Fixed: UI widget updates from the SerialMonitor() now dispatched via the main thread. This should reduce the number of RecycleView related crashes
