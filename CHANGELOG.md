@@ -32,6 +32,7 @@
 - Fixed: 3D Visualisation of GCode movement would always show the initial movement as originating from the WCS Origin, this doesn't match reality. Now the Visualisation correctly shows the line as originating from above the first movement command at the configured clearance_z (default of MCS Z-3)
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file
+- Change: Upgrade screen now will show the letter "c" at the end of the current firmware version if it's present. This indicates that it's Community firmware
 
 [2.1.0]
 - Enhancement: Add right-click menu option to clear resume-at-line setting
