@@ -5,7 +5,7 @@ from kivy.clock import Clock
 from kivy.compat import string_types
 from kivy.core.window import Window
 from kivy.factory import Factory
-from kivy.properties import BooleanProperty, NumericProperty, ObjectProperty, StringProperty
+from kivy.properties import BooleanProperty, NumericProperty, ObjectProperty, StringProperty, ListProperty
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.dropdown import DropDown
@@ -15,7 +15,8 @@ from kivy.uix.popup import Popup
 from kivy.uix.spinner import Spinner
 from kivy.uix.switch import Switch
 from kivy.uix.textinput import TextInput
-
+from kivy.uix.behaviors import ButtonBehavior
+import webbrowser
 
 class Tooltip(BoxLayout):
     pass
@@ -823,3 +824,24 @@ class ToolTipLabel(Label):
 
     def display_tooltip(self, *args):
         Window.add_widget(self._tooltip)
+
+class HelpButton(ButtonBehavior, BoxLayout):
+    image_source = StringProperty('data/open_iconic_UI/oi--question-mark.png')
+    helpPath = StringProperty("https://carvera-community.gitbook.io/docs")
+    background_normal = StringProperty('atlas://data/images/defaulttheme/button')
+    background_down = StringProperty('atlas://data/images/defaulttheme/button_pressed')
+    background_disabled_normal = StringProperty('atlas://data/images/defaulttheme/button_disabled')
+    background_disabled_down = StringProperty('atlas://data/images/defaulttheme/button_disabled_pressed')
+    border = ListProperty([16, 16, 16, 16])
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(on_release=self.open_link)
+        fbind = self.fbind
+
+
+    def open_link(self, *args):
+        webbrowser.open(self.helpPath)
+    
+    
+

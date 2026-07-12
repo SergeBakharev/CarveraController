@@ -514,6 +514,12 @@
         on_release:
             root.select('Third Item')
             app.root.controller.clearAutoLeveling()
+    BoxLayout:
+        size_hint_y: None
+        height: '48dp'
+        HelpButton:
+            helpPath: "https://carvera-community.gitbook.io/docs/controller/features/auto-leveling"
+
 
 
 <ADropDown>:
@@ -1499,6 +1505,12 @@
                     root.dismiss()
                     if root.unlock_safe_z:\
                     root.unlock_safe_z()
+            BoxLayout:
+                size_hint_x: 0.25
+                HelpButton:
+                    size_hint: 1,1
+                    helpPath: "https://carvera-community.gitbook.io/docs/controller/common-error-messages"
+
 
 <SelectAndCalibrateProbePopup>:
     lb_title: lb_title
@@ -1727,6 +1739,7 @@
                         id: btn_ok
                         text: tr._('Ok')
                         on_release: root.on_ok_pressed()
+                    
 
         TabbedPanelItem:
             text: tr._('Set By XYZ Probe')
@@ -3757,7 +3770,7 @@
                                             size: self.size
                                             radius: [dp(12),]
                                     GridLayout:
-                                        cols: 3
+                                        cols: 4
                                         rows: 1
                                         spacing: '3dp'
                                         GridBoxLayout:
@@ -3781,6 +3794,12 @@
                                                 text: tr._('Macro 3')
                                                 height: '35dp'
                                                 on_release: app.root.run_macro(3)
+                                        GridBoxLayout:
+                                            size_hint: 0.25,1        
+                                            HelpButton:
+                                                size_hint: 1,1
+                                                helpPath: "https://carvera-community.gitbook.io/docs/controller/features/macros"
+
                             Widget:
                                 size_hint_y: 0.15
                             BoxLayout:
@@ -3909,7 +3928,7 @@
                                             size: self.size
                                             radius: [dp(12),]
                                     GridLayout:
-                                        cols: 2
+                                        cols: 3
                                         rows: 2
                                         spacing: '3dp'
                                         GridBoxLayout:
@@ -3927,7 +3946,8 @@
                                                 text: tr._('Jog Mode:Step')
                                                 height: '35dp'
                                                 on_release: app.root.toggle_jog_mode()
-
+                                        GridBoxLayout:
+                                            size_hint_x: 0.15
                                         GridBoxLayout:
                                             ToggleButton:
                                                 id: kb_jog_btn
@@ -3943,6 +3963,11 @@
                                                 state: app.jog_pendant_enable
                                                 height: '35dp'
                                                 on_release: app.root.toggle_pendant_jog_control()
+                                        GridBoxLayout:
+                                            size_hint_x: 0.15
+                                            HelpButton:
+                                                size_hint: 1,1
+                                                helpPath: "https://carvera-community.gitbook.io/docs/controller/features/jogging-controls"
 
                         BoxLayout:
                             disabled: not (app.state == 'Idle' or app.state == 'Run' or app.state == 'Pause') or (app.playing and app.state != 'Pause') or (app.state == 'Run' and root.allow_jogging_while_machine_running == '0')
@@ -5435,6 +5460,11 @@
                 on_release:
                     root.apply_changes()
                     root.dismiss()
+            BoxLayout:
+                size_hint_x: 0.2
+                HelpButton:
+                    helpPath: "https://carvera-community.gitbook.io/docs/controller/features/workspace-management"
+
 
 <SetRotationPopup>:
     size_hint: 0.5, 0.4
@@ -5497,6 +5527,11 @@
                 text: tr._('Ok')
                 on_release:
                     on_release: root.on_ok_pressed()
+            BoxLayout:
+                size_hint_x: 0.2
+                HelpButton:
+                    helpPath: "https://carvera-community.gitbook.io/docs/controller/features/wcs-rotation"
+
 
 # Solid disabled look (no faded theme atlas / no ghost text): mute bg + text vs enabled row.
 <OpaqueDisabledButton@Button>:

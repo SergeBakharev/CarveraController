@@ -156,3 +156,12 @@
                             size: self.size
                     active: root.get_setting('SaveAOffset') == "1"
                     on_active: root.setting_changed('SaveAOffset', "1" if self.active else "0")
+            BoxLayout:
+                ProbeSettingLabel:
+                    label_text: 'More Info:'
+                    hint_text: ''
+                BoxLayout:
+                    size_hint_x: 0.4
+                    HelpButton:
+                        halign: 'center'
+                        helpPath: "https://carvera-community.gitbook.io/docs/firmware/supported-commands/mcodes/self-calibration"

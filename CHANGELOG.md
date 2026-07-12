@@ -33,6 +33,7 @@
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file
 - Change: Upgrade screen now will show the letter "c" at the end of the current firmware version if it's present. This indicates that it's Community firmware
+- Enhancement: added green question mark help buttons to the UI that link to the relavent documentation page
 
 [2.1.0]
 - Enhancement: Add right-click menu option to clear resume-at-line setting
