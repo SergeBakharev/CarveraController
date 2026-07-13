@@ -765,84 +765,46 @@ class Controller:
             if start_line < 1 or start_line > len(lines):
                 return None
 
-            # First, find the most recent M3 command and check if it has S parameter
+            # First, find the most recent M3 command and check if it has S parameter.
+            # Token matching normalizes zero-padded forms such as M03 without
+            # confusing other M-codes such as M30.
             most_recent_m3_line = None
             for i in range(start_line - 2, -1, -1):
-                original_line = lines[i]
-                line = original_line.strip()
-
-                # Remove comments using string methods
-                if ";" in line:
-                    line = line[: line.index(";")]
-                # Remove parentheses comments using string methods
-                while "(" in line and ")" in line:
-                    start_paren = line.index("(")
-                    end_paren = line.index(")", start_paren)
-                    line = line[:start_paren] + line[end_paren + 1 :]
-
-                line = line.strip()
-                if not line:
-                    continue
-
-                # Check if line contains M3 (not M30, M31, etc.)
-                line_upper = line.upper()
-                # Use regex to find M3 that's not part of M30, M31, etc.
-                # Look for M3 that's not followed by a digit (to avoid M30, M31, etc.)
-                # M3 can be preceded by anything (including digits from other commands like S12000).
-                # Yes, really! One of the example files (ACRYLIC-R2D2.nc) has "G0X0.000Y0.000S12000M3" wtf is that!!?
-                m3_match = re.search(r"M3(?![0-9])", line_upper)
-                if m3_match:
+                has_m3, spindle_speed = self._m3_spindle_speed_from_line(lines[i])
+                if has_m3:
                     most_recent_m3_line = i
-                    # Extract S parameter from this line (S can appear before or after M3)
-                    s_match = re.search(r"S(\d+)", line)
-                    if s_match:
-                        try:
-                            spindle_speed = float(s_match.group(1))
-                            return spindle_speed
-                        except (ValueError, TypeError):
-                            pass
+                    if spindle_speed is not None:
+                        return spindle_speed
                     # Found M3 but no S parameter, continue searching backwards
                     break
 
             # If we found M3 but no S parameter, search backwards for previous M3 with S
             if most_recent_m3_line is not None:
                 for i in range(most_recent_m3_line - 1, -1, -1):
-                    original_line = lines[i]
-                    line = original_line.strip()
-
-                    # Remove comments using string methods
-                    if ";" in line:
-                        line = line[: line.index(";")]
-                    # Remove parentheses comments using string methods
-                    while "(" in line and ")" in line:
-                        start_paren = line.index("(")
-                        end_paren = line.index(")", start_paren)
-                        line = line[:start_paren] + line[end_paren + 1 :]
-
-                    line = line.strip()
-                    if not line:
-                        continue
-
-                    # Check if line contains M3 (not M30, M31, etc.)
-                    line_upper = line.upper()
-                    # Use regex to find M3 that's not part of M30, M31, etc.
-                    # Look for M3 that's not followed by a digit (to avoid M30, M31, etc.)
-                    m3_match = re.search(r"M3(?![0-9])", line_upper)
-                    if m3_match:
-                        # Extract S parameter from this line (S can appear before or after M3)
-                        s_match = re.search(r"S(\d+)", line)
-                        if s_match:
-                            try:
-                                spindle_speed = float(s_match.group(1))
-                                return spindle_speed
-                            except (ValueError, TypeError):
-                                continue
+                    has_m3, spindle_speed = self._m3_spindle_speed_from_line(lines[i])
+                    if has_m3 and spindle_speed is not None:
+                        return spindle_speed
 
             return None
 
         except Exception as e:
             logger.warning(f"Error finding M3 spindle speed before line {start_line}: {e}")
             return None
+
+    def _m3_spindle_speed_from_line(self, line):
+        tokens = self._gcode_line_to_cmd_tokens(line)
+        has_m3 = any(self._command_token_matches_base(token, "M3") for token in tokens)
+        if not has_m3:
+            return (False, None)
+
+        for token in reversed(tokens):
+            if token[:1].upper() != "S":
+                continue
+            try:
+                return (True, float(token[1:]))
+            except (ValueError, TypeError):
+                continue
+        return (True, None)
 
     def _find_last_feed_rate(self, lines=None, start_line=None, feed_lookup=None):
         """
