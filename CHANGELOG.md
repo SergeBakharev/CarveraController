@@ -1,3 +1,4 @@
+- Fixed: Ensure complete XMODEM packets are written over Wi-Fi
 - Enhancement: Add multi-select to the remote file browser
 - Enhancement: Display error message in halt popup. Requires halt errors to start with "ERROR: " in the firmware
 - Enhancement: Add popup notice when using stock firmware instead of the Community Firmware

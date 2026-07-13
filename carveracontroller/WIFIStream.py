@@ -158,7 +158,8 @@ class WIFIStream:
         return None
 
     def putc(self, data, timeout=0.5):
-        return self.socket.send(data) or None
+        self.socket.sendall(data)
+        return len(data)
 
     def upload(self, filename, local_md5, callback):
         # do upload
