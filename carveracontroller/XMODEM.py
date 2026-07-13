@@ -92,6 +92,7 @@ __copyright__ = ["Copyright (c) 2010 Wijnand Modderman", "Copyright (c) 1981 Chu
 __license__ = "MIT"
 __version__ = "0.4.5"
 
+import hashlib
 import logging
 import platform
 import sys
@@ -717,6 +718,8 @@ class XMODEM:
         cancel = 0
         retrans = retry + 1
         md5_received = False
+        expected_md5 = None
+        received_md5 = hashlib.md5()
 
         while True:
             if self.canceled:
@@ -732,9 +735,17 @@ class XMODEM:
                 if char in (SOH, STX):
                     break
                 if char == EOT:
-                    # We received an EOT, so send an ACK and return the
-                    # received data length.
+                    # ACK the transport-level completion before validating the
+                    # whole-file digest advertised in block zero.
                     self.putc(ACK)
+                    actual_md5 = received_md5.hexdigest().encode()
+                    if expected_md5 is None or actual_md5 != expected_md5:
+                        self.log.error(
+                            "Download error: MD5 mismatch (expected=%r, actual=%r)",
+                            expected_md5,
+                            actual_md5,
+                        )
+                        return None
                     self.log.info("Transmission complete, %d bytes", income_size)
                     return income_size
                 if char == CAN:
@@ -813,7 +824,9 @@ class XMODEM:
                     retrans = retry + 1
                     if sequence == 0 and not md5_received:
                         md5_received = True
-                        if md5.encode() == data[1 + is_stx : 33 + is_stx]:
+                        data_len = data[0] << 8 | data[1] if is_stx else data[0]
+                        expected_md5 = data[1 + is_stx : (data_len + 1 + is_stx)].lower()
+                        if md5.encode().lower() == expected_md5:
                             self.putc(CAN)
                             self.putc(CAN)
                             self.putc(CAN)
@@ -823,7 +836,9 @@ class XMODEM:
                     else:
                         income_size += len(data) - 1 - is_stx
                         data_len = data[0] << 8 | data[1] if is_stx else data[0]
-                        stream.write(data[1 + is_stx : (data_len + 1 + is_stx)])
+                        payload = data[1 + is_stx : (data_len + 1 + is_stx)]
+                        stream.write(payload)
+                        received_md5.update(payload)
                         success_count = success_count + 1
                         if callable(callback):
                             callback(packet_size, success_count, error_count)
