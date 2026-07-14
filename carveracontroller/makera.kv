@@ -91,6 +91,9 @@
     width: '60dp'
     icon_size: 24
     icon: ''
+    # 'center' (default): icon centered behind the text, like the existing icon-only buttons.
+    # 'left': icon placed to the left of the text, side by side (used by the tool buttons).
+    icon_align: 'center'
     text: ''
     min_icon: ''
     min_icon_size: 12
@@ -102,16 +105,16 @@
     disabled_color: 0, 0, 0, 0
     Label:
         text: root.text if root.text else ''
-        halign: 'center'
-        valign: 'top' if root.min_icon else 'middle'
-        text_size: self.width, self.height - dp(root.min_icon_size + 12) if root.min_icon else None
+        halign: 'right' if root.icon_align == 'left' and root.icon else 'center'
+        valign: 'middle' if root.icon_align == 'left' else ('top' if root.min_icon else 'middle')
+        text_size: (self.width - dp(root.icon_size + 8), self.height - dp(root.min_icon_size + 8) if root.min_icon else self.height) if root.icon_align == 'left' and root.icon else (self.width, self.height - dp(root.min_icon_size + 12) if root.min_icon else None)
         color: tuple(app.active_color) if (root.active and not root.disabled) else ((110/255, 110/255, 110/255, 1) if root.disabled else (250/255, 250/255, 250/255, 1))
         canvas.before:
             Color:
                 rgba: tuple(app.active_color) if (root.active and not root.disabled) else ((110/255, 110/255, 110/255, 1) if root.disabled else (250/255, 250/255, 250/255, 1))
             Rectangle:
                 source: root.icon
-                pos: self.center_x - dp(root.icon_size / 2), self.center_y - dp(root.icon_size / 2)
+                pos: (self.x + dp(4), self.center_y - dp(root.icon_size / 2)) if root.icon_align == 'left' else (self.center_x - dp(root.icon_size / 2), self.center_y - dp(root.icon_size / 2))
                 size: dp(root.icon_size) if root.icon else 0, dp(root.icon_size) if root.icon else 0
             Color:
                 rgba: (250/255, 250/255, 250/255, 1) if root.min_active else (60/255, 60/255, 60/255, 1)
@@ -4260,9 +4263,12 @@
                                     # tools
                                     GcodeViewerToolBarButton:
                                         id: t1
-                                        width: '44dp'
+                                        width: '58dp' if root.show_tool_button_icons else '44dp'
                                         valign: 'middle'
                                         text: 'T1'
+                                        icon: ''
+                                        icon_align: 'left'
+                                        icon_size: 20
                                         active: app.tool == 1
                                         disabled: 1 not in root.used_tools
                                         min_icon: 'data/eye.png'
@@ -4271,9 +4277,12 @@
                                             app.root.filter_tool()
                                     GcodeViewerToolBarButton:
                                         id: t2
-                                        width: '44dp'
+                                        width: '58dp' if root.show_tool_button_icons else '44dp'
                                         valign: 'middle'
                                         text: 'T2'
+                                        icon: ''
+                                        icon_align: 'left'
+                                        icon_size: 20
                                         active: app.tool == 2
                                         disabled: 2 not in root.used_tools
                                         min_icon: 'data/eye.png'
@@ -4282,9 +4291,12 @@
                                             app.root.filter_tool()
                                     GcodeViewerToolBarButton:
                                         id: t3
-                                        width: '44dp'
+                                        width: '58dp' if root.show_tool_button_icons else '44dp'
                                         valign: 'middle'
                                         text: 'T3'
+                                        icon: ''
+                                        icon_align: 'left'
+                                        icon_size: 20
                                         active: app.tool == 3
                                         disabled: 3 not in root.used_tools
                                         min_icon: 'data/eye.png'
@@ -4293,9 +4305,12 @@
                                             app.root.filter_tool()
                                     GcodeViewerToolBarButton:
                                         id: t4
-                                        width: '44dp'
+                                        width: '58dp' if root.show_tool_button_icons else '44dp'
                                         valign: 'middle'
                                         text: 'T4'
+                                        icon: ''
+                                        icon_align: 'left'
+                                        icon_size: 20
                                         active: app.tool == 4
                                         disabled: 4 not in root.used_tools
                                         min_icon: 'data/eye.png'
@@ -4304,9 +4319,12 @@
                                             app.root.filter_tool()
                                     GcodeViewerToolBarButton:
                                         id: t5
-                                        width: '44dp'
+                                        width: '58dp' if root.show_tool_button_icons else '44dp'
                                         valign: 'middle'
                                         text: 'T5'
+                                        icon: ''
+                                        icon_align: 'left'
+                                        icon_size: 20
                                         active: app.tool == 5
                                         disabled: 5 not in root.used_tools
                                         min_icon: 'data/eye.png'
@@ -4315,9 +4333,12 @@
                                             app.root.filter_tool()
                                     GcodeViewerToolBarButton:
                                         id: t6
-                                        width: '44dp'
+                                        width: '58dp' if root.show_tool_button_icons else '44dp'
                                         valign: 'middle'
                                         text: 'T6'
+                                        icon: ''
+                                        icon_align: 'left'
+                                        icon_size: 20
                                         active: app.tool == 6
                                         disabled: 6 not in root.used_tools
                                         min_icon: 'data/eye.png'

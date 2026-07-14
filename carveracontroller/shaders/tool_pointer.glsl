@@ -1,4 +1,4 @@
-// Tool position pointer mesh (pointer.obj) with simple diffuse shading
+// Tool position pointer mesh with simple diffuse shading
 
 ---vertex
 $HEADER$

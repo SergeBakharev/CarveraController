@@ -83,7 +83,14 @@ from kivy.config import Config
 from kivy.factory import Factory
 from kivy.graphics import Color, Ellipse, Line, PopMatrix, PushMatrix, Rectangle, Rotate, Translate
 from kivy.metrics import Metrics, dp
-from kivy.properties import BooleanProperty, ListProperty, NumericProperty, ObjectProperty, StringProperty
+from kivy.properties import (
+    BooleanProperty,
+    DictProperty,
+    ListProperty,
+    NumericProperty,
+    ObjectProperty,
+    StringProperty,
+)
 from kivy.uix.behaviors import FocusBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
@@ -188,6 +195,7 @@ from kivy.lang import Builder
 from . import Utils, custom_widgets
 from .__version__ import __version__
 from .addons.probing.ProbingControls import ProbeButton
+from .addons.tool_visualization import extract_tool_table, format_tool_tooltip, get_tool_icon_path
 from .addons.tooltips.Tooltips import Tooltip, ToolTipButton, ToolTipDropDown
 from .CNC import (
     CNC,
@@ -2918,6 +2926,9 @@ class Makera(RelativeLayout):
     upcoming_tool = 0
     file_has_ocodes = False
     tool_change_markers = []
+    tool_table = {}
+    tool_icons = DictProperty({})
+    show_tool_button_icons = BooleanProperty(False)
 
     # Custom property to monitor CNC light state
     light_state = LightProperty(False)
@@ -3094,6 +3105,12 @@ class Makera(RelativeLayout):
         self.gcode_viewer.set_error_popup_callback(self._on_gcode_cannot_visualise)
         self.gcode_viewer.time_estimate_progress_callback = self._on_time_estimate_progress
         self.float_layout.tool_bar.show_grid = self.gcode_viewer.is_grid_visible()
+
+        # Handle tool button icons visibility when the window is resized
+        self.bind(show_tool_button_icons=self._refresh_tool_filter_buttons)
+        self.float_layout.tool_bar.bind(width=self._update_tool_button_icon_visibility)
+        Window.bind(on_resize=self._update_tool_button_icon_visibility)
+        Clock.schedule_once(lambda _dt: self._refresh_tool_filter_buttons(), 0)
 
         # init settings
         self.config = ConfigParser()
@@ -6941,6 +6958,9 @@ class Makera(RelativeLayout):
         self.wpb_play.value = 0
         self.used_tools = []
         self.upcoming_tool = 0
+        self.tool_table = {}
+        self.gcode_viewer.tool_table = {}
+        self._refresh_tool_filter_buttons()
         self._clear_tool_change_markers()
         app = App.get_running_app()
         app.curr_page = 1
@@ -7133,6 +7153,8 @@ class Makera(RelativeLayout):
         self.file_has_ocodes = False
         self.used_tools = []
         self.tool_change_markers = []
+        self.tool_table = {}
+        self.gcode_viewer.tool_table = {}
         Clock.schedule_once(self.load_start)
         f = None
         try:
@@ -7157,6 +7179,9 @@ class Makera(RelativeLayout):
             self.lines = f.readlines()
             self.selected_file_line_count = len(self.lines)
             f.close()
+            self.tool_table = extract_tool_table(self.lines)
+            self.gcode_viewer.tool_table = self.tool_table
+            self._refresh_tool_filter_buttons()
             app = App.get_running_app()
             app.total_pages = int(self.selected_file_line_count / MAX_LOAD_LINES) + (
                 0 if self.selected_file_line_count % MAX_LOAD_LINES == 0 else 1
@@ -7223,6 +7248,39 @@ class Makera(RelativeLayout):
             return
 
         Clock.schedule_once(self.load_end, 0)
+
+    # -----------------------------------------------------------------------
+    def _update_tool_button_icon_visibility(self, *_args):
+        tool_bar = self.float_layout.tool_bar
+        tool_bar_icons_required_width = dp(438 + 6 * 58)
+        if tool_bar.width <= 0:
+            return
+        has_parsed_tools = bool(self.tool_table)
+        show_icons = has_parsed_tools and tool_bar.width >= tool_bar_icons_required_width
+        if show_icons != self.show_tool_button_icons:
+            self.show_tool_button_icons = show_icons
+
+    @mainthread
+    def _refresh_tool_filter_buttons(self, *_args):
+        """Update T1..T6 toolbar icons and tooltips from the current tool table."""
+        self.tool_icons = {number: get_tool_icon_path(tool_def) for number, tool_def in self.tool_table.items()}
+        self._update_tool_button_icon_visibility()
+        default_icon = get_tool_icon_path(None)
+        tool_buttons = [
+            self.float_layout.t1,
+            self.float_layout.t2,
+            self.float_layout.t3,
+            self.float_layout.t4,
+            self.float_layout.t5,
+            self.float_layout.t6,
+        ]
+        for number, tool_button in enumerate(tool_buttons, start=1):
+            if self.show_tool_button_icons:
+                tool_button.icon = self.tool_icons.get(number, default_icon)
+            else:
+                tool_button.icon = ""
+            tool_def = self.tool_table.get(number)
+            tool_button.tooltip_txt = format_tool_tooltip(tool_def) if tool_def else ""
 
     # -----------------------------------------------------------------------
     def init_tool_filter(self):

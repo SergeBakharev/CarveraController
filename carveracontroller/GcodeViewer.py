@@ -42,6 +42,7 @@ from kivy.input.motionevent import MotionEvent
 # input
 from kivy.input.provider import MotionEventProvider
 
+from .addons.tool_visualization.mesh_builder import build_tool_meshes
 from .arcball_from_cpp import *
 from .Objloader import ObjFile
 from .ui.ViewCube import (
@@ -326,7 +327,6 @@ def _gcode_viewer_asset(name):
 
 VIEW_CUBE_ATLAS_PATH = _gcode_viewer_asset("view_cube_atlas.png")
 VIEW_CUBE_MODEL_PATH = _gcode_viewer_asset("view_cube_model.obj")
-POINTER_OBJ_PATH = _gcode_viewer_asset("pointer.obj")
 AXIS_OBJ_PATH = _gcode_viewer_asset("axis.obj")
 
 
@@ -345,6 +345,8 @@ class MeshManager:
         self.raw_linenumbers = []
         # feed rate (mm/min) per vertex, from CNC parser
         self.raw_feed_rates = []
+        # active tool number per vertex, used to pick the tool mesh to display
+        self.raw_tools = []
         # angles of vertices [4 axis]
         self.angles_of_vertices = []
 
@@ -378,6 +380,7 @@ class MeshManager:
         # raw numbers
         self.raw_linenumbers.clear()
         self.raw_feed_rates.clear()
+        self.raw_tools.clear()
         # angles of vertices [4 axis]
         self.angles_of_vertices.clear()
         # mesh container
@@ -397,13 +400,6 @@ class MeshManager:
     def get_pt_count(self):
         return len(self.positions)
 
-    def map_color(self, color_str):
-        if color_str == "Green":
-            return [0.0, 1.0, 0.0]
-        if color_str == "Red":
-            return [1.0, 0.0, 0.0]
-        return [1.0, 1.0, 1.0]
-
     # get center of meshes
     def get_center(self):
         if self.area_center_sum_index == 0:
@@ -417,109 +413,6 @@ class MeshManager:
     def get_vertex_position(self, idx):
         base = idx * VERTEX_FLOAT_NUM
         return [self.vertices[base], self.vertices[base + 1], self.vertices[base + 2]]
-
-    # parse single line
-    def parse_line(self, line):
-        arr_pt = line.split(" ")
-
-        # position (raw G-code coordinates)
-        raw_pos = [float(arr_pt[1]), float(arr_pt[3]), float(arr_pt[5])]
-
-        # Store raw positions before rotation
-        self.raw_positions.append(raw_pos[0])
-        self.raw_positions.append(raw_pos[1])
-        self.raw_positions.append(raw_pos[2])
-
-        pos = raw_pos
-        if self.is_4_axis:
-            angle = float(arr_pt[7])
-            pos = rotate_pt_by_x_axis_angle(pos[0], pos[1], pos[2], angle)
-
-        self.positions.append(pos[0])
-        self.positions.append(pos[1])
-        self.positions.append(pos[2])
-        self.min_pt = vec3_min(self.min_pt, pos)
-        self.max_pt = vec3_max(self.max_pt, pos)
-
-        # for center calculating
-        self.area_center_sum = vec3_add(self.area_center_sum, pos)
-        self.area_center_sum_index += 1
-
-        # get attributes of this point
-        vertex = [0] * VERTEX_FLOAT_NUM
-        if self.is_4_axis:
-            # 1 position
-            vertex[0] = pos[0]
-            vertex[1] = pos[1]
-            vertex[2] = pos[2]
-
-            # angle
-            angle = float(arr_pt[7])
-
-            # 2 color
-            color = self.map_color(arr_pt[9])
-            vertex[3] = color[0]
-            vertex[4] = color[1]
-            vertex[5] = color[2]
-
-            # 3 line number in gcode
-            vertex[6] = float(arr_pt[11])
-
-            # 4 type id
-            vertex[7] = len(self.positions) - 1
-
-            # 5 distance attribute
-            vertex[8] = 0  # set after length is calculated
-
-            # 6 set tool knife id
-            vertex[9] = float(arr_pt[13])
-
-            # 7 feed rate (mm/min)
-            is_rapid = arr_pt[9] == "Red"
-            feed = feed_mm_min_for_move(is_rapid)
-            vertex[10] = feed
-
-            # push this vertex to container
-            self.vertices.extend(vertex)
-            self.vertex_types.append(1.0 if arr_pt[9] == "Green" else 2.0)  # line type[red | green]
-            self.raw_linenumbers.append(vertex[6])
-            self.raw_feed_rates.append(feed)
-            self.angles_of_vertices.append(angle)
-        else:
-            # 1 position
-            vertex[0] = pos[0]
-            vertex[1] = pos[1]
-            vertex[2] = pos[2]
-
-            # 2 color
-            color = self.map_color(arr_pt[7])
-            vertex[3] = color[0]
-            vertex[4] = color[1]
-            vertex[5] = color[2]
-
-            # 3 line number in gcode
-            vertex[6] = float(arr_pt[9])
-
-            # 4 type id
-            vertex[7] = len(self.positions) - 1
-
-            # 5 distance attribute
-            vertex[8] = 0  # set after length is calculated
-
-            # 6 set tool knife id
-            vertex[9] = float(arr_pt[11])
-
-            # 7 feed rate (mm/min)
-            is_rapid = arr_pt[7] == "Red"
-            feed = feed_mm_min_for_move(is_rapid)
-            vertex[10] = feed
-
-            # push this vertex to container
-            self.vertices.extend(vertex)
-
-            self.vertex_types.append(1.0 if arr_pt[7] == "Green" else 2.0)  # line type[red | green]
-            self.raw_linenumbers.append(vertex[6])
-            self.raw_feed_rates.append(feed)
 
     def parse_line_data(self, linedata):
         # position (raw G-code coordinates)
@@ -578,6 +471,7 @@ class MeshManager:
         self.vertex_types.append(1.0 if linedata[4] > 0.5 else 2.0)  # line type[red | green]
         self.raw_linenumbers.append(vertex[6])
         self.raw_feed_rates.append(feed)
+        self.raw_tools.append(vertex[9])
         self.angles_of_vertices.append(angle)
 
     def generate_meshes(self):
@@ -639,25 +533,6 @@ class MeshManager:
             mesh_start_id = mesh_end_id - 1
             mesh_end_id = min(mesh_start_id + self.seg_mesh_vertex_count, vertex_count)
 
-    def add_lines(self, rawlines):
-        # parse line
-
-        # 1 check gcode type
-        is_4_axis = False
-        if len(rawlines) > 0 and "A:" in rawlines[0]:
-            is_4_axis = True
-
-        if self.is_4_axis is None:
-            self.is_4_axis = is_4_axis
-        elif self.is_4_axis != is_4_axis:
-            print("conflict line type!")
-
-        # 2 parse single line
-        for line in rawlines:
-            self.parse_line(line.strip())
-
-        self.generate_meshes()
-
     def add_data_arrs(self, rawdata, is_end=True):
         # parse line
 
@@ -710,7 +585,12 @@ class GCodeViewer(Widget):
     raw_linenumbers = []
     raw_positions = []
     raw_feed_rates = []
+    raw_tools = []
     frame_callback = None
+
+    # Tool number -> ToolDefinition extracted from the loaded file's CAM comments.
+    # Set from outside (see main.py) before/at the final load_array() call.
+    tool_table = {}
     time_estimate_progress_callback = None
     log_callback = None
     error_popup_callback = None
@@ -790,6 +670,14 @@ class GCodeViewer(Widget):
 
         self.meshmanager = MeshManager()
         self.positions = []
+
+        # Per-tool generated meshes (tool number -> (vertices, indices, vertex_format)),
+        # rebuilt whenever a new file finishes loading. `pointer_mesh_instr` is the Mesh
+        # instruction whose geometry gets swapped as the active tool changes.
+        self._tool_meshes = {}
+        self._default_tool_mesh = None
+        self.pointer_mesh_instr = None
+        self._active_tool_number = None
 
         # Dirty flags: set True whenever the scene must be re-rendered.
         # _scene_dirty covers view/pointer/axis uniform changes; _proj_dirty
@@ -1000,6 +888,11 @@ class GCodeViewer(Widget):
         self.line_times = []
         self.total_time = 0.0
         self.raw_feed_rates = []
+        self.raw_tools = []
+        self._tool_meshes = {}
+        self._default_tool_mesh = None
+        self.pointer_mesh_instr = None
+        self._active_tool_number = None
         self.linemesh.clear()
         self.canvas.remove(self.linemesh)
         self.canvas.remove(self.gridmesh)
@@ -1030,6 +923,46 @@ class GCodeViewer(Widget):
             self.clear_before_new_load = False
 
             self.meshmanager.clear()
+
+    def _tool_number_at_index(self, vertex_idx):
+        """Return the active tool number (int) at a given vertex index, or None."""
+        if not self.raw_tools:
+            return None
+        vertex_idx = max(0, min(vertex_idx, len(self.raw_tools) - 1))
+        return int(self.raw_tools[vertex_idx])
+
+    def _get_tool_mesh(self, tool_number):
+        """Return the (vertices, indices, vertex_format) mesh for a tool number.
+
+        Falls back to the default (basic pointed) mesh when the tool number
+        is unknown or has no metadata in the loaded file.
+        """
+        if tool_number is not None and tool_number in self._tool_meshes:
+            return self._tool_meshes[tool_number]
+        return self._default_tool_mesh
+
+    def _log_tool_mesh_summary(self):
+        """Log which tools used in the loaded file have real geometry vs. a fallback mesh."""
+        used_tool_numbers = sorted({int(t) for t in self.raw_tools}) if self.raw_tools else []
+        known = [t for t in used_tool_numbers if t in self._tool_meshes]
+        unknown = [t for t in used_tool_numbers if t not in self._tool_meshes]
+        logger.info(
+            f"Tool meshes ready: {len(known)}/{len(used_tool_numbers)} used tools have geometry "
+            f"from the tool table ({known}); using default (pointed) mesh for {unknown}"
+        )
+
+    def _update_pointer_tool_mesh(self, vertex_idx):
+        """Swap the pointer mesh geometry if the active tool changed."""
+        if self.pointer_mesh_instr is None:
+            return
+        tool_number = self._tool_number_at_index(vertex_idx)
+        if tool_number == self._active_tool_number:
+            return
+        vertices, indices, _fmt = self._get_tool_mesh(tool_number)
+        self.pointer_mesh_instr.vertices = vertices
+        self.pointer_mesh_instr.indices = indices
+        self._active_tool_number = tool_number
+        self._scene_dirty = True
 
     def load_array(self, tmpdataarrs, is_end=True):
         self.clear_loaded_memery()
@@ -1077,6 +1010,7 @@ class GCodeViewer(Widget):
             self.raw_positions = self.meshmanager.raw_positions
             self.raw_linenumbers = self.meshmanager.raw_linenumbers
             self.raw_feed_rates = self.meshmanager.raw_feed_rates
+            self.raw_tools = self.meshmanager.raw_tools
             self.angles_of_vertices = self.meshmanager.angles_of_vertices
 
             self.total_line_count = self.meshmanager.get_pt_count()
@@ -1091,8 +1025,15 @@ class GCodeViewer(Widget):
 
             self._update_feed_range_uniforms()
 
-            self.pointer = ObjFile(POINTER_OBJ_PATH)
             self.axis_obj = ObjFile(AXIS_OBJ_PATH)
+
+            # Build a basic 3D mesh per known tool (from CAM comments), plus a
+            # default (basic pointed) mesh used for tools with no metadata.
+            self._tool_meshes, self._default_tool_mesh = build_tool_meshes(
+                self.tool_table or {}, scale=self.move_scale_by_positon
+            )
+            self._active_tool_number = self._tool_number_at_index(0)
+            self._log_tool_mesh_summary()
 
             # 4-axis: rotate toolhead mesh instead of the toolpath
             self.rotate_line_or_knife = False
@@ -1109,11 +1050,11 @@ class GCodeViewer(Widget):
 
                 with self.pointermesh:
                     self.cb = Callback(None)
-                    m = list(self.pointer.objects.values())[0]
-                    self.mesh = Mesh(
-                        vertices=m.vertices,
-                        indices=m.indices,
-                        fmt=m.vertex_format,
+                    verts, idxs, fmt = self._get_tool_mesh(self._active_tool_number)
+                    self.pointer_mesh_instr = Mesh(
+                        vertices=verts,
+                        indices=idxs,
+                        fmt=fmt,
                         mode="triangles",
                     )
                     self.cb = Callback(None)
@@ -1561,6 +1502,8 @@ class GCodeViewer(Widget):
         line_index_withratio = line_index + line_ratio
 
         self.cur_line_index = line_index_withratio
+
+        self._update_pointer_tool_mesh(int(line_index_withratio))
 
         # Per-frame callback during toolpath playback only
         if self.frame_callback is not None and self.dynamic_display:
