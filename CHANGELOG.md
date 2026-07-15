@@ -18,6 +18,7 @@
 - Enhancement: Added a warning popup if the controller version is lower than the firmware. This is not a supported config
 - Enhancement: Added Auto Ext. Out toggle to spindle dropdown and Config and Run screen. This can be used to automatically run a vacuum or compressor when the spindle is running
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
+- Fixed: Confirmation dialogs no longer retain expanded layouts from laser and resume warnings
 - Fixed: Repeated firmware checks now happen just once
 - Fixed: UI widget updates from the SerialMonitor() now dispatched via the main thread. This should reduce the number of RecycleView related crashes
 - Fixed: Spindle temp reporting when running Analog type spindle without rpm reporting

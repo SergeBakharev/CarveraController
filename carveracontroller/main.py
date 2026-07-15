@@ -445,6 +445,10 @@ class BoxStencil(BoxLayout, StencilView):
 
 
 class ConfirmPopup(ModalView):
+    DEFAULT_SIZE_HINT = (0.5, 0.4)
+    DEFAULT_POS_HINT = {"right": 0.75, "top": 0.7}
+    DEFAULT_TITLE_SIZE_HINT_Y = 0.4
+
     showing = False
 
     def __init__(self, **kwargs):
@@ -455,6 +459,9 @@ class ConfirmPopup(ModalView):
 
     def on_dismiss(self):
         self.showing = False
+        self.size_hint = self.DEFAULT_SIZE_HINT
+        self.pos_hint = self.DEFAULT_POS_HINT.copy()
+        self.lb_title.size_hint_y = self.DEFAULT_TITLE_SIZE_HINT_Y
 
 
 class UnlockPopup(ModalView):
