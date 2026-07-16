@@ -14,6 +14,7 @@ class ToolType(Enum):
     BULL_NOSE_END_MILL = "bull_nose_end_mill"
     RADIUS_MILL = "radius_mill"  # Note: Represents a concave radius mill
     CHAMFER_MILL = "chamfer_mill"
+    ENGRAVING = "engraving"
     TAPERED_MILL = "tapered_mill"
     LOLLIPOP_MILL = "lollipop_mill"
     THREAD_MILL = "thread_mill"
@@ -44,8 +45,12 @@ class ToolDefinition:
     number: int
     tool_type: ToolType = ToolType.UNKNOWN
     diameter: float | None = None
+    shank_diameter: float | None = None
+    tip_diameter: float | None = None
     corner_radius: float | None = None
     taper_angle_deg: float | None = None
+    length: float | None = None
+    flute_length: float | None = None
     thread_depth: float | None = None
     thread_pitch: float | None = None
     description: str = ""

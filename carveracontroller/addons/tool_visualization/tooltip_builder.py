@@ -9,6 +9,7 @@ TOOL_TYPE_MSGIDS = {
     ToolType.BULL_NOSE_END_MILL: "Bull Nose End Mill",
     ToolType.RADIUS_MILL: "Radius Mill",
     ToolType.CHAMFER_MILL: "Chamfer Mill",
+    ToolType.ENGRAVING: "Engraving",
     ToolType.TAPERED_MILL: "Tapered Mill",
     ToolType.LOLLIPOP_MILL: "Lollipop Mill",
     ToolType.THREAD_MILL: "Thread Mill",
@@ -37,10 +38,16 @@ def format_tool_tooltip(tool_def):
     dimensions = []
     if tool_def.diameter is not None:
         dimensions.append(tr._("D={value:g}").format(value=tool_def.diameter))
+    if tool_def.shank_diameter is not None:
+        dimensions.append(tr._("SD={value:g}").format(value=tool_def.shank_diameter))
     if tool_def.corner_radius is not None:
         dimensions.append(tr._("CR={value:g}").format(value=tool_def.corner_radius))
     if tool_def.taper_angle_deg is not None:
         dimensions.append(tr._("TAPER={value:g}°").format(value=tool_def.taper_angle_deg))
+    if tool_def.length is not None:
+        dimensions.append(tr._("L={value:g}").format(value=tool_def.length))
+    if tool_def.flute_length is not None:
+        dimensions.append(tr._("FL={value:g}").format(value=tool_def.flute_length))
     if tool_def.thread_depth is not None:
         dimensions.append(tr._("Thread depth={value:g}").format(value=tool_def.thread_depth))
     if tool_def.thread_pitch is not None:
@@ -51,8 +58,7 @@ def format_tool_tooltip(tool_def):
     if tool_def.description:
         lines.append(tool_def.description)
 
-    vendor_parts = [part for part in (tool_def.vendor, tool_def.product_id) if part]
-    if vendor_parts:
-        lines.append(" - ".join(vendor_parts))
+    if tool_def.vendor:
+        lines.append(" - {vendor}".format(vendor=tool_def.vendor))
 
     return "\n".join(lines)

@@ -48,6 +48,21 @@ def _to_float(value):
         return None
 
 
+def _infer_shank_diameter(tool_type, diameter, corner_radius=None):
+    """Infer shank diameter from Fusion cutting geometry.
+
+    Returns None when diameter is missing or the type's shaft cannot be derived
+    from cutting geometry alone (tapered tip/lollipop ball).
+    """
+    if diameter is None or diameter <= 0:
+        return None
+    if tool_type is ToolType.RADIUS_MILL:
+        return diameter + 2.0 * (corner_radius or 0.0)
+    if tool_type in (ToolType.TAPERED_MILL, ToolType.LOLLIPOP_MILL):
+        return None
+    return diameter
+
+
 def _extract_full_line_comment(line):
     """Return the text of a comment if the whole (stripped) line is one, else None."""
     if len(line) >= 2 and line[0] == "(" and line[-1] == ")":
@@ -106,12 +121,16 @@ class Fusion360MakeraParser(ToolTableParser):
         product_id = fields[2] if len(fields) > 2 else ""
 
         type_name = match.group("type_name").strip()
+        tool_type = resolve_tool_type(type_name, TOOL_TYPE_NAME_MAP)
+        diameter = _to_float(match.group("diameter"))
+        corner_radius = _to_float(match.group("corner_radius"))
 
         return ToolDefinition(
             number=number,
-            tool_type=resolve_tool_type(type_name, TOOL_TYPE_NAME_MAP),
-            diameter=_to_float(match.group("diameter")),
-            corner_radius=_to_float(match.group("corner_radius")),
+            tool_type=tool_type,
+            diameter=diameter,
+            shank_diameter=_infer_shank_diameter(tool_type, diameter, corner_radius),
+            corner_radius=corner_radius,
             taper_angle_deg=_to_float(match.group("taper")),
             description=description,
             vendor=vendor,

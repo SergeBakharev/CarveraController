@@ -10,6 +10,7 @@ TOOL_TYPE_ICONS = {
     ToolType.BULL_NOSE_END_MILL: f"{TOOLS_ICON_DIR}/bull_nose_end_mill.png",
     ToolType.RADIUS_MILL: f"{TOOLS_ICON_DIR}/radius_mill.png",
     ToolType.CHAMFER_MILL: DEFAULT_ICON,
+    ToolType.ENGRAVING: DEFAULT_ICON,
     ToolType.TAPERED_MILL: f"{TOOLS_ICON_DIR}/tapered_mill.png",
     ToolType.LOLLIPOP_MILL: f"{TOOLS_ICON_DIR}/lollipop_mill.png",
     ToolType.THREAD_MILL: f"{TOOLS_ICON_DIR}/thread_mill.png",

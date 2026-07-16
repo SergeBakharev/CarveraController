@@ -3,12 +3,14 @@
 import logging
 
 from carveracontroller.addons.tool_visualization.parsers.fusion360_makera import Fusion360MakeraParser
+from carveracontroller.addons.tool_visualization.parsers.makera_studio import MakeraStudioParser
 
 logger = logging.getLogger(__name__)
 
 # Ordered list of parsers to try when extracting a tool table from a loaded
 # G-code file. Add new CAM/post-processor parsers here.
 TOOL_TABLE_PARSERS = [
+    MakeraStudioParser(),
     Fusion360MakeraParser(),
 ]
 

@@ -205,12 +205,75 @@ def _effective_tool_diameter(tool_def, scale):
     return diameter
 
 
+def _has_explicit_length(tool_def):
+    if not tool_def:
+        return False
+    length = getattr(tool_def, "length", None)
+    flute_length = getattr(tool_def, "flute_length", None)
+    return (length is not None and length > 0) or (flute_length is not None and flute_length > 0)
+
+
 def _profile_length(tool_def, scale, diameter, shared_length=None):
+    if tool_def:
+        length = getattr(tool_def, "length", None)
+        if length is not None and length > 0:
+            return length
+        flute_length = getattr(tool_def, "flute_length", None)
+        if flute_length is not None and flute_length > 0:
+            return flute_length
     if shared_length is not None and shared_length > 0:
         return shared_length
     if tool_def and getattr(tool_def, "diameter", None) and tool_def.diameter > 0:
         return diameter * LENGTH_DIAMETER_FACTOR
     return fallback_tool_dimensions(scale)[1]
+
+
+def _resolve_cutting_overall_length(tool_def, overall_length):
+    """Return (cutting_length, overall_length), splitting on flute when possible."""
+    if not tool_def:
+        return overall_length, overall_length
+    length = getattr(tool_def, "length", None)
+    flute_length = getattr(tool_def, "flute_length", None)
+    if length is not None and length > 0 and flute_length is not None and flute_length > 0 and length > flute_length:
+        return flute_length, length
+    return overall_length, overall_length
+
+
+def _shank_radius(tool_def, cutting_radius):
+    shank_diameter = getattr(tool_def, "shank_diameter", None) if tool_def else None
+    if shank_diameter is not None and shank_diameter > 0:
+        return shank_diameter / 2.0
+    return cutting_radius
+
+
+def _safe_tip_diameter(tool_def, diameter):
+    tip_diameter = getattr(tool_def, "tip_diameter", None) if tool_def else None
+    if tip_diameter is None or tip_diameter < 0:
+        return 0.0
+    return min(tip_diameter, diameter)
+
+
+def _append_shank_section(points, cutting_length, overall_length, shank_radius):
+    """Extend a cutting profile with an optional cylindrical shank above it."""
+    if not points:
+        return points
+
+    last_z, last_r = points[-1]
+    # Tip geometry may already exceed the requested flute length (e.g. ball nose).
+    cutting_z = max(cutting_length, last_z)
+    if cutting_z > last_z + 1e-9:
+        points = list(points) + [(cutting_z, last_r)]
+        last_z, last_r = cutting_z, last_r
+    else:
+        points = list(points)
+
+    if overall_length <= cutting_z + 1e-9:
+        return points
+
+    if abs(shank_radius - last_r) > 1e-9:
+        points.append((cutting_z, shank_radius))
+    points.append((overall_length, shank_radius))
+    return points
 
 
 def _safe_corner_radius(tool_def, diameter, tool_type=None):
@@ -326,15 +389,26 @@ def _radius_mill_profile(diameter, length, corner_radius=0.0, **_kwargs):
     return points
 
 
-def _chamfer_or_tapered_profile(diameter, length, taper_angle_deg=DEFAULT_TAPER_ANGLE_DEG, **_kwargs):
-    """Pointed conical profile used for chamfer mills (and as the generic fallback)."""
+def _chamfer_or_tapered_profile(diameter, length, taper_angle_deg=DEFAULT_TAPER_ANGLE_DEG, tip_diameter=0.0, **_kwargs):
+    """Flat-tip (or pointed) conical profile for chamfer mills and engraving bits."""
     radius = diameter / 2.0
+    tip_radius = max(tip_diameter or 0.0, 0.0) / 2.0
+    tip_radius = min(tip_radius, radius)
+
     half_angle_rad = math.radians(taper_angle_deg) / 2.0
     half_angle_rad = min(max(half_angle_rad, math.radians(5.0)), math.radians(85.0))
-    cone_height = radius / math.tan(half_angle_rad)
 
-    points = [(0.0, 0.0), (cone_height, radius)]
-    if length > cone_height:
+    if tip_radius <= 1e-9:
+        cone_height = radius / math.tan(half_angle_rad)
+        points = [(0.0, 0.0), (cone_height, radius)]
+    else:
+        radial_rise = radius - tip_radius
+        cone_height = radial_rise / math.tan(half_angle_rad) if radial_rise > 1e-9 else 0.0
+        points = [(0.0, tip_radius)]
+        if cone_height > 1e-9:
+            points.append((cone_height, radius))
+
+    if length > points[-1][0]:
         points.append((length, radius))
     return points
 
@@ -417,6 +491,7 @@ PROFILE_BUILDERS = {
     ToolType.BULL_NOSE_END_MILL: _bull_nose_profile,
     ToolType.RADIUS_MILL: _radius_mill_profile,
     ToolType.CHAMFER_MILL: _chamfer_or_tapered_profile,
+    ToolType.ENGRAVING: _chamfer_or_tapered_profile,
     ToolType.TAPERED_MILL: _tapered_mill_profile,
     ToolType.LOLLIPOP_MILL: _lollipop_profile,
 }
@@ -442,9 +517,23 @@ def fallback_tool_profile(scale):
 
 
 def _reference_length(tool_table, scale):
-    """Compute the shared tool height used for every tool in `tool_table`.
-    This is required since the unit system of the document can vary.
+    """Compute the shared fallback height for tools without explicit length metadata.
+
+    Derived from the largest diameter among tools that lack length/flute_length,
+    so it scales with the document's unit system instead of a fixed absolute value.
     """
+    diameters = [
+        _effective_tool_diameter(tool_def, scale)
+        for tool_def in tool_table.values()
+        if tool_def
+        and not _has_explicit_length(tool_def)
+        and getattr(tool_def, "diameter", None)
+        and tool_def.diameter > 0
+    ]
+    if diameters:
+        return max(diameters) * LENGTH_DIAMETER_FACTOR
+
+    # Every tool already has an explicit length (or none have a usable diameter).
     diameters = [
         _effective_tool_diameter(tool_def, scale)
         for tool_def in tool_table.values()
@@ -463,22 +552,44 @@ def tool_profile(tool_def, length=None, scale=1.0):
     """
     diameter = _tool_diameter(tool_def, scale)
     effective_diameter = _effective_tool_diameter(tool_def, scale)
-    length = _profile_length(tool_def, scale, effective_diameter, length)
+    overall_length = _profile_length(tool_def, scale, effective_diameter, length)
+    cutting_length, overall_length = _resolve_cutting_overall_length(tool_def, overall_length)
     tool_type = getattr(tool_def, "tool_type", ToolType.UNKNOWN) if tool_def else ToolType.UNKNOWN
     corner_radius = _safe_corner_radius(tool_def, diameter, tool_type)
     taper_angle_deg = _safe_taper_angle_deg(tool_def)
+    tip_diameter = _safe_tip_diameter(tool_def, diameter)
     thread_depth = _safe_thread_depth(tool_def, diameter)
     thread_pitch = _safe_thread_pitch(tool_def, diameter)
 
     builder = PROFILE_BUILDERS.get(tool_type, DEFAULT_PROFILE_BUILDER)
 
-    return builder(
+    profile = builder(
         diameter,
-        length,
+        cutting_length,
         corner_radius=corner_radius,
         taper_angle_deg=taper_angle_deg,
+        tip_diameter=tip_diameter,
         thread_depth=thread_depth,
         thread_pitch=thread_pitch,
+    )
+
+    # Tapered mills and lollipops already encode body/neck geometry; only append
+    # a constant shank when the parser provided an explicit shank diameter, or
+    # for other tool types that use a cylindrical shaft above the flute.
+    cutting_radius = profile[-1][1] if profile else effective_diameter / 2.0
+    if tool_type in (ToolType.TAPERED_MILL, ToolType.LOLLIPOP_MILL):
+        shank_diameter = getattr(tool_def, "shank_diameter", None) if tool_def else None
+        if shank_diameter is None or shank_diameter <= 0:
+            if overall_length > profile[-1][0] + 1e-9:
+                # Extend along the existing end radius without inventing a shank step.
+                profile = list(profile) + [(overall_length, profile[-1][1])]
+            return profile
+
+    return _append_shank_section(
+        profile,
+        cutting_length,
+        overall_length,
+        _shank_radius(tool_def, cutting_radius),
     )
 
 
@@ -533,13 +644,13 @@ def build_tool_meshes(tool_table, scale=1.0):
     """Build a mesh for every tool in `tool_table`, plus a default mesh for
     tools with no metadata.
 
-    Known tools share:
-    - the same overall height, derived from the largest diameter in the
-      table (see `_reference_length`) so it scales sensibly with the
-      document's unit system instead of using a fixed absolute value.
-    - a single radius boost factor derived from the smallest tool in the
-      batch, so tiny tools stay visible without making unrelated tools look
-      like they share the same diameter.
+    Tools without explicit length/flute metadata share a fallback height derived
+    from the largest diameter among those tools (see `_reference_length`).
+    Tools that provide length or flute_length use their own heights.
+
+    A single radius boost factor is derived from the smallest tool in the batch,
+    so tiny tools stay visible without making unrelated tools look like they
+    share the same diameter.
 
     The default (no-metadata) mesh keeps a fixed on-screen size, independent
     of file units.
@@ -550,9 +661,10 @@ def build_tool_meshes(tool_table, scale=1.0):
 
     if tool_table:
         shared_length = _reference_length(tool_table, scale)
-        profiles = {
-            number: tool_profile(tool_def, length=shared_length, scale=scale) for number, tool_def in tool_table.items()
-        }
+        profiles = {}
+        for number, tool_def in tool_table.items():
+            length_hint = None if _has_explicit_length(tool_def) else shared_length
+            profiles[number] = tool_profile(tool_def, length=length_hint, scale=scale)
         radius_boost = _compute_radius_boost(list(profiles.values()), scale)
         tool_meshes = {
             number: _build_revolve_mesh(_scale_profile(profile, scale, radius_boost))

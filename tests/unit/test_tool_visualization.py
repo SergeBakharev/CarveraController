@@ -25,6 +25,13 @@ from carveracontroller.addons.tool_visualization.mesh_builder import (
 from carveracontroller.addons.tool_visualization.parsers.fusion360_makera import (
     TOOL_TYPE_NAME_MAP,
     Fusion360MakeraParser,
+    _infer_shank_diameter,
+)
+from carveracontroller.addons.tool_visualization.parsers.makera_studio import (
+    TOOL_TYPE_NAME_MAP as MAKERA_STUDIO_TOOL_TYPE_NAME_MAP,
+)
+from carveracontroller.addons.tool_visualization.parsers.makera_studio import (
+    MakeraStudioParser,
 )
 from carveracontroller.addons.tool_visualization.tool_definition import resolve_tool_type
 
@@ -65,10 +72,14 @@ class TestFusion360MakeraParser:
         assert table[1].number == 1
         assert table[1].tool_type == ToolType.FLAT_END_MILL
         assert table[1].diameter == 6.0
+        assert table[1].shank_diameter == 6.0
         assert table[1].corner_radius == 0.0
         assert table[1].description == "Flat end mill"
         assert table[1].vendor == "Vendor"
         assert table[1].product_id == "PID"
+        assert table[1].length is None
+        assert table[1].flute_length is None
+        assert table[1].tip_diameter is None
 
     def test_parses_optional_taper_and_ignored_zmin(self, parser):
         lines = ["(T2  Bull tool  D=3.175 CR=0.5 TAPER=45deg - ZMIN=-5 - bull nose end mill)\n"]
@@ -76,6 +87,7 @@ class TestFusion360MakeraParser:
 
         assert table[2].tool_type == ToolType.BULL_NOSE_END_MILL
         assert table[2].taper_angle_deg == 45.0
+        assert table[2].shank_diameter == 3.175
 
     def test_parses_tapered_mill_comment(self, parser):
         lines = ["(T12        D=1.872 CR=1. TAPER=3.8deg - ZMIN=-0.7 - tapered mill)\n"]
@@ -86,12 +98,39 @@ class TestFusion360MakeraParser:
         assert table[12].corner_radius == 1.0
         assert table[12].taper_angle_deg == 3.8
         assert table[12].type_name == "tapered mill"
+        assert table[12].shank_diameter is None
+
+    def test_infers_radius_mill_shank_from_outer_diameter(self, parser):
+        lines = ["(T5  Concave  D=2 CR=2 - radius mill)\n"]
+        table = parser.parse(lines)
+
+        assert table[5].tool_type == ToolType.RADIUS_MILL
+        assert table[5].shank_diameter == 6.0
+
+    def test_chamfer_mill_keeps_chamfer_type(self, parser):
+        lines = [
+            "(T1  Single Flute Engraving Metal 60 deg*.1mm      D=3.175 CR=0. "
+            "TAPER=30deg - ZMIN=0. - chamfer mill)\n"
+        ]
+        table = parser.parse(lines)
+
+        assert table[1].tool_type == ToolType.CHAMFER_MILL
+        assert table[1].shank_diameter == 3.175
+        assert table[1].taper_angle_deg == 30.0
+
+    def test_lollipop_leaves_shank_unset(self, parser):
+        lines = ["(T8  Under  D=6 CR=0 - lollipop mill)\n"]
+        table = parser.parse(lines)
+
+        assert table[8].tool_type == ToolType.LOLLIPOP_MILL
+        assert table[8].shank_diameter is None
 
     def test_parses_semicolon_comments(self, parser):
         lines = [";T3  Thread cutter  D=4 CR=0 - thread mill\n"]
         table = parser.parse(lines)
 
         assert table[3].tool_type == ToolType.THREAD_MILL
+        assert table[3].shank_diameter == 4.0
 
     def test_ignores_duplicate_tool_entries(self, parser):
         lines = [
@@ -109,12 +148,80 @@ class TestFusion360MakeraParser:
 
         assert table[4].tool_type == ToolType.UNKNOWN
         assert table[4].type_name == "mystery cutter"
+        assert table[4].shank_diameter == 6.0
+
+
+class TestMakeraStudioParser:
+    @pytest.fixture
+    def parser(self):
+        return MakeraStudioParser()
+
+    def test_parses_sample_flat_end_header(self, parser):
+        lines = [
+            ";@MKR|BEGIN\n",
+            ";@MKR|SCHEMA|v=1.0.0\n",
+            ";@MKR|TOOL|number=1|id=111011203812|name=3.175*2*12mm Flat End|type=Flat End|"
+            "handlediameter=3.175|sticklength=0|shoulderlength=12|flutelength=12|diameter=2|"
+            "tipdiameter=2|cornerradius=0|angle=0|halfAngle=0\n",
+            ";@MKR|END\n",
+            "G0 X0\n",
+        ]
+        table = parser.parse(lines)
+
+        tool = table[1]
+        assert tool.tool_type == ToolType.FLAT_END_MILL
+        assert tool.diameter == 2.0
+        assert tool.shank_diameter == 3.175
+        assert tool.tip_diameter == 2.0
+        assert tool.corner_radius == 0.0
+        assert tool.length == 12.0
+        assert tool.flute_length == 12.0
+        assert tool.description == "3.175*2*12mm Flat End"
+        assert tool.product_id == "111011203812"
+        assert tool.type_name == "Flat End"
+        assert tool.taper_angle_deg is None
+
+    def test_parses_engraving_half_angle_as_included_taper(self, parser):
+        lines = [
+            ";@MKR|TOOL|number=2|id=abc|name=V-bit|type=Engraving|handlediameter=3.175|"
+            "sticklength=20|shoulderlength=0|flutelength=12|diameter=3.175|tipdiameter=0.1|"
+            "cornerradius=0|angle=0|halfAngle=15\n"
+        ]
+        table = parser.parse(lines)
+
+        tool = table[2]
+        assert tool.tool_type == ToolType.ENGRAVING
+        assert tool.taper_angle_deg == 30.0
+        assert tool.tip_diameter == 0.1
+        assert tool.length == 20.0
+        assert tool.flute_length == 12.0
+        assert tool.shank_diameter == 3.175
+
+    def test_unknown_type_falls_back_to_unknown(self, parser):
+        lines = [";@MKR|TOOL|number=3|id=x|name=Mystery|type=Mystery Cutter|diameter=6|cornerradius=0\n"]
+        table = parser.parse(lines)
+
+        assert table[3].tool_type == ToolType.UNKNOWN
+        assert table[3].type_name == "Mystery Cutter"
+
+    def test_returns_empty_for_non_mkr_header(self, parser):
+        lines = ["(T1  Flat end mill  D=6 CR=0 - flat end mill)\n", "G0 X0\n"]
+        assert parser.parse(lines) == {}
 
 
 class TestToolDefinitionHelpers:
     def test_resolve_tool_type_normalises_names(self):
         assert resolve_tool_type("  Flat   End   Mill ", TOOL_TYPE_NAME_MAP) == ToolType.FLAT_END_MILL
         assert resolve_tool_type("", TOOL_TYPE_NAME_MAP) == ToolType.UNKNOWN
+        assert resolve_tool_type("Flat End", MAKERA_STUDIO_TOOL_TYPE_NAME_MAP) == ToolType.FLAT_END_MILL
+        assert resolve_tool_type("Engraving", MAKERA_STUDIO_TOOL_TYPE_NAME_MAP) == ToolType.ENGRAVING
+
+    def test_infer_shank_diameter(self):
+        assert _infer_shank_diameter(ToolType.FLAT_END_MILL, 6.0) == 6.0
+        assert _infer_shank_diameter(ToolType.RADIUS_MILL, 2.0, 2.0) == 6.0
+        assert _infer_shank_diameter(ToolType.TAPERED_MILL, 1.5) is None
+        assert _infer_shank_diameter(ToolType.LOLLIPOP_MILL, 6.0) is None
+        assert _infer_shank_diameter(ToolType.CHAMFER_MILL, None) is None
 
 
 class TestIconBuilder:
@@ -128,6 +235,10 @@ class TestIconBuilder:
     def test_maps_tapered_mill_icon(self):
         tool_def = ToolDefinition(number=12, tool_type=ToolType.TAPERED_MILL)
         assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/tapered_mill.png"
+
+    def test_maps_engraving_to_default_pointed_icon(self):
+        tool_def = ToolDefinition(number=1, tool_type=ToolType.ENGRAVING)
+        assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/pointed_mill.png"
 
 
 class TestTooltipBuilder:
@@ -153,6 +264,23 @@ class TestTooltipBuilder:
     def test_uses_enum_label_when_type_name_missing(self):
         tool_def = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=3.0)
         assert format_tool_tooltip(tool_def) == "T1 - Flat End Mill\nD=3"
+
+    def test_includes_shank_length_and_flute_when_present(self):
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.ENGRAVING,
+            diameter=3.175,
+            shank_diameter=3.175,
+            length=20.0,
+            flute_length=12.0,
+            type_name="Engraving",
+        )
+        tooltip = format_tool_tooltip(tool_def)
+
+        assert "SD=3.175" in tooltip
+        assert "L=20" in tooltip
+        assert "FL=12" in tooltip
+        assert "Engraving" in tooltip
 
 
 def _vertex_normal(vertices, index):
@@ -457,6 +585,73 @@ class TestMeshBuilder:
         assert profile_bull_mid_r == pytest.approx(bull_mid_r, abs=0.05)
         assert profile_radius_mid_r < profile_bull_mid_r
 
+    def test_explicit_length_and_flute_produce_shank_step(self):
+        profile = tool_profile(
+            ToolDefinition(
+                number=1,
+                tool_type=ToolType.FLAT_END_MILL,
+                diameter=2.0,
+                shank_diameter=3.175,
+                length=20.0,
+                flute_length=12.0,
+            )
+        )
+
+        assert profile[0] == (0.0, 1.0)
+        assert (12.0, 1.0) in profile
+        assert profile[-1] == (20.0, pytest.approx(3.175 / 2.0))
+        assert any(math.isclose(z, 12.0) and math.isclose(r, 3.175 / 2.0) for z, r in profile)
+
+    def test_missing_lengths_still_use_diameter_factor(self):
+        profile = tool_profile(
+            ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=6.0),
+            length=None,
+        )
+        assert profile[-1][0] == pytest.approx(6.0 * LENGTH_DIAMETER_FACTOR)
+
+    def test_engraving_tip_diameter_zero_is_pointed(self):
+        profile = tool_profile(
+            ToolDefinition(
+                number=1,
+                tool_type=ToolType.ENGRAVING,
+                diameter=6.0,
+                tip_diameter=0.0,
+                taper_angle_deg=30.0,
+            ),
+            length=18.0,
+        )
+        assert profile[0] == (0.0, 0.0)
+
+    def test_engraving_with_flat_tip(self):
+        profile = tool_profile(
+            ToolDefinition(
+                number=1,
+                tool_type=ToolType.ENGRAVING,
+                diameter=6.0,
+                tip_diameter=1.0,
+                taper_angle_deg=30.0,
+            ),
+            length=18.0,
+        )
+        assert profile[0] == (0.0, 0.5)
+        assert profile[0][1] > 0.0
+
+    def test_build_tool_meshes_uses_per_tool_explicit_lengths(self):
+        tool_table = {
+            1: ToolDefinition(
+                number=1,
+                tool_type=ToolType.FLAT_END_MILL,
+                diameter=2.0,
+                length=12.0,
+                flute_length=12.0,
+            ),
+            2: ToolDefinition(number=2, tool_type=ToolType.FLAT_END_MILL, diameter=10.0),
+        }
+        meshes, _ = build_tool_meshes(tool_table, scale=1.0)
+
+        assert _mesh_height(meshes[1][0]) == pytest.approx(12.0)
+        assert _mesh_height(meshes[2][0]) == pytest.approx(10.0 * LENGTH_DIAMETER_FACTOR)
+
 
 class TestExtractor:
     def test_extract_tool_table_returns_first_non_empty_parser_result(self):
@@ -469,3 +664,19 @@ class TestExtractor:
     def test_extract_tool_table_returns_empty_dict_when_unrecognised(self):
         lines = ["G0 X0 Y0\n", "G1 X1 F100\n"]
         assert extract_tool_table(lines) == {}
+
+    def test_extract_prefers_makera_studio_when_mkr_header_present(self):
+        lines = [
+            ";@MKR|BEGIN\n",
+            ";@MKR|TOOL|number=1|id=1|name=Flat|type=Flat End|handlediameter=3.175|"
+            "sticklength=0|shoulderlength=12|flutelength=12|diameter=2|tipdiameter=2|"
+            "cornerradius=0|angle=0|halfAngle=0\n",
+            ";@MKR|END\n",
+            "(T1  Should be ignored  D=99 CR=0 - flat end mill)\n",
+            "G0 X0\n",
+        ]
+        table = extract_tool_table(lines)
+
+        assert table[1].diameter == 2.0
+        assert table[1].shank_diameter == 3.175
+        assert table[1].product_id == "1"
