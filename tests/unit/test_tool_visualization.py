@@ -258,7 +258,7 @@ class TestTooltipBuilder:
         )
         tooltip = format_tool_tooltip(tool_def)
 
-        assert tooltip == ("T2 - Bull nose end mill\nD=6 CR=0.5 TAPER=5°\nRoughing endmill\nMakera - EM-6-05")
+        assert tooltip == ("T2 - Bull nose end mill\nD=6 CR=0.5 TAPER=5°\nRoughing endmill\n - Makera")
 
     def test_uses_enum_label_when_type_name_missing(self):
         tool_def = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=3.0)
