@@ -77,6 +77,16 @@ class TestFusion360MakeraParser:
         assert table[2].tool_type == ToolType.BULL_NOSE_END_MILL
         assert table[2].taper_angle_deg == 45.0
 
+    def test_parses_tapered_mill_comment(self, parser):
+        lines = ["(T12        D=1.872 CR=1. TAPER=3.8deg - ZMIN=-0.7 - tapered mill)\n"]
+        table = parser.parse(lines)
+
+        assert table[12].tool_type == ToolType.TAPERED_MILL
+        assert table[12].diameter == 1.872
+        assert table[12].corner_radius == 1.0
+        assert table[12].taper_angle_deg == 3.8
+        assert table[12].type_name == "tapered mill"
+
     def test_parses_semicolon_comments(self, parser):
         lines = [";T3  Thread cutter  D=4 CR=0 - thread mill\n"]
         table = parser.parse(lines)
@@ -114,6 +124,10 @@ class TestIconBuilder:
     def test_maps_known_tool_types(self):
         tool_def = ToolDefinition(number=1, tool_type=ToolType.BALL_END_MILL)
         assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/ball_end_mill.png"
+
+    def test_maps_tapered_mill_icon(self):
+        tool_def = ToolDefinition(number=12, tool_type=ToolType.TAPERED_MILL)
+        assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/tapered_mill.png"
 
 
 class TestTooltipBuilder:
@@ -300,16 +314,107 @@ class TestMeshBuilder:
             assert profile[0] == (0.0, pytest.approx(diameter / 2.0))
             assert profile[-1][1] == pytest.approx(diameter / 2.0 + corner_radius)
             assert len(profile) > 2
-        elif tool_type in (ToolType.CHAMFER_MILL, ToolType.TAPERED_MILL):
+        elif tool_type == ToolType.CHAMFER_MILL:
             assert profile[0] == (0.0, 0.0)
             assert len(profile) >= 2
+        elif tool_type == ToolType.TAPERED_MILL:
+            # Tip diameter D with a bull-nose corner; sides widen above the tip.
+            assert profile[0][0] == pytest.approx(0.0)
+            assert 0.0 < profile[0][1] < diameter / 2.0
+            assert profile[-1][1] > diameter / 2.0
+            assert len(profile) > 3
         elif tool_type == ToolType.LOLLIPOP_MILL:
             assert len(profile) > 4
+            assert profile[0] == (0.0, pytest.approx(0.0))
+            assert max(r for _, r in profile) == pytest.approx(diameter / 2.0)
+            # Neck is a plain cylinder: last two points share the undercut radius.
             assert profile[-1][1] < diameter / 2.0
+            assert profile[-2][1] == pytest.approx(profile[-1][1])
+            assert profile[-1][0] == shared_length
         elif tool_type == ToolType.THREAD_MILL:
             assert profile[0][1] < diameter / 2.0
             assert max(r for _, r in profile) == pytest.approx(diameter / 2.0)
             assert len(profile) >= 3
+
+    def test_tapered_mill_is_bull_nose_tip_with_taper(self):
+        diameter = 6.0
+        corner_radius = 1.0
+        taper_angle_deg = 30.0
+        shared_length = diameter * LENGTH_DIAMETER_FACTOR
+        profile = tool_profile(
+            ToolDefinition(
+                number=12,
+                tool_type=ToolType.TAPERED_MILL,
+                diameter=diameter,
+                corner_radius=corner_radius,
+                taper_angle_deg=taper_angle_deg,
+            ),
+            length=shared_length,
+        )
+
+        alpha = math.radians(taper_angle_deg)
+        flat_radius = diameter / 2.0 - corner_radius * math.cos(alpha)
+        z_tan = corner_radius * (1.0 - math.sin(alpha))
+        r_tan = diameter / 2.0
+        end_radius = r_tan + (shared_length - z_tan) * math.tan(alpha)
+
+        assert profile[0] == (0.0, pytest.approx(flat_radius))
+        assert any(math.isclose(z, z_tan, abs_tol=1e-6) and math.isclose(r, r_tan, abs_tol=1e-6) for z, r in profile)
+        assert profile[-1][0] == pytest.approx(shared_length)
+        assert profile[-1][1] == pytest.approx(end_radius)
+        assert profile[-1][1] > diameter / 2.0
+
+    def test_tapered_mill_without_corner_radius_has_flat_tip(self):
+        diameter = 6.0
+        taper_angle_deg = 30.0
+        shared_length = diameter * LENGTH_DIAMETER_FACTOR
+        profile = tool_profile(
+            ToolDefinition(
+                number=1,
+                tool_type=ToolType.TAPERED_MILL,
+                diameter=diameter,
+                corner_radius=0.0,
+                taper_angle_deg=taper_angle_deg,
+            ),
+            length=shared_length,
+        )
+
+        tip_radius = diameter / 2.0
+        end_radius = tip_radius + shared_length * math.tan(math.radians(taper_angle_deg))
+        assert profile[0] == (0.0, tip_radius)
+        assert profile[-1][0] == pytest.approx(shared_length)
+        assert profile[-1][1] == pytest.approx(end_radius)
+
+    def test_tapered_mill_with_zero_taper_matches_bull_nose(self):
+        diameter = 6.0
+        corner_radius = 1.0
+        shared_length = diameter * LENGTH_DIAMETER_FACTOR
+        tapered = tool_profile(
+            ToolDefinition(
+                number=1,
+                tool_type=ToolType.TAPERED_MILL,
+                diameter=diameter,
+                corner_radius=corner_radius,
+                taper_angle_deg=0.0,
+            ),
+            length=shared_length,
+        )
+        bull = tool_profile(
+            ToolDefinition(
+                number=2,
+                tool_type=ToolType.BULL_NOSE_END_MILL,
+                diameter=diameter,
+                corner_radius=corner_radius,
+            ),
+            length=shared_length,
+        )
+
+        assert tapered[0] == bull[0]
+        assert tapered[-1] == bull[-1]
+        assert len(tapered) == len(bull)
+        for (z0, r0), (z1, r1) in zip(tapered, bull):
+            assert z0 == pytest.approx(z1)
+            assert r0 == pytest.approx(r1)
 
     def test_radius_mill_interprets_diameter_as_flat_bottom(self):
         profile = tool_profile(

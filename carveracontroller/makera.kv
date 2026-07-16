@@ -1439,22 +1439,25 @@
 <ConfirmPopup>:
     lb_title: lb_title
     lb_content: lb_content
-    size_hint: 0.5, 0.4
+    size_hint: 0.5, 0.45
     pos_hint: {"right": 0.75, "top": 0.7}
     auto_dismiss: False
     BoxLayout:
         padding: '15dp'
         orientation: 'vertical'
         Label:
-            size_hint_y: 0.4
+            size_hint_y: 0.25
             id: lb_title
             text: tr._('Confirm Box')
             bold: True
         Label:
             id: lb_content
             text: tr._('Confirm to continue?')
+            text_size: self.size
+            halign: 'center'
+            valign: 'middle'
         BoxLayout:
-            size_hint_y: 0.4
+            size_hint_y: 0.3
             Button:
                 text: tr._('Cancel')
                 on_release:

@@ -4261,20 +4261,29 @@ class Makera(RelativeLayout):
         self.confirm_popup.open(self)
 
     # -----------------------------------------------------------------------
+    def _format_target_tool_text(self):
+        """Return display text for the tool being requested in a tool-change popup."""
+        tool_number = CNC.vars["target_tool"]
+        if tool_number == ZPROBE_TOOL_NUMBER:
+            return "Probe"
+        if tool_number == LASER_TOOL_NUMBER:
+            return "Laser"
+        if tool_number == PROBE_3D_TOOL_NUMBER:
+            return "3D Probe"
+        if is_probe_tools_range(tool_number):
+            return "Custom Probe"
+
+        tool_def = self.tool_table.get(tool_number)
+        tooltip = format_tool_tooltip(tool_def) if tool_def else ""
+        return tooltip if tooltip else str(tool_number)
+
+    # -----------------------------------------------------------------------
     def open_tool_confirm_popup(self):
         if self.confirm_popup.showing:
             return
-        target_tool = str(CNC.vars["target_tool"])
+        target_tool = self._format_target_tool_text()
         target_collet_type = CNC.vars["target_collet_type"]
         target_collet_type_text = ["Undefined", "3mm", '1/8"', "4mm", "6mm", '1/4"', "8mm"]
-        if CNC.vars["target_tool"] == ZPROBE_TOOL_NUMBER:
-            target_tool = "Probe"
-        elif CNC.vars["target_tool"] == LASER_TOOL_NUMBER:
-            target_tool = "Laser"
-        elif CNC.vars["target_tool"] == PROBE_3D_TOOL_NUMBER:
-            target_tool = "3D Probe"
-        elif is_probe_tools_range(CNC.vars["target_tool"]):
-            target_tool = "Custom Probe"
 
         app = App.get_running_app()
         if app.has_atc:
@@ -4285,7 +4294,7 @@ class Makera(RelativeLayout):
                         self.confirm_popup.lb_title.text = tr._("Manual toolchange")
                         self.confirm_popup.lb_content.text = (
                             tr._("Insert tool: ")
-                            + "%s\n" % (target_tool)
+                            + "%s\n\n" % (target_tool)
                             + tr._("Then press ' Confirm' or main button to clamp.\n")
                         )
                     else:

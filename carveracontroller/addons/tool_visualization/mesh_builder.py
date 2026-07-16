@@ -224,7 +224,7 @@ def _safe_corner_radius(tool_def, diameter, tool_type=None):
 
 def _safe_taper_angle_deg(tool_def):
     angle = getattr(tool_def, "taper_angle_deg", None) if tool_def else None
-    if not angle or angle <= 0 or angle >= 180:
+    if angle is None or angle < 0 or angle >= 180:
         return DEFAULT_TAPER_ANGLE_DEG
     return angle
 
@@ -327,6 +327,7 @@ def _radius_mill_profile(diameter, length, corner_radius=0.0, **_kwargs):
 
 
 def _chamfer_or_tapered_profile(diameter, length, taper_angle_deg=DEFAULT_TAPER_ANGLE_DEG, **_kwargs):
+    """Pointed conical profile used for chamfer mills (and as the generic fallback)."""
     radius = diameter / 2.0
     half_angle_rad = math.radians(taper_angle_deg) / 2.0
     half_angle_rad = min(max(half_angle_rad, math.radians(5.0)), math.radians(85.0))
@@ -338,21 +339,72 @@ def _chamfer_or_tapered_profile(diameter, length, taper_angle_deg=DEFAULT_TAPER_
     return points
 
 
+def _tapered_mill_profile(diameter, length, corner_radius=0.0, taper_angle_deg=DEFAULT_TAPER_ANGLE_DEG, **_kwargs):
+    """Bull-nose tip of diameter `D`, then a conical taper."""
+    tip_radius = diameter / 2.0
+    # Per-side angle from the axis (Fusion "Taper angle").
+    alpha = math.radians(taper_angle_deg)
+    alpha = min(max(alpha, 0.0), math.radians(85.0))
+
+    max_corner = tip_radius / max(math.cos(alpha), 1e-6)
+    corner_radius = min(max(corner_radius or 0.0, 0.0), max_corner)
+
+    if corner_radius <= 1e-9:
+        # Sharp flat tip at diameter D, then straight taper.
+        points = [(0.0, tip_radius)]
+        end_radius = tip_radius + length * math.tan(alpha)
+        points.append((max(length, diameter * 0.5), end_radius))
+        return points
+
+    # Fillet between the flat tip and the cone: same construction as a bull
+    # nose, but the arc stops at theta=-alpha where it meets the taper.
+    flat_radius = tip_radius - corner_radius * math.cos(alpha)
+    theta_start = -math.pi / 2.0
+    theta_end = -alpha
+
+    points = [(0.0, max(flat_radius, 0.0))]
+    for i in range(1, ROUND_SEGMENTS + 1):
+        t = i / ROUND_SEGMENTS
+        theta = theta_start + (theta_end - theta_start) * t
+        z = corner_radius + corner_radius * math.sin(theta)
+        r = flat_radius + corner_radius * math.cos(theta)
+        points.append((z, max(r, 0.0)))
+
+    z_tan, r_tan = points[-1]
+    # Continue along the taper for the remaining tool length.
+    total_length = max(length, z_tan + diameter * 0.5)
+    end_radius = r_tan + (total_length - z_tan) * math.tan(alpha)
+    points.append((total_length, end_radius))
+    return points
+
+
 def _lollipop_profile(diameter, length, **_kwargs):
+    """Full spherical cutter with a thinner cylindrical neck above the undercut."""
     radius = diameter / 2.0
+    neck_radius = max(radius * 0.35, diameter * 0.15)
+    neck_radius = min(neck_radius, radius * 0.95)
+    theta_join = math.acos(neck_radius / radius)
+
     points = []
-    for i in range(ROUND_SEGMENTS * 2 + 1):
-        theta = -math.pi / 2.0 + math.pi * (i / (ROUND_SEGMENTS * 2))
+    # Lower hemisphere: south pole → equator (guarantees full cutting diameter).
+    for i in range(ROUND_SEGMENTS + 1):
+        theta = -math.pi / 2.0 + (math.pi / 2.0) * (i / ROUND_SEGMENTS)
         z = radius + radius * math.sin(theta)
         r = max(radius * math.cos(theta), 0.0)
         points.append((z, r))
 
-    neck_radius = max(radius * 0.35, diameter * 0.15)
-    neck_transition_len = max(radius * 0.5, diameter * 0.25)
-    ball_top_z = points[-1][0]
-    total_length = max(length, ball_top_z + neck_transition_len * 2.0)
+    # Upper hemisphere: equator → neck join (skip duplicate equator point).
+    for i in range(1, ROUND_SEGMENTS + 1):
+        theta = theta_join * (i / ROUND_SEGMENTS)
+        z = radius + radius * math.sin(theta)
+        r = max(radius * math.cos(theta), 0.0)
+        points.append((z, r))
 
-    points.append((ball_top_z + neck_transition_len, neck_radius))
+    # Snap the join so the cylinder meets the ball at exactly neck_radius.
+    ball_join_z = points[-1][0]
+    points[-1] = (ball_join_z, neck_radius)
+
+    total_length = max(length, ball_join_z + diameter * 0.5)
     points.append((total_length, neck_radius))
     return points
 
@@ -365,7 +417,7 @@ PROFILE_BUILDERS = {
     ToolType.BULL_NOSE_END_MILL: _bull_nose_profile,
     ToolType.RADIUS_MILL: _radius_mill_profile,
     ToolType.CHAMFER_MILL: _chamfer_or_tapered_profile,
-    ToolType.TAPERED_MILL: _chamfer_or_tapered_profile,
+    ToolType.TAPERED_MILL: _tapered_mill_profile,
     ToolType.LOLLIPOP_MILL: _lollipop_profile,
 }
 
