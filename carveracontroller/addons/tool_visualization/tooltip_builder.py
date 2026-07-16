@@ -59,6 +59,6 @@ def format_tool_tooltip(tool_def):
         lines.append(tool_def.description)
 
     if tool_def.vendor:
-        lines.append(" - {vendor}".format(vendor=tool_def.vendor))
+        lines.append(f" - {tool_def.vendor}")
 
     return "\n".join(lines)

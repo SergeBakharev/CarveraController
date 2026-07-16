@@ -109,8 +109,7 @@ class TestFusion360MakeraParser:
 
     def test_chamfer_mill_keeps_chamfer_type(self, parser):
         lines = [
-            "(T1  Single Flute Engraving Metal 60 deg*.1mm      D=3.175 CR=0. "
-            "TAPER=30deg - ZMIN=0. - chamfer mill)\n"
+            "(T1  Single Flute Engraving Metal 60 deg*.1mm      D=3.175 CR=0. TAPER=30deg - ZMIN=0. - chamfer mill)\n"
         ]
         table = parser.parse(lines)
 
