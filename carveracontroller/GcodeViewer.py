@@ -672,11 +672,11 @@ class GCodeViewer(Widget):
         self.positions = []
 
         # Per-tool generated meshes (tool number -> (vertices, indices, vertex_format)),
-        # rebuilt whenever a new file finishes loading. `pointer_mesh_instr` is the Mesh
-        # instruction whose geometry gets swapped as the active tool changes.
+        # rebuilt whenever a new file finishes loading. `pointer_mesh_instrs` holds the
+        # back-face then front-face Mesh pair whose geometry is swapped on tool change.
         self._tool_meshes = {}
         self._default_tool_mesh = None
-        self.pointer_mesh_instr = None
+        self.pointer_mesh_instrs = []
         self._active_tool_number = None
 
         # Dirty flags: set True whenever the scene must be re-rendered.
@@ -891,7 +891,7 @@ class GCodeViewer(Widget):
         self.raw_tools = []
         self._tool_meshes = {}
         self._default_tool_mesh = None
-        self.pointer_mesh_instr = None
+        self.pointer_mesh_instrs = []
         self._active_tool_number = None
         self.linemesh.clear()
         self.canvas.remove(self.linemesh)
@@ -951,16 +951,30 @@ class GCodeViewer(Widget):
             f"from the tool table ({known}); using default (pointed) mesh for {unknown}"
         )
 
+    def _setup_pointer_gl_back(self, *args):
+        """Draw back faces first so translucent tool surfaces sort correctly."""
+        glEnable(GL_CULL_FACE)
+        glCullFace(GL_FRONT)
+
+    def _setup_pointer_gl_front(self, *args):
+        """Draw front faces second, blending over the back faces."""
+        glCullFace(GL_BACK)
+
+    def _reset_pointer_gl(self, *args):
+        glDisable(GL_CULL_FACE)
+        glCullFace(GL_BACK)
+
     def _update_pointer_tool_mesh(self, vertex_idx):
         """Swap the pointer mesh geometry if the active tool changed."""
-        if self.pointer_mesh_instr is None:
+        if not self.pointer_mesh_instrs:
             return
         tool_number = self._tool_number_at_index(vertex_idx)
         if tool_number == self._active_tool_number:
             return
         vertices, indices, _fmt = self._get_tool_mesh(tool_number)
-        self.pointer_mesh_instr.vertices = vertices
-        self.pointer_mesh_instr.indices = indices
+        for mesh in self.pointer_mesh_instrs:
+            mesh.vertices = vertices
+            mesh.indices = indices
         self._active_tool_number = tool_number
         self._scene_dirty = True
 
@@ -1049,15 +1063,26 @@ class GCodeViewer(Widget):
                     self.cb = Callback(None)
 
                 with self.pointermesh:
-                    self.cb = Callback(None)
+                    # Two-pass translucent draw: back faces, then front faces.
+                    # A single pass fights the depth buffer and makes one side of the
+                    # tool look hollow depending on camera orientation.
                     verts, idxs, fmt = self._get_tool_mesh(self._active_tool_number)
-                    self.pointer_mesh_instr = Mesh(
+                    Callback(self._setup_pointer_gl_back)
+                    back_mesh = Mesh(
                         vertices=verts,
                         indices=idxs,
                         fmt=fmt,
                         mode="triangles",
                     )
-                    self.cb = Callback(None)
+                    Callback(self._setup_pointer_gl_front)
+                    front_mesh = Mesh(
+                        vertices=verts,
+                        indices=idxs,
+                        fmt=fmt,
+                        mode="triangles",
+                    )
+                    Callback(self._reset_pointer_gl)
+                    self.pointer_mesh_instrs = [back_mesh, front_mesh]
 
                 # axis
                 with self.axisxmesh:
