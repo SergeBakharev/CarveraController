@@ -823,14 +823,8 @@ class TestMeshBuilder:
         assert any(math.isclose(z, flute_z) and math.isclose(r, cutting_r) for z, r in profile)
         assert (shoulder_z, cutting_r) in profile
         # Shoulder body only — tip cone points below flute_z have r < cutting_r.
-        assert all(
-            math.isclose(r, cutting_r)
-            for z, r in profile
-            if flute_z - 1e-9 <= z <= shoulder_z + 1e-9
-        )
-        assert any(
-            math.isclose(z, shoulder_z + transition) and math.isclose(r, shank_r) for z, r in profile
-        )
+        assert all(math.isclose(r, cutting_r) for z, r in profile if flute_z - 1e-9 <= z <= shoulder_z + 1e-9)
+        assert any(math.isclose(z, shoulder_z + transition) and math.isclose(r, shank_r) for z, r in profile)
         assert profile[-1] == (18.0, pytest.approx(shank_r))
         # Shank blend starts after the inferred shoulder, not at the tip.
         assert not any(math.isclose(z, flute_z) and math.isclose(r, shank_r) for z, r in profile)
