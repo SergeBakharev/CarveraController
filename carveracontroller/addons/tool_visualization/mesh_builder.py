@@ -6,23 +6,27 @@ import math
 
 from carveracontroller.addons.tool_visualization.tool_definition import ToolType
 
-FLUTE_COLOR = (0.3, 0.3, 1.0)
-SHANK_COLOR = (0.15, 0.55, 0.55)
+FLUTE_COLOR = (0.85, 0.65, 0.15, 0.45)
+SHANK_COLOR = (0.5, 0.5, 0.52, 0.3)
 
 VERTEX_FORMAT = [
     (b"v_pos", 3, "float"),
     (b"v_normal", 3, "float"),
-    (b"v_color", 3, "float"),
+    (b"v_color", 4, "float"),
     (b"v_tc0", 2, "float"),
 ]
 
-FLOATS_PER_VERTEX = 11
+FLOATS_PER_VERTEX = 12
 RADIAL_SEGMENTS = 20
 ROUND_SEGMENTS = 10
 DEFAULT_TAPER_ANGLE_DEG = 30.0
 
-# Factor used to compute the shared tool height from the largest diameter in the table.
-LENGTH_DIAMETER_FACTOR = 3.0
+# Factor used to compute overall stick-out when length metadata is missing.
+LENGTH_DIAMETER_FACTOR = 6.0
+
+# When flute length is missing, inferred/fallback flute height is capped to this
+# multiple of diameter so long stick-outs are not painted entirely as cutting.
+FALLBACK_FLUTE_DIAMETER_FACTOR = 4.0
 
 # Flute -> shank blend: axial rise per unit radial change (~45°), capped as a
 # fraction of the available shank length so some cylinder remains above.
@@ -124,18 +128,20 @@ def _build_cap_ring(positions, normals, colors, z, radius, nz_sign, segments, co
 def _pack_vertices(positions, normals, colors):
     vertices = []
     for i in range(len(positions) // 3):
-        base = 3 * i
+        p = 3 * i
+        c = 4 * i
         vertices.extend(
             [
-                positions[base],
-                positions[base + 1],
-                positions[base + 2],
-                normals[base],
-                normals[base + 1],
-                normals[base + 2],
-                colors[base],
-                colors[base + 1],
-                colors[base + 2],
+                positions[p],
+                positions[p + 1],
+                positions[p + 2],
+                normals[p],
+                normals[p + 1],
+                normals[p + 2],
+                colors[c],
+                colors[c + 1],
+                colors[c + 2],
+                colors[c + 3],
                 0.0,
                 0.0,
             ]
@@ -257,19 +263,6 @@ def _effective_tool_diameter(tool_def, scale):
     return diameter
 
 
-def _has_explicit_length(tool_def):
-    if not tool_def:
-        return False
-    length = getattr(tool_def, "length", None)
-    flute_length = getattr(tool_def, "flute_length", None)
-    shoulder_length = getattr(tool_def, "shoulder_length", None)
-    return (
-        (length is not None and length > 0)
-        or (flute_length is not None and flute_length > 0)
-        or (shoulder_length is not None and shoulder_length > 0)
-    )
-
-
 def _profile_length(tool_def, scale, diameter, shared_length=None):
     if tool_def:
         length = getattr(tool_def, "length", None)
@@ -374,14 +367,17 @@ def _inferred_shoulder_length(tool_def, flute, overall):
 def _resolve_section_lengths(tool_def, fallback_overall):
     """Return `(flute_z, shoulder_z, overall_z)` in file units.
 
-    - flute_z: cutting flutes (blue)
+    - flute_z: cutting flutes (gold)
     - shoulder_z: end of cutting-diameter body; shank blend starts here
     - overall_z: total stick-out (sticklength)
 
     When flute length is missing, tip-defined tools (chamfer, lollipop, etc.) get a
-    geometry-based guess. When shoulder is also missing after a tip inference,
-    a short cutting-diameter shoulder is added so the shank does not start at
-    the tip. Explicit flute with no shoulder still steps at the flute length.
+    geometry-based guess, otherwise flute falls back to shoulder/overall and is
+    capped to FALLBACK_FLUTE_DIAMETER_FACTOR × diameter. When shoulder is also
+    missing after a tip inference, a short cutting-diameter shoulder is added so
+    the shank does not start at the tip. Explicit flute with no shoulder still
+    steps at the flute length. Missing stick-out uses
+    LENGTH_DIAMETER_FACTOR × diameter via `fallback_overall`.
     """
     if not tool_def:
         return fallback_overall, fallback_overall, fallback_overall
@@ -389,6 +385,7 @@ def _resolve_section_lengths(tool_def, fallback_overall):
     overall = getattr(tool_def, "length", None)
     flute = getattr(tool_def, "flute_length", None)
     shoulder = getattr(tool_def, "shoulder_length", None)
+    diameter = getattr(tool_def, "diameter", None) or 0.0
 
     if overall is None or overall <= 0:
         overall = fallback_overall
@@ -403,6 +400,8 @@ def _resolve_section_lengths(tool_def, fallback_overall):
             flute = shoulder
         else:
             flute = overall
+        if diameter > 0:
+            flute = min(flute, diameter * FALLBACK_FLUTE_DIAMETER_FACTOR)
 
     flute = min(flute, overall)
 
@@ -644,14 +643,14 @@ def _lollipop_profile(diameter, length, **_kwargs):
     theta_join = math.acos(neck_radius / radius)
 
     points = []
-    # Lower hemisphere: south pole → equator (guarantees full cutting diameter).
+    # Lower hemisphere: south pole -> equator (guarantees full cutting diameter).
     for i in range(ROUND_SEGMENTS + 1):
         theta = -math.pi / 2.0 + (math.pi / 2.0) * (i / ROUND_SEGMENTS)
         z = radius + radius * math.sin(theta)
         r = max(radius * math.cos(theta), 0.0)
         points.append((z, r))
 
-    # Upper hemisphere: equator → neck join (skip duplicate equator point).
+    # Upper hemisphere: equator -> neck join (skip duplicate equator point).
     for i in range(1, ROUND_SEGMENTS + 1):
         theta = theta_join * (i / ROUND_SEGMENTS)
         z = radius + radius * math.sin(theta)
@@ -702,41 +701,13 @@ def fallback_tool_profile(scale):
     return _chamfer_or_tapered_profile(diameter, length)
 
 
-def _reference_length(tool_table, scale):
-    """Compute the shared fallback height for tools without explicit length metadata.
-
-    Derived from the largest diameter among tools that lack length/flute_length,
-    so it scales with the document's unit system instead of a fixed absolute value.
-    """
-    diameters = [
-        _effective_tool_diameter(tool_def, scale)
-        for tool_def in tool_table.values()
-        if tool_def
-        and not _has_explicit_length(tool_def)
-        and getattr(tool_def, "diameter", None)
-        and tool_def.diameter > 0
-    ]
-    if diameters:
-        return max(diameters) * LENGTH_DIAMETER_FACTOR
-
-    # Every tool already has an explicit length (or none have a usable diameter).
-    diameters = [
-        _effective_tool_diameter(tool_def, scale)
-        for tool_def in tool_table.values()
-        if tool_def and getattr(tool_def, "diameter", None) and tool_def.diameter > 0
-    ]
-    if diameters:
-        return max(diameters) * LENGTH_DIAMETER_FACTOR
-    return fallback_tool_dimensions(scale)[1]
-
-
 def _tool_profile_with_shank(tool_def, length=None, scale=1.0):
     """Return `(profile, color_shank_start_index)` for a tool definition.
 
     Geometry sections (when metadata allows):
-    - tip → flute_z: cutting flutes at tool diameter (blue)
-    - flute_z → shoulder_z: same diameter body / shoulder (teal)
-    - shoulder_z → overall_z: blend + handle/shank diameter (teal)
+    - tip -> flute_z: cutting flutes at tool diameter (gold)
+    - flute_z -> shoulder_z: same diameter body / shoulder (gray)
+    - shoulder_z -> overall_z: blend + handle/shank diameter (gray)
 
     Falls back to a basic pointed (chamfer-like) profile when `tool_def` is
     None or its type is unknown/unsupported (see DEFAULT_PROFILE_BUILDER).
@@ -781,7 +752,7 @@ def _tool_profile_with_shank(tool_def, length=None, scale=1.0):
     has_non_flute = overall_z > flute_tip_z + 1e-9
     if has_non_flute:
         color_start = len(profile)
-        # Coincident ring → hard blue/teal edge at the end of the flutes.
+        # Coincident ring -> hard gold/gray edge at the end of the flutes.
         profile.append((flute_tip_z, last_r))
     else:
         color_start = len(profile)
@@ -805,10 +776,21 @@ def tool_profile(tool_def, length=None, scale=1.0):
     return profile
 
 
-def _scale_profile(profile, scale, radius_boost):
-    """Scale the profile by the given scale and radius boost."""
-    factor = scale * radius_boost
-    scaled_profile = [(z * factor, r * factor) for z, r in profile]
+def _scale_profile(profile, scale):
+    """Scale profile into viewer units, with a per-tool radius visibility floor.
+
+    If this tool's scaled radius would be below MIN_VISIBLE_RADIUS, enlarge only
+    that tool (uniformly in Z and R) so it stays visible. Other tools are
+    unaffected.
+    """
+    if not scale or scale <= 0:
+        scale = 1.0
+    scaled_profile = [(z * scale, r * scale) for z, r in profile]
+
+    max_radius = max((r for _z, r in scaled_profile), default=0.0)
+    if 0.0 < max_radius < MIN_VISIBLE_RADIUS:
+        boost = MIN_VISIBLE_RADIUS / max_radius
+        scaled_profile = [(z * boost, r * boost) for z, r in scaled_profile]
 
     total_length = scaled_profile[-1][0] if scaled_profile else 0.0
     if total_length < MIN_SHANK_LENGTH:
@@ -818,37 +800,16 @@ def _scale_profile(profile, scale, radius_boost):
     return scaled_profile
 
 
-def _compute_radius_boost(profiles, scale):
-    """Compute a single boost factor shared by every tool in `profiles`.
-
-    Boosting each tool independently (to the same MIN_VISIBLE_RADIUS floor)
-    would make different-sized tools appear identical on screen whenever
-    they're all small enough to hit the floor. Instead we look at the
-    *smallest* tool of the batch and compute one factor that makes it meet
-    the visibility floor, then apply that same factor to every tool so their
-    relative sizes stay accurate to each other.
-    """
-    radii = [max((r for _, r in profile), default=0.0) * scale for profile in profiles]
-    radii = [r for r in radii if r > 1e-9]
-    if not radii:
-        return 1.0
-
-    smallest_radius = min(radii)
-    if smallest_radius < MIN_VISIBLE_RADIUS:
-        return MIN_VISIBLE_RADIUS / smallest_radius
-    return 1.0
-
-
-def build_tool_mesh(tool_def, scale=1.0, radius_boost=1.0, length=None):
+def build_tool_mesh(tool_def, scale=1.0, length=None):
     profile, shank_start = _tool_profile_with_shank(tool_def, length=length, scale=scale)
-    scaled_profile = _scale_profile(profile, scale, radius_boost)
+    scaled_profile = _scale_profile(profile, scale)
     return _build_revolve_mesh(scaled_profile, shank_start_index=shank_start)
 
 
-def build_default_tool_mesh(scale=1.0, radius_boost=1.0):
+def build_default_tool_mesh(scale=1.0):
     """Mesh used for tools with no metadata (fixed on-screen size)."""
     profile = fallback_tool_profile(scale)
-    scaled_profile = _scale_profile(profile, scale, radius_boost)
+    scaled_profile = _scale_profile(profile, scale)
     return _build_revolve_mesh(scaled_profile)
 
 
@@ -856,13 +817,10 @@ def build_tool_meshes(tool_table, scale=1.0):
     """Build a mesh for every tool in `tool_table`, plus a default mesh for
     tools with no metadata.
 
-    Tools without explicit length/flute metadata share a fallback height derived
-    from the largest diameter among those tools (see `_reference_length`).
-    Tools that provide length or flute_length use their own heights.
-
-    A single radius boost factor is derived from the smallest tool in the batch,
-    so tiny tools stay visible without making unrelated tools look like they
-    share the same diameter.
+    Tools without stick-out metadata use LENGTH_DIAMETER_FACTOR × their own
+    diameter. Tools that provide length / shoulder / flute use those heights.
+    Each tool is scaled independently; only tools below MIN_VISIBLE_RADIUS get
+    a per-tool visibility floor.
 
     The default (no-metadata) mesh keeps a fixed on-screen size, independent
     of file units.
@@ -872,24 +830,15 @@ def build_tool_meshes(tool_table, scale=1.0):
     default_profile = fallback_tool_profile(scale)
 
     if tool_table:
-        shared_length = _reference_length(tool_table, scale)
-        profiles = {}
-        shank_starts = {}
+        tool_meshes = {}
         for number, tool_def in tool_table.items():
-            length_hint = None if _has_explicit_length(tool_def) else shared_length
-            profile, shank_start = _tool_profile_with_shank(tool_def, length=length_hint, scale=scale)
-            profiles[number] = profile
-            shank_starts[number] = shank_start
-        radius_boost = _compute_radius_boost(list(profiles.values()), scale)
-        tool_meshes = {
-            number: _build_revolve_mesh(
-                _scale_profile(profile, scale, radius_boost),
-                shank_start_index=shank_starts[number],
+            profile, shank_start = _tool_profile_with_shank(tool_def, scale=scale)
+            tool_meshes[number] = _build_revolve_mesh(
+                _scale_profile(profile, scale),
+                shank_start_index=shank_start,
             )
-            for number, profile in profiles.items()
-        }
     else:
         tool_meshes = {}
 
-    default_mesh = _build_revolve_mesh(_scale_profile(default_profile, scale, 1.0))
+    default_mesh = _build_revolve_mesh(_scale_profile(default_profile, scale))
     return tool_meshes, default_mesh

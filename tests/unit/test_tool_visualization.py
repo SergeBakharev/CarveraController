@@ -12,6 +12,7 @@ from carveracontroller.addons.tool_visualization import (
     get_tool_icon_path,
 )
 from carveracontroller.addons.tool_visualization.mesh_builder import (
+    FALLBACK_FLUTE_DIAMETER_FACTOR,
     FALLBACK_TOOL_DISPLAY_HEIGHT,
     FALLBACK_TOOL_DISPLAY_RADIUS,
     FLOATS_PER_VERTEX,
@@ -21,7 +22,6 @@ from carveracontroller.addons.tool_visualization.mesh_builder import (
     MIN_VISIBLE_RADIUS,
     SHANK_COLOR,
     VERTEX_FORMAT,
-    _reference_length,
     build_tool_mesh,
     build_tool_meshes,
     tool_profile,
@@ -71,7 +71,7 @@ def _vertex_normal(vertices, index):
 
 def _vertex_color(vertices, index):
     base = index * FLOATS_PER_VERTEX
-    return (vertices[base + 6], vertices[base + 7], vertices[base + 8])
+    return (vertices[base + 6], vertices[base + 7], vertices[base + 8], vertices[base + 9])
 
 
 def _vertex_z(vertices, index):
@@ -340,33 +340,31 @@ class TestMeshBuilder:
         assert all(0 <= index < vertex_count for index in indices)
         assert len(indices) > vertex_count
 
-    def test_shared_reference_length_uses_largest_diameter(self):
+    def test_missing_stickout_uses_each_tools_own_diameter(self):
         tool_table = {
             1: ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=3.0),
             2: ToolDefinition(number=2, tool_type=ToolType.FLAT_END_MILL, diameter=10.0),
         }
-        shared_length = _reference_length(tool_table, scale=1.0)
+        meshes, _ = build_tool_meshes(tool_table, scale=1.0)
 
-        assert shared_length == 10.0 * LENGTH_DIAMETER_FACTOR
-        profile_small = tool_profile(tool_table[1], length=shared_length, scale=1.0)
-        profile_large = tool_profile(tool_table[2], length=shared_length, scale=1.0)
-        assert profile_small[-1][0] == profile_large[-1][0]
+        assert _mesh_height(meshes[1][0]) == pytest.approx(3.0 * LENGTH_DIAMETER_FACTOR)
+        assert _mesh_height(meshes[2][0]) == pytest.approx(10.0 * LENGTH_DIAMETER_FACTOR)
 
-    def test_radius_boost_preserves_relative_sizes(self):
+    def test_tiny_tool_gets_per_tool_visibility_floor(self):
+        """Only the undersized tool is enlarged; a normal tool keeps true scale."""
         tool_table = {
             1: ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=0.01),
             2: ToolDefinition(number=2, tool_type=ToolType.FLAT_END_MILL, diameter=1.0),
         }
-        meshes, _ = build_tool_meshes(tool_table, scale=0.01)
+        meshes, _ = build_tool_meshes(tool_table, scale=1.0)
         small_radius = _max_xy_radius(meshes[1][0])
         large_radius = _max_xy_radius(meshes[2][0])
 
-        assert small_radius >= MIN_VISIBLE_RADIUS
-        assert large_radius > small_radius
-        assert math.isclose(large_radius / small_radius, 100.0, rel_tol=1e-6)
+        assert small_radius == pytest.approx(MIN_VISIBLE_RADIUS)
+        assert large_radius == pytest.approx(0.5)
 
-    def test_default_mesh_unaffected_by_radius_boost(self):
-        """Default mesh keeps fixed on-screen size when known tools need boost."""
+    def test_default_mesh_unaffected_by_tiny_tools(self):
+        """Default mesh keeps fixed on-screen size when known tools need a floor."""
         tool_table = {
             1: ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=0.01),
             2: ToolDefinition(number=2, tool_type=ToolType.FLAT_END_MILL, diameter=1.0),
@@ -509,6 +507,7 @@ class TestMeshBuilder:
         corner_radius = 1.0
         taper_angle_deg = 30.0
         shared_length = diameter * LENGTH_DIAMETER_FACTOR
+        flute_length = diameter * FALLBACK_FLUTE_DIAMETER_FACTOR
         profile = tool_profile(
             ToolDefinition(
                 number=12,
@@ -524,7 +523,8 @@ class TestMeshBuilder:
         flat_radius = diameter / 2.0 - corner_radius * math.cos(alpha)
         z_tan = corner_radius * (1.0 - math.sin(alpha))
         r_tan = diameter / 2.0
-        end_radius = r_tan + (shared_length - z_tan) * math.tan(alpha)
+        # Missing flute → taper only through the capped flute region; shank stays cylindrical.
+        end_radius = r_tan + (flute_length - z_tan) * math.tan(alpha)
 
         assert profile[0] == (0.0, pytest.approx(flat_radius))
         assert any(math.isclose(z, z_tan, abs_tol=1e-6) and math.isclose(r, r_tan, abs_tol=1e-6) for z, r in profile)
@@ -536,6 +536,7 @@ class TestMeshBuilder:
         diameter = 6.0
         taper_angle_deg = 30.0
         shared_length = diameter * LENGTH_DIAMETER_FACTOR
+        flute_length = diameter * FALLBACK_FLUTE_DIAMETER_FACTOR
         profile = tool_profile(
             ToolDefinition(
                 number=1,
@@ -548,7 +549,7 @@ class TestMeshBuilder:
         )
 
         tip_radius = diameter / 2.0
-        end_radius = tip_radius + shared_length * math.tan(math.radians(taper_angle_deg))
+        end_radius = tip_radius + flute_length * math.tan(math.radians(taper_angle_deg))
         assert profile[0] == (0.0, tip_radius)
         assert profile[-1][0] == pytest.approx(shared_length)
         assert profile[-1][1] == pytest.approx(end_radius)
@@ -695,12 +696,40 @@ class TestMeshBuilder:
         assert not any(math.isclose(r, shank_r) for _z, r in profile)
 
     def test_mesh_uses_flute_color_without_flute_length(self):
+        # Stick-out under the 4×D fallback flute cap → entire mesh is flute-colored.
         tool_def = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=6.0, length=18.0)
         vertices, _indices, _fmt = build_tool_mesh(tool_def)
         vertex_count = len(vertices) // FLOATS_PER_VERTEX
 
         for index in range(vertex_count):
             assert _vertex_color(vertices, index) == pytest.approx(FLUTE_COLOR)
+
+    def test_missing_flute_capped_to_diameter_factor(self):
+        diameter = 6.0
+        length = 40.0
+        flute_z = diameter * FALLBACK_FLUTE_DIAMETER_FACTOR
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.FLAT_END_MILL,
+            diameter=diameter,
+            length=length,
+        )
+        vertices, _indices, _fmt = build_tool_mesh(tool_def)
+        vertex_count = len(vertices) // FLOATS_PER_VERTEX
+
+        colors = {_vertex_color(vertices, index) for index in range(vertex_count)}
+        assert FLUTE_COLOR in colors
+        assert SHANK_COLOR in colors
+        for index in range(vertex_count):
+            z = _vertex_z(vertices, index)
+            color = _vertex_color(vertices, index)
+            if z < flute_z - 1e-6:
+                assert color == pytest.approx(FLUTE_COLOR)
+            elif z > flute_z + 1e-6:
+                assert color == pytest.approx(SHANK_COLOR)
+
+        profile = tool_profile(tool_def)
+        assert profile[-1][0] == pytest.approx(length)
 
     def test_mesh_colors_flute_and_shank_when_flute_length_available(self):
         tool_def = ToolDefinition(
@@ -851,7 +880,10 @@ class TestMeshBuilder:
             ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=6.0),
             length=None,
         )
-        assert profile[-1][0] == pytest.approx(6.0 * LENGTH_DIAMETER_FACTOR)
+        overall = 6.0 * LENGTH_DIAMETER_FACTOR
+        flute_z = 6.0 * FALLBACK_FLUTE_DIAMETER_FACTOR
+        assert profile[-1][0] == pytest.approx(overall)
+        assert any(math.isclose(z, flute_z) for z, _r in profile)
 
     def test_engraving_tip_diameter_zero_is_pointed(self):
         profile = tool_profile(

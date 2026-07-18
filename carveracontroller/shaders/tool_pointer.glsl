@@ -1,19 +1,19 @@
 // Tool position pointer mesh with simple diffuse shading.
 // Drawn in two passes (back faces, then front faces) for correct translucency.
-// Vertex colors distinguish flute (blue) from shank (teal) when available.
+// Vertex colors distinguish flute (gold, more opaque) from shank (gray).
 
 ---vertex
 $HEADER$
 
 attribute vec3 v_pos;
 attribute vec3 v_normal;
-attribute vec3 v_color;
+attribute vec4 v_color;
 
 uniform vec3 offset;
 uniform mat4 rotation;
 
 varying vec3 normal_vec;
-varying vec3 tool_color;
+varying vec4 tool_color;
 
 void main()
 {
@@ -31,7 +31,7 @@ void main()
 $HEADER$
 
 varying vec3 normal_vec;
-varying vec3 tool_color;
+varying vec4 tool_color;
 
 void main()
 {
@@ -39,6 +39,6 @@ void main()
     // stays stable while orbiting the camera.
     vec3 n = normalize(normal_vec);
     float shade = 0.35 + 0.65 * abs(dot(n, normalize(vec3(0.35, 0.55, 1.0))));
-    vec3 color = tool_color * shade;
-    gl_FragColor = vec4(color, 0.3) * texture2D(texture0, tex_coord0);
+    vec3 color = tool_color.rgb * shade;
+    gl_FragColor = vec4(color, tool_color.a) * texture2D(texture0, tex_coord0);
 }
