@@ -17,6 +17,11 @@
 - Enhancement: Advanced TLO Calibration option. Here you can set the offset to use from tool setter, and/or the number of repeat probings to use
 - Enhancement: Added a warning popup if the controller version is lower than the firmware. This is not a supported config
 - Enhancement: Added Auto Ext. Out toggle to spindle dropdown and Config and Run screen. This can be used to automatically run a vacuum or compressor when the spindle is running
+- Enhancement: Autodetect Smoothie vs Makera communication protocol on connect and use it for the session
+- Enhancement: Show a connecting progress popup while opening a USB device
+- Enhancement: Log connect and manual disconnect with the connection method and address
+- Enhancement: Add a "Network..." option under Scan Wi-Fi in the connection dropdown to enter a machine network address
+- Enhancement: Reconnect supports USB as well as WiFi. Configure preferred method for app-launch auto-connect
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
 - Fixed: Repeated firmware checks now happen just once
 - Fixed: UI widget updates from the SerialMonitor() now dispatched via the main thread. This should reduce the number of RecycleView related crashes
@@ -30,9 +35,20 @@
 - Fixed: Fix incorrect "No Pendant" in UI when pendant is working
 - Fixed: Fix invalid initial coordinates when resuming in the middle of a modal command
 - Fixed: 3D Visualisation of GCode movement would always show the initial movement as originating from the WCS Origin, this doesn't match reality. Now the Visualisation correctly shows the line as originating from above the first movement command at the configured clearance_z (default of MCS Z-3)
+- Fixed: When a USB connection was lost, the popup had a non-functioning reconnect button
+- Fixed: When connecting over USB the UI thread would freeze while it was opening the device
+- Fixed: USB higher-baud upgrade failed on Makera protocol (trailing newline in framed commands, race with config download, host baud switch). Upgrade now runs after config sync and verifies the link
+- Fixed: Config download / MD5-match cache path could fail to load settings and block later USB baud upgrade
+- Fixed: Status and diagnose parsers mishandled trailing newlines in Makera payloads (e.g. RSSI parse warnings)
+- Fixed: Fresh USB-only connects could immediately show "Connection to machine lost" while the machine was still booting after DTR reset; "Connection to machine lost" is now also logged
+- Change: Misleading "Download canceled by Controller!" MDI message is suppressed, in logs a message is recorded that cached version of the config.txt was used
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file
 - Change: Upgrade screen now will show the letter "c" at the end of the current firmware version if it's present. This indicates that it's Community firmware
+- Change: Auto-connect on app launch now is only performed if auto-reconnect is enabled
+- Change: Reconnect uses the last successful connection method. On fresh app launch it uses the configured prefered connection method
+- Change: USB devices in connection dropdown are filtered to only show devices specifically with the FTDI chip found on the Makera machines
+- Change: USB devices are now selected and stored by stable VID:PID:serial identity (instead of generic COM path)
 
 [2.1.0]
 - Enhancement: Add right-click menu option to clear resume-at-line setting
