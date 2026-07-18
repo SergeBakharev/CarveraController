@@ -5645,6 +5645,11 @@ class Makera(RelativeLayout):
             self.progressFinish()
 
     # --------------------------------------------------------------`---------
+    _PROGRESS_TIMER_PAUSED_STATES = frozenset({"Hold", "Pause", "Wait", "Tool"})
+
+    def _current_remaining_sec(self):
+        return max(0.0, self._remaining_anchor_sec - (time.time() - self._remaining_anchor_time))
+
     def _update_progress_smooth(self, dt):
         """Refresh elapsed/remaining display every second while playing."""
         app = App.get_running_app()
@@ -5652,18 +5657,13 @@ class Makera(RelativeLayout):
             not app.playing
             or (not app.selected_remote_filename and not app.selected_local_filename)
             or not self.selected_file_line_count
+            or app.state in self._PROGRESS_TIMER_PAUSED_STATES
         ):
+            # While held/paused, leave the last progress_info unchanged so both timers freeze.
             return
-        remaining_display = max(0.0, self._remaining_anchor_sec - (time.time() - self._remaining_anchor_time))
+        remaining_display = self._current_remaining_sec()
         filename = os.path.basename(app.selected_remote_filename or app.selected_local_filename)
-        self.progress_info = " {} ( {}/{} - {}%, {} elapsed, {} to go )".format(
-            filename,
-            self.played_lines,
-            self.selected_file_line_count,
-            int(self.wpb_play.value),
-            Utils.second2hour(CNC.vars["playedseconds"]),
-            Utils.second2hour(int(remaining_display)),
-        )
+        self.progress_info = f" {filename} ( {self.played_lines}/{self.selected_file_line_count} - {int(self.wpb_play.value)}%, {Utils.second2hour(CNC.vars['playedseconds'])} elapsed, {Utils.second2hour(int(remaining_display))} to go )"
 
     # --------------------------------------------------------------`---------
     def updateCompressProgress(self, value):
@@ -5697,6 +5697,7 @@ class Makera(RelativeLayout):
                 self.controller._heartbeat_grace_until = 0
 
             if app.state != CNC.vars["state"]:
+                prev_state = app.state
                 app.state = CNC.vars["state"]
                 CNC.vars["color"] = STATECOLOR[app.state]
                 self.status_data_view.color = CNC.vars["color"]
@@ -5704,6 +5705,15 @@ class Makera(RelativeLayout):
                 self.pausing = 1 if app.state == "Pause" else 0
                 self.waiting = 1 if app.state == "Wait" else 0
                 self.tooling = 1 if app.state == "Tool" else 0
+                if app.playing:
+                    was_paused = prev_state in self._PROGRESS_TIMER_PAUSED_STATES
+                    now_paused = app.state in self._PROGRESS_TIMER_PAUSED_STATES
+                    if now_paused and not was_paused:
+                        # Park remaining so pause duration is not subtracted on resume.
+                        self._remaining_anchor_sec = self._current_remaining_sec()
+                        self._remaining_anchor_time = now
+                    elif was_paused and not now_paused:
+                        self._remaining_anchor_time = now
                 # update status
                 self.status_data_view.main_text = app.state
                 if app.state == NOT_CONNECTED:
