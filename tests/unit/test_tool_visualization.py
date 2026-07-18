@@ -14,8 +14,12 @@ from carveracontroller.addons.tool_visualization import (
 from carveracontroller.addons.tool_visualization.mesh_builder import (
     FALLBACK_TOOL_DISPLAY_HEIGHT,
     FALLBACK_TOOL_DISPLAY_RADIUS,
+    FLOATS_PER_VERTEX,
+    FLUTE_COLOR,
+    INFERRED_SHOULDER_DIAMETER_FACTOR,
     LENGTH_DIAMETER_FACTOR,
     MIN_VISIBLE_RADIUS,
+    SHANK_COLOR,
     VERTEX_FORMAT,
     _reference_length,
     build_tool_mesh,
@@ -38,7 +42,7 @@ from carveracontroller.addons.tool_visualization.tool_definition import resolve_
 
 def _max_xy_radius(vertices):
     radii = []
-    for i in range(0, len(vertices), 8):
+    for i in range(0, len(vertices), FLOATS_PER_VERTEX):
         x = vertices[i]
         y = vertices[i + 1]
         radii.append(math.hypot(x, y))
@@ -46,18 +50,32 @@ def _max_xy_radius(vertices):
 
 
 def _mesh_height(vertices):
-    zs = [vertices[i + 2] for i in range(0, len(vertices), 8)]
+    zs = [vertices[i + 2] for i in range(0, len(vertices), FLOATS_PER_VERTEX)]
     return max(zs) - min(zs) if zs else 0.0
 
 
 def _apex_vertex_indices(vertices, tol=1e-6):
-    zs = [vertices[i + 2] for i in range(0, len(vertices), 8)]
+    zs = [vertices[i + 2] for i in range(0, len(vertices), FLOATS_PER_VERTEX)]
     z_min = min(zs)
     return [
-        i // 8
-        for i in range(0, len(vertices), 8)
+        i // FLOATS_PER_VERTEX
+        for i in range(0, len(vertices), FLOATS_PER_VERTEX)
         if abs(vertices[i + 2] - z_min) < tol and math.hypot(vertices[i], vertices[i + 1]) < tol
     ]
+
+
+def _vertex_normal(vertices, index):
+    base = index * FLOATS_PER_VERTEX
+    return (vertices[base + 3], vertices[base + 4], vertices[base + 5])
+
+
+def _vertex_color(vertices, index):
+    base = index * FLOATS_PER_VERTEX
+    return (vertices[base + 6], vertices[base + 7], vertices[base + 8])
+
+
+def _vertex_z(vertices, index):
+    return vertices[index * FLOATS_PER_VERTEX + 2]
 
 
 class TestFusion360MakeraParser:
@@ -175,10 +193,37 @@ class TestMakeraStudioParser:
         assert tool.corner_radius == 0.0
         assert tool.length == 12.0
         assert tool.flute_length == 12.0
+        assert tool.shoulder_length == 12.0
         assert tool.description == "3.175*2*12mm Flat End"
         assert tool.product_id == "111011203812"
         assert tool.type_name == "Flat End"
         assert tool.taper_angle_deg is None
+
+    def test_parses_distinct_flute_shoulder_and_stick_lengths(self, parser):
+        lines = [
+            ";@MKR|TOOL|number=1|id=111011203812|name=3.175*2*12mm Flat End|type=Flat End|"
+            "handlediameter=3.175|sticklength=12|shoulderlength=6|flutelength=6|diameter=2|"
+            "tipdiameter=2|cornerradius=0|angle=0|halfAngle=0\n"
+        ]
+        tool = parser.parse(lines)[1]
+
+        assert tool.diameter == 2.0
+        assert tool.shank_diameter == 3.175
+        assert tool.flute_length == 6.0
+        assert tool.shoulder_length == 6.0
+        assert tool.length == 12.0
+
+    def test_parses_shoulder_equal_to_stick_without_shank_body(self, parser):
+        lines = [
+            ";@MKR|TOOL|number=1|id=111011203812|name=3.175*2*12mm Flat End|type=Flat End|"
+            "handlediameter=3.175|sticklength=12|shoulderlength=12|flutelength=6|diameter=2|"
+            "tipdiameter=2|cornerradius=0|angle=0|halfAngle=0\n"
+        ]
+        tool = parser.parse(lines)[1]
+
+        assert tool.flute_length == 6.0
+        assert tool.shoulder_length == 12.0
+        assert tool.length == 12.0
 
     def test_parses_engraving_half_angle_as_included_taper(self, parser):
         lines = [
@@ -194,6 +239,7 @@ class TestMakeraStudioParser:
         assert tool.tip_diameter == 0.1
         assert tool.length == 20.0
         assert tool.flute_length == 12.0
+        assert tool.shoulder_length is None
         assert tool.shank_diameter == 3.175
 
     def test_unknown_type_falls_back_to_unknown(self, parser):
@@ -282,19 +328,14 @@ class TestTooltipBuilder:
         assert "Engraving" in tooltip
 
 
-def _vertex_normal(vertices, index):
-    base = index * 8
-    return (vertices[base + 3], vertices[base + 4], vertices[base + 5])
-
-
 class TestMeshBuilder:
     def test_build_tool_mesh_uses_expected_vertex_layout(self):
         tool_def = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=6.0)
         vertices, indices, fmt = build_tool_mesh(tool_def)
-        vertex_count = len(vertices) // 8
+        vertex_count = len(vertices) // FLOATS_PER_VERTEX
 
         assert fmt == VERTEX_FORMAT
-        assert len(vertices) % 8 == 0
+        assert len(vertices) % FLOATS_PER_VERTEX == 0
         assert len(indices) % 3 == 0
         assert all(0 <= index < vertex_count for index in indices)
         assert len(indices) > vertex_count
@@ -388,7 +429,7 @@ class TestMeshBuilder:
     def test_flat_end_mill_side_normals_are_radial(self):
         tool_def = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=6.0)
         vertices, indices, _fmt = build_tool_mesh(tool_def)
-        vertex_count = len(vertices) // 8
+        vertex_count = len(vertices) // FLOATS_PER_VERTEX
 
         assert vertex_count < len(indices)
 
@@ -404,7 +445,7 @@ class TestMeshBuilder:
         tool_def = ToolDefinition(number=1, tool_type=ToolType.BALL_END_MILL, diameter=6.0)
         vertices, indices, _fmt = build_tool_mesh(tool_def)
 
-        assert len(indices) > len(vertices) // 8
+        assert len(indices) > len(vertices) // FLOATS_PER_VERTEX
 
     def test_pointed_tip_mesh_shares_single_apex_vertex(self):
         tool_def = ToolDefinition(number=1, tool_type=ToolType.CHAMFER_MILL, diameter=6.0)
@@ -584,7 +625,7 @@ class TestMeshBuilder:
         assert profile_bull_mid_r == pytest.approx(bull_mid_r, abs=0.05)
         assert profile_radius_mid_r < profile_bull_mid_r
 
-    def test_explicit_length_and_flute_produce_shank_step(self):
+    def test_explicit_length_and_flute_produce_shank_blend(self):
         profile = tool_profile(
             ToolDefinition(
                 number=1,
@@ -595,11 +636,215 @@ class TestMeshBuilder:
                 flute_length=12.0,
             )
         )
+        flute_r = 1.0
+        shank_r = 3.175 / 2.0
+        transition = abs(shank_r - flute_r)  # ~45° blend
 
-        assert profile[0] == (0.0, 1.0)
-        assert (12.0, 1.0) in profile
-        assert profile[-1] == (20.0, pytest.approx(3.175 / 2.0))
-        assert any(math.isclose(z, 12.0) and math.isclose(r, 3.175 / 2.0) for z, r in profile)
+        assert profile[0] == (0.0, flute_r)
+        assert (12.0, flute_r) in profile
+        assert any(math.isclose(z, 12.0 + transition) and math.isclose(r, shank_r) for z, r in profile)
+        assert profile[-1] == (20.0, pytest.approx(shank_r))
+        # No hard radial step at the flute tip.
+        assert not any(math.isclose(z, 12.0) and math.isclose(r, shank_r) for z, r in profile)
+
+    def test_shoulder_keeps_cutting_diameter_before_shank_blend(self):
+        """Makera: flute < shoulder < stick → body at D, then blend to handle."""
+        profile = tool_profile(
+            ToolDefinition(
+                number=1,
+                tool_type=ToolType.FLAT_END_MILL,
+                diameter=2.0,
+                shank_diameter=3.175,
+                length=15.0,
+                flute_length=6.0,
+                shoulder_length=9.0,
+            )
+        )
+        flute_r = 1.0
+        shank_r = 3.175 / 2.0
+        transition = abs(shank_r - flute_r)
+
+        assert (6.0, flute_r) in profile
+        assert (9.0, flute_r) in profile
+        # Cutting diameter continues through the shoulder body (flute → shoulder).
+        assert all(math.isclose(r, flute_r) for z, r in profile if z <= 9.0 + 1e-9)
+        assert any(math.isclose(z, 9.0 + transition) and math.isclose(r, shank_r) for z, r in profile)
+        assert profile[-1] == (15.0, pytest.approx(shank_r))
+        assert not any(math.isclose(z, 9.0) and math.isclose(r, shank_r) for z, r in profile)
+
+    def test_shoulder_equal_to_stick_has_no_handle_section(self):
+        """Makera: shoulder == stick → 2mm body to the top, no 3.175 shank."""
+        profile = tool_profile(
+            ToolDefinition(
+                number=1,
+                tool_type=ToolType.FLAT_END_MILL,
+                diameter=2.0,
+                shank_diameter=3.175,
+                length=12.0,
+                flute_length=6.0,
+                shoulder_length=12.0,
+            )
+        )
+        flute_r = 1.0
+        shank_r = 3.175 / 2.0
+
+        assert profile[0] == (0.0, flute_r)
+        assert (6.0, flute_r) in profile
+        assert profile[-1] == (12.0, pytest.approx(flute_r))
+        assert all(r <= flute_r + 1e-9 for _z, r in profile)
+        assert not any(math.isclose(r, shank_r) for _z, r in profile)
+
+    def test_mesh_uses_flute_color_without_flute_length(self):
+        tool_def = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=6.0, length=18.0)
+        vertices, _indices, _fmt = build_tool_mesh(tool_def)
+        vertex_count = len(vertices) // FLOATS_PER_VERTEX
+
+        for index in range(vertex_count):
+            assert _vertex_color(vertices, index) == pytest.approx(FLUTE_COLOR)
+
+    def test_mesh_colors_flute_and_shank_when_flute_length_available(self):
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.FLAT_END_MILL,
+            diameter=2.0,
+            shank_diameter=3.175,
+            length=20.0,
+            flute_length=12.0,
+        )
+        vertices, _indices, _fmt = build_tool_mesh(tool_def)
+        vertex_count = len(vertices) // FLOATS_PER_VERTEX
+
+        colors = {_vertex_color(vertices, index) for index in range(vertex_count)}
+        assert FLUTE_COLOR in colors
+        assert SHANK_COLOR in colors
+
+        for index in range(vertex_count):
+            z = _vertex_z(vertices, index)
+            color = _vertex_color(vertices, index)
+            if z < 12.0 - 1e-6:
+                assert color == pytest.approx(FLUTE_COLOR)
+            elif z > 12.0 + 1e-6:
+                assert color == pytest.approx(SHANK_COLOR)
+
+    def test_mesh_colors_flute_and_shoulder_when_no_handle_section(self):
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.FLAT_END_MILL,
+            diameter=2.0,
+            shank_diameter=3.175,
+            length=12.0,
+            flute_length=6.0,
+            shoulder_length=12.0,
+        )
+        vertices, _indices, _fmt = build_tool_mesh(tool_def)
+        vertex_count = len(vertices) // FLOATS_PER_VERTEX
+
+        colors = {_vertex_color(vertices, index) for index in range(vertex_count)}
+        assert FLUTE_COLOR in colors
+        assert SHANK_COLOR in colors
+
+        for index in range(vertex_count):
+            z = _vertex_z(vertices, index)
+            color = _vertex_color(vertices, index)
+            if z < 6.0 - 1e-6:
+                assert color == pytest.approx(FLUTE_COLOR)
+            elif z > 6.0 + 1e-6:
+                assert color == pytest.approx(SHANK_COLOR)
+
+    def test_infers_chamfer_flute_from_cone_when_metadata_missing(self):
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.CHAMFER_MILL,
+            diameter=6.0,
+            taper_angle_deg=90.0,
+        )
+        # 90° included → 45° half-angle → cone height == radius.
+        vertices, _indices, _fmt = build_tool_mesh(tool_def, length=18.0)
+        vertex_count = len(vertices) // FLOATS_PER_VERTEX
+
+        colors = {_vertex_color(vertices, index) for index in range(vertex_count)}
+        assert FLUTE_COLOR in colors
+        assert SHANK_COLOR in colors
+        for index in range(vertex_count):
+            z = _vertex_z(vertices, index)
+            color = _vertex_color(vertices, index)
+            if z < 3.0 - 1e-6:
+                assert color == pytest.approx(FLUTE_COLOR)
+            elif z > 3.0 + 1e-6:
+                assert color == pytest.approx(SHANK_COLOR)
+
+    def test_inferred_flute_adds_short_shoulder_before_shank(self):
+        """Fusion-like tip cue only: short body at D before the handle blend."""
+        profile = tool_profile(
+            ToolDefinition(
+                number=1,
+                tool_type=ToolType.CHAMFER_MILL,
+                diameter=6.0,
+                shank_diameter=8.0,
+                taper_angle_deg=90.0,
+                length=18.0,
+            )
+        )
+        flute_z = 3.0
+        cutting_r = 3.0
+        shank_r = 4.0
+        shoulder_z = flute_z + 6.0 * INFERRED_SHOULDER_DIAMETER_FACTOR
+        transition = abs(shank_r - cutting_r)
+
+        assert any(math.isclose(z, flute_z) and math.isclose(r, cutting_r) for z, r in profile)
+        assert (shoulder_z, cutting_r) in profile
+        # Shoulder body only — tip cone points below flute_z have r < cutting_r.
+        assert all(
+            math.isclose(r, cutting_r)
+            for z, r in profile
+            if flute_z - 1e-9 <= z <= shoulder_z + 1e-9
+        )
+        assert any(
+            math.isclose(z, shoulder_z + transition) and math.isclose(r, shank_r) for z, r in profile
+        )
+        assert profile[-1] == (18.0, pytest.approx(shank_r))
+        # Shank blend starts after the inferred shoulder, not at the tip.
+        assert not any(math.isclose(z, flute_z) and math.isclose(r, shank_r) for z, r in profile)
+
+    def test_infers_lollipop_flute_at_ball_neck_join(self):
+        from carveracontroller.addons.tool_visualization.mesh_builder import _lollipop_ball_join_z
+
+        diameter = 6.0
+        ball_join = _lollipop_ball_join_z(diameter)
+        tool_def = ToolDefinition(number=1, tool_type=ToolType.LOLLIPOP_MILL, diameter=diameter)
+        vertices, _indices, _fmt = build_tool_mesh(tool_def, length=18.0)
+        vertex_count = len(vertices) // FLOATS_PER_VERTEX
+
+        colors = {_vertex_color(vertices, index) for index in range(vertex_count)}
+        assert FLUTE_COLOR in colors
+        assert SHANK_COLOR in colors
+        for index in range(vertex_count):
+            z = _vertex_z(vertices, index)
+            color = _vertex_color(vertices, index)
+            if z < ball_join - 1e-6:
+                assert color == pytest.approx(FLUTE_COLOR)
+            elif z > ball_join + 1e-6:
+                assert color == pytest.approx(SHANK_COLOR)
+
+    def test_explicit_flute_length_not_overridden_by_inference(self):
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.CHAMFER_MILL,
+            diameter=6.0,
+            taper_angle_deg=90.0,
+            length=20.0,
+            flute_length=12.0,
+        )
+        vertices, _indices, _fmt = build_tool_mesh(tool_def)
+        vertex_count = len(vertices) // FLOATS_PER_VERTEX
+
+        for index in range(vertex_count):
+            z = _vertex_z(vertices, index)
+            color = _vertex_color(vertices, index)
+            if z < 12.0 - 1e-6:
+                assert color == pytest.approx(FLUTE_COLOR)
+            elif z > 12.0 + 1e-6:
+                assert color == pytest.approx(SHANK_COLOR)
 
     def test_missing_lengths_still_use_diameter_factor(self):
         profile = tool_profile(

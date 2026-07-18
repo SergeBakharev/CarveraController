@@ -48,6 +48,8 @@ def format_tool_tooltip(tool_def):
         dimensions.append(tr._("L={value:g}").format(value=tool_def.length))
     if tool_def.flute_length is not None:
         dimensions.append(tr._("FL={value:g}").format(value=tool_def.flute_length))
+    if tool_def.shoulder_length is not None:
+        dimensions.append(tr._("SH={value:g}").format(value=tool_def.shoulder_length))
     if tool_def.thread_depth is not None:
         dimensions.append(tr._("Thread depth={value:g}").format(value=tool_def.thread_depth))
     if tool_def.thread_pitch is not None:

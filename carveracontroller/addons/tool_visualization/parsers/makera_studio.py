@@ -93,12 +93,12 @@ def _taper_angle_from_fields(fields):
     return None
 
 
-def _length_from_fields(fields):
-    for key in ("sticklength", "shoulderlength"):
-        length = _positive_or_none(_to_float(fields.get(key)))
-        if length is not None:
-            return length
-    return None
+def _stick_length_from_fields(fields):
+    """Overall stick-out: prefer sticklength, fall back to shoulderlength."""
+    stick = _positive_or_none(_to_float(fields.get("sticklength")))
+    if stick is not None:
+        return stick
+    return _positive_or_none(_to_float(fields.get("shoulderlength")))
 
 
 class MakeraStudioParser(ToolTableParser):
@@ -151,8 +151,9 @@ class MakeraStudioParser(ToolTableParser):
             tip_diameter=_to_float(fields.get("tipdiameter")),
             corner_radius=_to_float(fields.get("cornerradius")),
             taper_angle_deg=_taper_angle_from_fields(fields),
-            length=_length_from_fields(fields),
+            length=_stick_length_from_fields(fields),
             flute_length=_positive_or_none(_to_float(fields.get("flutelength"))),
+            shoulder_length=_positive_or_none(_to_float(fields.get("shoulderlength"))),
             description=fields.get("name", "") or "",
             product_id=fields.get("id", "") or "",
             type_name=type_name,

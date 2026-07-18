@@ -6,13 +6,34 @@ import math
 
 from carveracontroller.addons.tool_visualization.tool_definition import ToolType
 
-VERTEX_FORMAT = [(b"v_pos", 3, "float"), (b"v_normal", 3, "float"), (b"v_tc0", 2, "float")]
+FLUTE_COLOR = (0.3, 0.3, 1.0)
+SHANK_COLOR = (0.15, 0.55, 0.55)
+
+VERTEX_FORMAT = [
+    (b"v_pos", 3, "float"),
+    (b"v_normal", 3, "float"),
+    (b"v_color", 3, "float"),
+    (b"v_tc0", 2, "float"),
+]
+
+FLOATS_PER_VERTEX = 11
 RADIAL_SEGMENTS = 20
 ROUND_SEGMENTS = 10
 DEFAULT_TAPER_ANGLE_DEG = 30.0
 
 # Factor used to compute the shared tool height from the largest diameter in the table.
 LENGTH_DIAMETER_FACTOR = 3.0
+
+# Flute -> shank blend: axial rise per unit radial change (~45°), capped as a
+# fraction of the available shank length so some cylinder remains above.
+SHANK_TRANSITION_SLOPE = 1.0
+SHANK_TRANSITION_MAX_FRACTION = 0.5
+
+# When flute is tip-inferred and shoulder metadata is missing, extend
+# a short cutting-diameter body before the shank so the tip does not
+# jump straight into the handle. Capped to half the remaining stick-out.
+INFERRED_SHOULDER_DIAMETER_FACTOR = 1.0
+INFERRED_SHOULDER_MAX_FRACTION = 0.5
 
 # Minimum radius and length for tools to be visible on screen.
 MIN_VISIBLE_RADIUS = 0.02
@@ -64,13 +85,18 @@ def _surface_normal(dz, dr, theta):
     return (nx / length, ny / length, nz / length)
 
 
-def _add_vertex(positions, normals, x, y, z, nx, ny, nz):
+def _profile_color(index, shank_start_index):
+    return SHANK_COLOR if index >= shank_start_index else FLUTE_COLOR
+
+
+def _add_vertex(positions, normals, colors, x, y, z, nx, ny, nz, color):
     positions.extend([x, y, z])
     normals.extend([nx, ny, nz])
+    colors.extend(color)
     return (len(positions) // 3) - 1
 
 
-def _build_side_ring(positions, normals, z, radius, dz, dr, segments):
+def _build_side_ring(positions, normals, colors, z, radius, dz, dr, segments, color):
     """Add one ring of side-wall vertices with smooth analytical normals."""
     ring_indices = []
     for j in range(segments):
@@ -78,24 +104,24 @@ def _build_side_ring(positions, normals, z, radius, dz, dr, segments):
         cos_t = math.cos(theta)
         sin_t = math.sin(theta)
         nx, ny, nz = _surface_normal(dz, dr, theta)
-        idx = _add_vertex(positions, normals, radius * cos_t, radius * sin_t, z, nx, ny, nz)
+        idx = _add_vertex(positions, normals, colors, radius * cos_t, radius * sin_t, z, nx, ny, nz, color)
         ring_indices.append(idx)
     return ring_indices
 
 
-def _build_cap_ring(positions, normals, z, radius, nz_sign, segments):
+def _build_cap_ring(positions, normals, colors, z, radius, nz_sign, segments, color):
     """Add a ring of cap vertices with a flat face normal (±Z)."""
     ring_indices = []
     for j in range(segments):
         theta = 2.0 * math.pi * j / segments
         cos_t = math.cos(theta)
         sin_t = math.sin(theta)
-        idx = _add_vertex(positions, normals, radius * cos_t, radius * sin_t, z, 0.0, 0.0, nz_sign)
+        idx = _add_vertex(positions, normals, colors, radius * cos_t, radius * sin_t, z, 0.0, 0.0, nz_sign, color)
         ring_indices.append(idx)
     return ring_indices
 
 
-def _pack_vertices(positions, normals):
+def _pack_vertices(positions, normals, colors):
     vertices = []
     for i in range(len(positions) // 3):
         base = 3 * i
@@ -107,6 +133,9 @@ def _pack_vertices(positions, normals):
                 normals[base],
                 normals[base + 1],
                 normals[base + 2],
+                colors[base],
+                colors[base + 1],
+                colors[base + 2],
                 0.0,
                 0.0,
             ]
@@ -114,7 +143,13 @@ def _pack_vertices(positions, normals):
     return vertices
 
 
-def _build_revolve_mesh(profile, segments=RADIAL_SEGMENTS):
+def _coincident_profile_points(profile, start, end):
+    z0, r0 = profile[start]
+    z1, r1 = profile[end]
+    return abs(z0 - z1) <= 1e-9 and abs(r0 - r1) <= 1e-9
+
+
+def _build_revolve_mesh(profile, segments=RADIAL_SEGMENTS, shank_start_index=None):
     """Revolve a `(z, radius)` profile (sorted by increasing z) into a triangle mesh.
 
     A profile point with `radius <= 0` is treated as a single point on the
@@ -122,12 +157,20 @@ def _build_revolve_mesh(profile, segments=RADIAL_SEGMENTS):
 
     Vertices are indexed and share smooth analytical normals derived from the
     profile tangent. Flat end caps use separate vertices with ±Z normals.
+
+    Profile points at index >= `shank_start_index` are colored as SHANK_COLOR;
+    earlier points keep the flute FLUTE_COLOR. When omitted, the whole tool is color
+    using FLUTE_COLOR.
     """
     if len(profile) < 2:
         raise ValueError("A tool profile needs at least two points")
 
+    if shank_start_index is None:
+        shank_start_index = len(profile)
+
     positions = []
     normals = []
+    colors = []
     indices = []
 
     side_rings = []
@@ -136,10 +179,15 @@ def _build_revolve_mesh(profile, segments=RADIAL_SEGMENTS):
             side_rings.append(None)
         else:
             dz, dr = _ring_tangent(profile, i)
-            side_rings.append(_build_side_ring(positions, normals, z, r, dz, dr, segments))
+            color = _profile_color(i, shank_start_index)
+            side_rings.append(_build_side_ring(positions, normals, colors, z, r, dz, dr, segments, color))
 
     # Side walls, connecting each consecutive pair of profile points.
     for i in range(len(profile) - 1):
+        # Duplicate rings at the flute/shank boundary create a hard color edge
+        # without emitting a degenerate zero-area quad.
+        if _coincident_profile_points(profile, i, i + 1):
+            continue
         ring_a = side_rings[i]
         ring_b = side_rings[i + 1]
         if ring_a is None and ring_b is None:
@@ -148,7 +196,8 @@ def _build_revolve_mesh(profile, segments=RADIAL_SEGMENTS):
             z_apex = profile[i][0]
             dz, dr = _segment_tangent(profile, i, i + 1)
             nx, ny, nz = _surface_normal(dz, dr, 0.0)
-            apex_idx = _add_vertex(positions, normals, 0.0, 0.0, z_apex, nx, ny, nz)
+            color = _profile_color(i, shank_start_index)
+            apex_idx = _add_vertex(positions, normals, colors, 0.0, 0.0, z_apex, nx, ny, nz, color)
             for j in range(segments):
                 b0 = ring_b[j]
                 b1 = ring_b[(j + 1) % segments]
@@ -157,7 +206,8 @@ def _build_revolve_mesh(profile, segments=RADIAL_SEGMENTS):
             z_apex = profile[i + 1][0]
             dz, dr = _segment_tangent(profile, i, i + 1)
             nx, ny, nz = _surface_normal(dz, dr, 0.0)
-            apex_idx = _add_vertex(positions, normals, 0.0, 0.0, z_apex, nx, ny, nz)
+            color = _profile_color(i + 1, shank_start_index)
+            apex_idx = _add_vertex(positions, normals, colors, 0.0, 0.0, z_apex, nx, ny, nz, color)
             for j in range(segments):
                 a0 = ring_a[j]
                 a1 = ring_a[(j + 1) % segments]
@@ -173,19 +223,21 @@ def _build_revolve_mesh(profile, segments=RADIAL_SEGMENTS):
     # Flat caps use their own vertices so side-wall normals are not overwritten.
     z_bottom, r_bottom = profile[0]
     if r_bottom > 1e-9:
-        center_idx = _add_vertex(positions, normals, 0.0, 0.0, z_bottom, 0.0, 0.0, -1.0)
-        cap_ring = _build_cap_ring(positions, normals, z_bottom, r_bottom, -1.0, segments)
+        bottom_color = _profile_color(0, shank_start_index)
+        center_idx = _add_vertex(positions, normals, colors, 0.0, 0.0, z_bottom, 0.0, 0.0, -1.0, bottom_color)
+        cap_ring = _build_cap_ring(positions, normals, colors, z_bottom, r_bottom, -1.0, segments, bottom_color)
         for j in range(segments):
             indices.extend([center_idx, cap_ring[(j + 1) % segments], cap_ring[j]])
 
     z_top, r_top = profile[-1]
     if r_top > 1e-9:
-        center_idx = _add_vertex(positions, normals, 0.0, 0.0, z_top, 0.0, 0.0, 1.0)
-        cap_ring = _build_cap_ring(positions, normals, z_top, r_top, 1.0, segments)
+        top_color = _profile_color(len(profile) - 1, shank_start_index)
+        center_idx = _add_vertex(positions, normals, colors, 0.0, 0.0, z_top, 0.0, 0.0, 1.0, top_color)
+        cap_ring = _build_cap_ring(positions, normals, colors, z_top, r_top, 1.0, segments, top_color)
         for j in range(segments):
             indices.extend([center_idx, cap_ring[j], cap_ring[(j + 1) % segments]])
 
-    return _pack_vertices(positions, normals), indices, VERTEX_FORMAT
+    return _pack_vertices(positions, normals, colors), indices, VERTEX_FORMAT
 
 
 def _tool_diameter(tool_def, scale):
@@ -210,7 +262,12 @@ def _has_explicit_length(tool_def):
         return False
     length = getattr(tool_def, "length", None)
     flute_length = getattr(tool_def, "flute_length", None)
-    return (length is not None and length > 0) or (flute_length is not None and flute_length > 0)
+    shoulder_length = getattr(tool_def, "shoulder_length", None)
+    return (
+        (length is not None and length > 0)
+        or (flute_length is not None and flute_length > 0)
+        or (shoulder_length is not None and shoulder_length > 0)
+    )
 
 
 def _profile_length(tool_def, scale, diameter, shared_length=None):
@@ -218,6 +275,9 @@ def _profile_length(tool_def, scale, diameter, shared_length=None):
         length = getattr(tool_def, "length", None)
         if length is not None and length > 0:
             return length
+        shoulder_length = getattr(tool_def, "shoulder_length", None)
+        if shoulder_length is not None and shoulder_length > 0:
+            return shoulder_length
         flute_length = getattr(tool_def, "flute_length", None)
         if flute_length is not None and flute_length > 0:
             return flute_length
@@ -228,15 +288,132 @@ def _profile_length(tool_def, scale, diameter, shared_length=None):
     return fallback_tool_dimensions(scale)[1]
 
 
-def _resolve_cutting_overall_length(tool_def, overall_length):
-    """Return (cutting_length, overall_length), splitting on flute when possible."""
+def _chamfer_cone_height(diameter, taper_angle_deg=DEFAULT_TAPER_ANGLE_DEG, tip_diameter=0.0):
+    """Axial height of the conical cutting tip for chamfer / engraving tools."""
+    radius = diameter / 2.0
+    tip_radius = max(tip_diameter or 0.0, 0.0) / 2.0
+    tip_radius = min(tip_radius, radius)
+
+    half_angle_rad = math.radians(taper_angle_deg) / 2.0
+    half_angle_rad = min(max(half_angle_rad, math.radians(5.0)), math.radians(85.0))
+
+    if tip_radius <= 1e-9:
+        return radius / math.tan(half_angle_rad)
+    radial_rise = radius - tip_radius
+    if radial_rise <= 1e-9:
+        return 0.0
+    return radial_rise / math.tan(half_angle_rad)
+
+
+def _lollipop_neck_radius(diameter):
+    radius = diameter / 2.0
+    neck_radius = max(radius * 0.35, diameter * 0.15)
+    return min(neck_radius, radius * 0.95)
+
+
+def _lollipop_ball_join_z(diameter):
+    """Z where the spherical cutter meets the neck cylinder."""
+    radius = diameter / 2.0
+    neck_radius = _lollipop_neck_radius(diameter)
+    theta_join = math.acos(neck_radius / radius)
+    return radius + radius * math.sin(theta_join)
+
+
+def _infer_flute_length(tool_def):
+    """Guess flute length from tip geometry when CAM metadata omits it:
+    - Chamfer / engraving: Cone height from diameter + taper (+ tip Ø)
+    - Lollipop: Sphere -> neck join
+    - Ball end: One diameter (hemisphere + short cylinder)
+    - Thread mill: One tooth ≈ pitch
+
+    Returns None when the type has no reliable tip-only cue (e.g. flat end mill).
+    Only used when building the mesh, this doesn't change tool definitions.
+    """
     if not tool_def:
-        return overall_length, overall_length
-    length = getattr(tool_def, "length", None)
-    flute_length = getattr(tool_def, "flute_length", None)
-    if length is not None and length > 0 and flute_length is not None and flute_length > 0 and length > flute_length:
-        return flute_length, length
-    return overall_length, overall_length
+        return None
+
+    tool_type = getattr(tool_def, "tool_type", None)
+    diameter = getattr(tool_def, "diameter", None)
+    if diameter is None or diameter <= 0:
+        return None
+
+    if tool_type is ToolType.LOLLIPOP_MILL:
+        return _lollipop_ball_join_z(diameter)
+
+    if tool_type in (ToolType.CHAMFER_MILL, ToolType.ENGRAVING):
+        taper = _safe_taper_angle_deg(tool_def)
+        tip_diameter = _safe_tip_diameter(tool_def, diameter)
+        height = _chamfer_cone_height(diameter, taper, tip_diameter)
+        return height if height > 1e-9 else None
+
+    if tool_type is ToolType.BALL_END_MILL:
+        # Hemisphere plus a short matching cylinder — distinctive tip region.
+        return diameter
+
+    if tool_type is ToolType.THREAD_MILL:
+        return _safe_thread_pitch(tool_def, diameter)
+
+    return None
+
+
+def _inferred_shoulder_length(tool_def, flute, overall):
+    """Short cutting-diameter body above an inferred flute tip."""
+    available = overall - flute
+    if available <= 1e-9:
+        return flute
+
+    diameter = getattr(tool_def, "diameter", None) or 0.0
+    extra = min(
+        max(diameter, 0.0) * INFERRED_SHOULDER_DIAMETER_FACTOR,
+        available * INFERRED_SHOULDER_MAX_FRACTION,
+        available,
+    )
+    return flute + extra
+
+
+def _resolve_section_lengths(tool_def, fallback_overall):
+    """Return `(flute_z, shoulder_z, overall_z)` in file units.
+
+    - flute_z: cutting flutes (blue)
+    - shoulder_z: end of cutting-diameter body; shank blend starts here
+    - overall_z: total stick-out (sticklength)
+
+    When flute length is missing, tip-defined tools (chamfer, lollipop, etc.) get a
+    geometry-based guess. When shoulder is also missing after a tip inference,
+    a short cutting-diameter shoulder is added so the shank does not start at
+    the tip. Explicit flute with no shoulder still steps at the flute length.
+    """
+    if not tool_def:
+        return fallback_overall, fallback_overall, fallback_overall
+
+    overall = getattr(tool_def, "length", None)
+    flute = getattr(tool_def, "flute_length", None)
+    shoulder = getattr(tool_def, "shoulder_length", None)
+
+    if overall is None or overall <= 0:
+        overall = fallback_overall
+
+    flute_was_inferred = False
+    if flute is None or flute <= 0:
+        inferred = _infer_flute_length(tool_def)
+        if inferred is not None and inferred > 0:
+            flute = inferred
+            flute_was_inferred = True
+        elif shoulder is not None and shoulder > 0:
+            flute = shoulder
+        else:
+            flute = overall
+
+    flute = min(flute, overall)
+
+    if shoulder is None or shoulder <= 0:
+        if flute_was_inferred:
+            shoulder = _inferred_shoulder_length(tool_def, flute, overall)
+        else:
+            shoulder = flute
+
+    shoulder = min(max(shoulder, flute), overall)
+    return flute, shoulder, overall
 
 
 def _shank_radius(tool_def, cutting_radius):
@@ -253,26 +430,39 @@ def _safe_tip_diameter(tool_def, diameter):
     return min(tip_diameter, diameter)
 
 
-def _append_shank_section(points, cutting_length, overall_length, shank_radius):
-    """Extend a cutting profile with an optional cylindrical shank above it."""
+def _append_shank_geometry(points, shoulder_z, overall_z, shank_radius):
+    """Append a conical blend + cylindrical shank above `shoulder_z`.
+
+    When the shank radius differs from the body, a short ~45° cone joins them
+    instead of a hard radial step. Returns the extended profile list.
+    """
     if not points:
         return points
 
+    points = list(points)
     last_z, last_r = points[-1]
-    # Tip geometry may already exceed the requested flute length (e.g. ball nose).
-    cutting_z = max(cutting_length, last_z)
-    if cutting_z > last_z + 1e-9:
-        points = list(points) + [(cutting_z, last_r)]
-        last_z, last_r = cutting_z, last_r
-    else:
-        points = list(points)
+    shoulder_z = max(shoulder_z, last_z)
+    if shoulder_z > last_z + 1e-9:
+        points.append((shoulder_z, last_r))
+        last_z, last_r = shoulder_z, last_r
 
-    if overall_length <= cutting_z + 1e-9:
+    if overall_z <= shoulder_z + 1e-9:
         return points
 
-    if abs(shank_radius - last_r) > 1e-9:
-        points.append((cutting_z, shank_radius))
-    points.append((overall_length, shank_radius))
+    available = overall_z - shoulder_z
+    radial_delta = abs(shank_radius - last_r)
+    if radial_delta > 1e-9:
+        transition = min(
+            radial_delta * SHANK_TRANSITION_SLOPE,
+            available * SHANK_TRANSITION_MAX_FRACTION,
+            available,
+        )
+        if transition > 1e-9:
+            points.append((shoulder_z + transition, shank_radius))
+        else:
+            points.append((shoulder_z, shank_radius))
+
+    points.append((overall_z, shank_radius))
     return points
 
 
@@ -335,14 +525,14 @@ def _thread_mill_profile(diameter, length, thread_depth=0.0, thread_pitch=0.0, *
 
 def _ball_end_mill_profile(diameter, length, **_kwargs):
     radius = diameter / 2.0
-    length = max(length, diameter)
     points = []
     for i in range(ROUND_SEGMENTS + 1):
         theta = -math.pi / 2.0 + (math.pi / 2.0) * (i / ROUND_SEGMENTS)
         z = radius + radius * math.sin(theta)
         r = radius * math.cos(theta)
         points.append((z, r))
-    points.append((length, radius))
+    if length > radius + 1e-9:
+        points.append((length, radius))
     return points
 
 
@@ -394,16 +584,11 @@ def _chamfer_or_tapered_profile(diameter, length, taper_angle_deg=DEFAULT_TAPER_
     radius = diameter / 2.0
     tip_radius = max(tip_diameter or 0.0, 0.0) / 2.0
     tip_radius = min(tip_radius, radius)
-
-    half_angle_rad = math.radians(taper_angle_deg) / 2.0
-    half_angle_rad = min(max(half_angle_rad, math.radians(5.0)), math.radians(85.0))
+    cone_height = _chamfer_cone_height(diameter, taper_angle_deg, tip_diameter)
 
     if tip_radius <= 1e-9:
-        cone_height = radius / math.tan(half_angle_rad)
         points = [(0.0, 0.0), (cone_height, radius)]
     else:
-        radial_rise = radius - tip_radius
-        cone_height = radial_rise / math.tan(half_angle_rad) if radial_rise > 1e-9 else 0.0
         points = [(0.0, tip_radius)]
         if cone_height > 1e-9:
             points.append((cone_height, radius))
@@ -455,8 +640,7 @@ def _tapered_mill_profile(diameter, length, corner_radius=0.0, taper_angle_deg=D
 def _lollipop_profile(diameter, length, **_kwargs):
     """Full spherical cutter with a thinner cylindrical neck above the undercut."""
     radius = diameter / 2.0
-    neck_radius = max(radius * 0.35, diameter * 0.15)
-    neck_radius = min(neck_radius, radius * 0.95)
+    neck_radius = _lollipop_neck_radius(diameter)
     theta_join = math.acos(neck_radius / radius)
 
     points = []
@@ -478,8 +662,10 @@ def _lollipop_profile(diameter, length, **_kwargs):
     ball_join_z = points[-1][0]
     points[-1] = (ball_join_z, neck_radius)
 
-    total_length = max(length, ball_join_z + diameter * 0.5)
-    points.append((total_length, neck_radius))
+    # Neck extension is optional: overall stick-out above the ball is added by
+    # the shoulder/shank pass when flute length ends at the sphere.
+    if length > ball_join_z + 1e-9:
+        points.append((length, neck_radius))
     return points
 
 
@@ -544,16 +730,22 @@ def _reference_length(tool_table, scale):
     return fallback_tool_dimensions(scale)[1]
 
 
-def tool_profile(tool_def, length=None, scale=1.0):
-    """Return the (unscaled) profile for a tool definition.
+def _tool_profile_with_shank(tool_def, length=None, scale=1.0):
+    """Return `(profile, color_shank_start_index)` for a tool definition.
+
+    Geometry sections (when metadata allows):
+    - tip → flute_z: cutting flutes at tool diameter (blue)
+    - flute_z → shoulder_z: same diameter body / shoulder (teal)
+    - shoulder_z → overall_z: blend + handle/shank diameter (teal)
+
     Falls back to a basic pointed (chamfer-like) profile when `tool_def` is
     None or its type is unknown/unsupported (see DEFAULT_PROFILE_BUILDER).
     Missing diameters use the fixed on-screen fallback size.
     """
     diameter = _tool_diameter(tool_def, scale)
     effective_diameter = _effective_tool_diameter(tool_def, scale)
-    overall_length = _profile_length(tool_def, scale, effective_diameter, length)
-    cutting_length, overall_length = _resolve_cutting_overall_length(tool_def, overall_length)
+    fallback_overall = _profile_length(tool_def, scale, effective_diameter, length)
+    flute_z, shoulder_z, overall_z = _resolve_section_lengths(tool_def, fallback_overall)
     tool_type = getattr(tool_def, "tool_type", ToolType.UNKNOWN) if tool_def else ToolType.UNKNOWN
     corner_radius = _safe_corner_radius(tool_def, diameter, tool_type)
     taper_angle_deg = _safe_taper_angle_deg(tool_def)
@@ -565,7 +757,7 @@ def tool_profile(tool_def, length=None, scale=1.0):
 
     profile = builder(
         diameter,
-        cutting_length,
+        flute_z,
         corner_radius=corner_radius,
         taper_angle_deg=taper_angle_deg,
         tip_diameter=tip_diameter,
@@ -573,24 +765,44 @@ def tool_profile(tool_def, length=None, scale=1.0):
         thread_pitch=thread_pitch,
     )
 
-    # Tapered mills and lollipops already encode body/neck geometry; only append
-    # a constant shank when the parser provided an explicit shank diameter, or
-    # for other tool types that use a cylindrical shaft above the flute.
-    cutting_radius = profile[-1][1] if profile else effective_diameter / 2.0
-    if tool_type in (ToolType.TAPERED_MILL, ToolType.LOLLIPOP_MILL):
-        shank_diameter = getattr(tool_def, "shank_diameter", None) if tool_def else None
-        if shank_diameter is None or shank_diameter <= 0:
-            if overall_length > profile[-1][0] + 1e-9:
-                # Extend along the existing end radius without inventing a shank step.
-                profile = list(profile) + [(overall_length, profile[-1][1])]
-            return profile
+    profile = list(profile)
+    last_z, last_r = profile[-1]
+    # Tip geometry (e.g. ball nose) may already exceed the requested flute length.
+    flute_tip_z = max(flute_z, last_z)
+    if flute_tip_z > last_z + 1e-9:
+        profile.append((flute_tip_z, last_r))
+        last_z, last_r = flute_tip_z, last_r
+    else:
+        flute_tip_z = last_z
 
-    return _append_shank_section(
+    shoulder_z = max(shoulder_z, flute_tip_z)
+    overall_z = max(overall_z, shoulder_z)
+
+    has_non_flute = overall_z > flute_tip_z + 1e-9
+    if has_non_flute:
+        color_start = len(profile)
+        # Coincident ring → hard blue/teal edge at the end of the flutes.
+        profile.append((flute_tip_z, last_r))
+    else:
+        color_start = len(profile)
+
+    if shoulder_z > flute_tip_z + 1e-9:
+        profile.append((shoulder_z, last_r))
+
+    cutting_radius = last_r
+    profile = _append_shank_geometry(
         profile,
-        cutting_length,
-        overall_length,
+        shoulder_z,
+        overall_z,
         _shank_radius(tool_def, cutting_radius),
     )
+    return profile, color_start
+
+
+def tool_profile(tool_def, length=None, scale=1.0):
+    """Return the (unscaled) profile for a tool definition."""
+    profile, _shank_start = _tool_profile_with_shank(tool_def, length=length, scale=scale)
+    return profile
 
 
 def _scale_profile(profile, scale, radius_boost):
@@ -628,9 +840,9 @@ def _compute_radius_boost(profiles, scale):
 
 
 def build_tool_mesh(tool_def, scale=1.0, radius_boost=1.0, length=None):
-    profile = tool_profile(tool_def, length=length, scale=scale)
+    profile, shank_start = _tool_profile_with_shank(tool_def, length=length, scale=scale)
     scaled_profile = _scale_profile(profile, scale, radius_boost)
-    return _build_revolve_mesh(scaled_profile)
+    return _build_revolve_mesh(scaled_profile, shank_start_index=shank_start)
 
 
 def build_default_tool_mesh(scale=1.0, radius_boost=1.0):
@@ -662,12 +874,18 @@ def build_tool_meshes(tool_table, scale=1.0):
     if tool_table:
         shared_length = _reference_length(tool_table, scale)
         profiles = {}
+        shank_starts = {}
         for number, tool_def in tool_table.items():
             length_hint = None if _has_explicit_length(tool_def) else shared_length
-            profiles[number] = tool_profile(tool_def, length=length_hint, scale=scale)
+            profile, shank_start = _tool_profile_with_shank(tool_def, length=length_hint, scale=scale)
+            profiles[number] = profile
+            shank_starts[number] = shank_start
         radius_boost = _compute_radius_boost(list(profiles.values()), scale)
         tool_meshes = {
-            number: _build_revolve_mesh(_scale_profile(profile, scale, radius_boost))
+            number: _build_revolve_mesh(
+                _scale_profile(profile, scale, radius_boost),
+                shank_start_index=shank_starts[number],
+            )
             for number, profile in profiles.items()
         }
     else:

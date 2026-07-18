@@ -51,6 +51,7 @@ class ToolDefinition:
     taper_angle_deg: float | None = None
     length: float | None = None
     flute_length: float | None = None
+    shoulder_length: float | None = None
     thread_depth: float | None = None
     thread_pitch: float | None = None
     description: str = ""
