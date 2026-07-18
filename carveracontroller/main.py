@@ -6640,7 +6640,7 @@ class Makera(RelativeLayout):
         self.handle_pendant_disconnected()
         if self.controller.continuous_jog_active and self.controller.stream is not None:
             self.controller.executeRealtime(0x19)
-        self.controller.continuous_jog_active = False
+        self.controller._clear_continuous_jog_state()
 
         type_name = Config.get("carvera", "pendant_type")
         pendant_type = SUPPORTED_PENDANTS.get(type_name, SUPPORTED_PENDANTS["None"])

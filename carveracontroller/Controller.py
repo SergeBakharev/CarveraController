@@ -187,6 +187,9 @@ class Controller:
         self.jog_mode = Controller.JOG_MODE_STEP
         self.jog_speed = 10000  # mm/min. A value of 0 here would suggest to use last used feed
         self.continuous_jog_active = False
+        # True after Ctrl+Y until firmware acks (^Y) — suppresses keepalives without
+        # allowing a new $J -c to start before the previous jog has stopped.
+        self._continuous_jog_stopping = False
 
     @property
     def protocol_ready(self):
@@ -249,12 +252,24 @@ class Controller:
 
     def executeRealtime(self, char):
         """Send a single-byte realtime control through the active protocol."""
-        if not self.stream:
+        self.executeRealtimeSequence(char)
+
+    def executeRealtimeSequence(self, *chars):
+        """Send one or more realtime bytes in a single write.
+
+        Smoothie continuous-jog keepalive is the digram ``?1``. Sending ``?`` and
+        ``1`` as separate writes races with other commands and leaves orphaned
+        ``1`` bytes in the firmware command buffer (seen as ``111…$J …``).
+        """
+        if not self.stream or not chars:
             return
         try:
-            if isinstance(char, (bytes, bytearray)):
-                char = char[0]
-            self.stream.send(self.comms.encode_realtime(int(char)))
+            payload = bytearray()
+            for char in chars:
+                if isinstance(char, (bytes, bytearray)):
+                    char = char[0]
+                payload.extend(self.comms.encode_realtime(int(char)))
+            self.stream.send(bytes(payload))
         except Exception:
             self.log.put((Controller.MSG_ERROR, str(sys.exc_info()[1])))
 
@@ -1753,13 +1768,15 @@ class Controller:
         if self.loadNUM == 0 and self.sendNUM == 0:
             if self.stream is None or not self.protocol_ready:
                 return
-            self.executeRealtime(ord("?"))
-            if self.continuous_jog_active:
-                # Smoothie uses "?1"; Makera uses Ctrl+Z for keepalive.
+            if self.continuous_jog_active and not self._continuous_jog_stopping:
+                # Smoothie uses "?1"; Makera uses "?" + Ctrl+Z keepalive.
+                # Always one write so keepalive can't be interleaved/orphaned.
                 if self.comms.uses_framed_transfer:
-                    self.executeRealtime(0x1A)
+                    self.executeRealtimeSequence(ord("?"), 0x1A)
                 else:
-                    self.executeRealtime(ord("1"))
+                    self.executeRealtimeSequence(ord("?"), ord("1"))
+            else:
+                self.executeRealtime(ord("?"))
             self.sio_status = sio_status
 
     def viewDiagnoseReport(self, sio_diagnose):
@@ -1847,9 +1864,14 @@ class Controller:
 
     def startContinuousJog(self, _dir, speed=None, scale_feed_override=None):
         """Start continuous jogging in the specified direction"""
-        if self.jog_mode != Controller.JOG_MODE_CONTINUOUS or self.continuous_jog_active:
+        if (
+            self.jog_mode != Controller.JOG_MODE_CONTINUOUS
+            or self.continuous_jog_active
+            or self._continuous_jog_stopping
+        ):
             return
         self.continuous_jog_active = True
+        self._continuous_jog_stopping = False
         if speed is None:
             if self.jog_speed > 0 and self.jog_speed < 10000:
                 self.executeCommand(f"$J -c {_dir} F{self.jog_speed}")
@@ -1867,9 +1889,16 @@ class Controller:
         if self.jog_mode != Controller.JOG_MODE_CONTINUOUS:
             return
 
-        # Send Ctrl+Y to stop continuous jogging
-        if self.stream is not None and self.continuous_jog_active:
+        # Send Ctrl+Y, then wait for firmware ^Y before allowing a new $J -c.
+        # Mark stopping immediately so status polls stop sending keepalives that
+        # would otherwise fight the stop request.
+        if self.stream is not None and self.continuous_jog_active and not self._continuous_jog_stopping:
+            self._continuous_jog_stopping = True
             self.executeRealtime(0x19)
+
+    def _clear_continuous_jog_state(self):
+        self.continuous_jog_active = False
+        self._continuous_jog_stopping = False
 
     def jog(self, _dir, speed=None):
         if self.jog_mode == Controller.JOG_MODE_STEP:
@@ -2115,7 +2144,7 @@ class Controller:
                 self.log.put((self.MSG_INTERIOR, line))
             elif line[0] == "^":
                 if line[1] == "Y":
-                    self.continuous_jog_active = False
+                    self._clear_continuous_jog_state()
             elif "error" in line.lower() or "alarm" in line.lower():
                 self.log.put((self.MSG_ERROR, line))
                 if line.upper().startswith("ERROR:"):
@@ -2123,6 +2152,9 @@ class Controller:
                     if msg:
                         CNC.vars["alarm_message"] = msg
             else:
+                # Firmware continuous-jog timeout: clear local state so jogging can restart.
+                if "Stop request timeout" in line or "Internal stop request reset" in line:
+                    self._clear_continuous_jog_state()
                 self.log.put((self.MSG_NORMAL, line))
         except (LookupError, ArithmeticError, ValueError) as e:
             self.log.put((self.MSG_ERROR, f"Failed to parse machine response: {line}"))
