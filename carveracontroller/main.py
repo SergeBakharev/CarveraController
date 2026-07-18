@@ -4796,13 +4796,17 @@ class Makera(RelativeLayout):
             content.add_widget(btns)
             popup.open()
 
+        # Warn when community firmware major.minor is ahead of the controller.
+        # Skip for unversioned controllers (0.0.0) and date-based YYYY.dev builds.
+        fw_v = Utils.digitize_v(version) if version else 0
+        ctl_v = Utils.digitize_v(self.ctl_version) if self.ctl_version else 0
+        fw_major, ctl_major = fw_v // 1_000_000, ctl_v // 1_000_000
         if (
             app.is_community_firmware
-            and version
-            and self.ctl_version
-            and not Utils.is_unversioned_controller(self.ctl_version)
-            and not Utils.is_dev_version_pair(version, self.ctl_version)
-            and Utils.digitize_major_minor(version) > Utils.digitize_major_minor(self.ctl_version)
+            and fw_v
+            and ctl_v
+            and not (fw_major >= 2026 and ctl_major >= 2026)
+            and fw_v // 1000 > ctl_v // 1000
         ):
             content = BoxLayout(orientation="vertical", padding=dp(15))
             lbl = Label(

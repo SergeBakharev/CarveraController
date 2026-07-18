@@ -686,34 +686,3 @@ def digitize_v(version):
         cleaned_parts.append(0)
 
     return cleaned_parts[0] * 1000 * 1000 + cleaned_parts[1] * 1000 + cleaned_parts[2]
-
-
-def _version_numeric_parts(version, count=3):
-    cleaned_parts = []
-    for part in version.split(".")[:count]:
-        numeric_part = ""
-        for char in part:
-            if char.isdigit():
-                numeric_part += char
-            else:
-                break
-        cleaned_parts.append(int(numeric_part if numeric_part else "0"))
-    while len(cleaned_parts) < count:
-        cleaned_parts.append(0)
-    return cleaned_parts
-
-
-def digitize_major_minor(version):
-    major, minor = _version_numeric_parts(version, 2)
-    return major * 1000 + minor
-
-
-def is_unversioned_controller(ctl_version):
-    major, minor, patch = _version_numeric_parts(ctl_version, 3)
-    return major == 0 and minor == 0 and patch == 0
-
-
-def is_dev_version_pair(fw_version, ctl_version):
-    fw_major, _ = _version_numeric_parts(fw_version, 2)
-    ctl_major, _ = _version_numeric_parts(ctl_version, 2)
-    return fw_major > 2025 and ctl_major > 2025
