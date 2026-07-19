@@ -304,13 +304,66 @@ class TestTooltipBuilder:
         )
         tooltip = format_tool_tooltip(tool_def)
 
-        assert tooltip == ("T2 - Bull nose end mill\nD=6 CR=0.5 TAPER=5°\nRoughing endmill\n - Makera")
+        assert tooltip == (
+            "[size=17]T2 · Bull Nose End Mill[/size]\n"
+            "Roughing endmill\n"
+            "Makera\n"
+            "\n"
+            "Diameter: 6\n"
+            "Corner radius: 0.5\n"
+            "Taper: 5°"
+        )
 
     def test_uses_enum_label_when_type_name_missing(self):
         tool_def = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=3.0)
-        assert format_tool_tooltip(tool_def) == "T1 - Flat End Mill\nD=3"
+        assert format_tool_tooltip(tool_def) == "[size=17]T1 · Flat End Mill[/size]\n\nDiameter: 3"
 
-    def test_includes_shank_length_and_flute_when_present(self):
+    def test_prefers_enum_label_over_raw_type_name(self):
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.FLAT_END_MILL,
+            diameter=6.0,
+            type_name="flat end mill",
+        )
+        assert format_tool_tooltip(tool_def).startswith("[size=17]T1 · Flat End Mill[/size]")
+
+    def test_falls_back_to_raw_type_name_for_unknown_type(self):
+        tool_def = ToolDefinition(
+            number=9,
+            tool_type=ToolType.UNKNOWN,
+            diameter=4.0,
+            type_name="CNC HSS Slot Drill",
+        )
+        assert format_tool_tooltip(tool_def).startswith("[size=17]T9 · CNC HSS Slot Drill[/size]")
+
+    def test_plain_text_without_markup(self):
+        tool_def = ToolDefinition(
+            number=2,
+            tool_type=ToolType.BULL_NOSE_END_MILL,
+            diameter=6.0,
+            description="Roughing endmill",
+            vendor="Makera",
+            type_name="Bull nose end mill",
+        )
+        assert format_tool_tooltip(tool_def, markup=False) == (
+            "T2 · Bull Nose End Mill\nRoughing endmill\nMakera\n\nDiameter: 6"
+        )
+
+    def test_escapes_markup_in_user_fields(self):
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.FLAT_END_MILL,
+            diameter=3.0,
+            description="Bit [special] & co",
+            vendor="Acme [Tools]",
+            type_name="flat end mill",
+        )
+        tooltip = format_tool_tooltip(tool_def)
+        assert "Bit &bl;special&br; &amp; co" in tooltip
+        assert "Acme &bl;Tools&br;" in tooltip
+        assert "[special]" not in tooltip
+
+    def test_includes_length_and_flute_when_present(self):
         tool_def = ToolDefinition(
             number=1,
             tool_type=ToolType.ENGRAVING,
@@ -322,10 +375,27 @@ class TestTooltipBuilder:
         )
         tooltip = format_tool_tooltip(tool_def)
 
-        assert "SD=3.175" in tooltip
-        assert "L=20" in tooltip
-        assert "FL=12" in tooltip
+        assert "Diameter: 3.175" in tooltip
+        assert "Length: 20" in tooltip
+        assert "Flute length: 12" in tooltip
         assert "Engraving" in tooltip
+        # Redundant shank matching diameter is omitted.
+        assert "Shank:" not in tooltip
+
+    def test_hides_zero_corner_radius_and_shows_distinct_shank(self):
+        tool_def = ToolDefinition(
+            number=5,
+            tool_type=ToolType.RADIUS_MILL,
+            diameter=2.0,
+            shank_diameter=6.0,
+            corner_radius=0.0,
+            type_name="Radius mill",
+        )
+        tooltip = format_tool_tooltip(tool_def)
+
+        assert "Corner radius:" not in tooltip
+        assert "Shank: 6" in tooltip
+        assert tooltip.startswith("[size=17]T5 · Radius Mill[/size]")
 
 
 class TestMeshBuilder:

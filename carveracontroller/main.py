@@ -4274,7 +4274,7 @@ class Makera(RelativeLayout):
             return "Custom Probe"
 
         tool_def = self.tool_table.get(tool_number)
-        tooltip = format_tool_tooltip(tool_def) if tool_def else ""
+        tooltip = format_tool_tooltip(tool_def, markup=False) if tool_def else ""
         return tooltip if tooltip else str(tool_number)
 
     # -----------------------------------------------------------------------
@@ -7289,7 +7289,18 @@ class Makera(RelativeLayout):
             else:
                 tool_button.icon = ""
             tool_def = self.tool_table.get(number)
-            tool_button.tooltip_txt = format_tool_tooltip(tool_def) if tool_def else ""
+            if tool_def:
+                tool_button.tooltip_markup = True
+                tool_button.tooltip_horizontal = True
+                tool_button.tooltip_image_size = (64, 64)
+                tool_button.tooltip_image = get_tool_icon_path(tool_def)
+                tool_button.tooltip_txt = format_tool_tooltip(tool_def)
+            else:
+                tool_button.tooltip_txt = ""
+                tool_button.tooltip_image = ""
+                tool_button.tooltip_image_size = None
+                tool_button.tooltip_horizontal = False
+                tool_button.tooltip_markup = False
 
     # -----------------------------------------------------------------------
     def init_tool_filter(self):
