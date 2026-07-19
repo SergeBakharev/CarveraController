@@ -237,6 +237,10 @@ class Controller:
             try:
                 if isinstance(line, str) and not line.endswith("\n"):
                     line += "\n"
+                # Soft `reset` over USB leaves the board powered (zombie state).
+                if isinstance(line, str) and self.connection_type == CONN_USB and line.lower().startswith("reset"):
+                    self._notify_usb_reset_blocked()
+                    return
                 payload = line.encode() if isinstance(line, str) else line
                 self.stream.send(self.comms.encode_command(payload))
                 if self.execCallback:
@@ -249,6 +253,16 @@ class Controller:
                     self.execCallback(new_line)
             except Exception:
                 self.log.put((Controller.MSG_ERROR, str(sys.exc_info()[1])))
+
+    def _notify_usb_reset_blocked(self):
+        if App is None or Clock is None:
+            return
+        app = App.get_running_app()
+        if app is None or getattr(app, "root", None) is None:
+            return
+        root = app.root
+        if hasattr(root, "show_usb_reset_blocked_popup"):
+            Clock.schedule_once(lambda dt: root.show_usb_reset_blocked_popup(), 0)
 
     def executeRealtime(self, char):
         """Send a single-byte realtime control through the active protocol."""
