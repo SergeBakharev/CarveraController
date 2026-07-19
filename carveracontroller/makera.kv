@@ -3794,11 +3794,6 @@
                                                 text: tr._('Macro 3')
                                                 height: '35dp'
                                                 on_release: app.root.run_macro(3)
-                                        GridBoxLayout:
-                                            size_hint: 0.25,1        
-                                            HelpButton:
-                                                size_hint: 1,1
-                                                helpPath: "https://carvera-community.gitbook.io/docs/controller/features/macros"
 
                             Widget:
                                 size_hint_y: 0.15
@@ -3928,7 +3923,7 @@
                                             size: self.size
                                             radius: [dp(12),]
                                     GridLayout:
-                                        cols: 3
+                                        cols: 2
                                         rows: 2
                                         spacing: '3dp'
                                         GridBoxLayout:
@@ -3963,12 +3958,7 @@
                                                 state: app.jog_pendant_enable
                                                 height: '35dp'
                                                 on_release: app.root.toggle_pendant_jog_control()
-                                        GridBoxLayout:
-                                            size_hint_x: 0.15
-                                            HelpButton:
-                                                size_hint: 1,1
-                                                helpPath: "https://carvera-community.gitbook.io/docs/controller/features/jogging-controls"
-
+                                        
                         BoxLayout:
                             disabled: not (app.state == 'Idle' or app.state == 'Run' or app.state == 'Pause') or (app.playing and app.state != 'Pause') or (app.state == 'Run' and root.allow_jogging_while_machine_running == '0')
                             padding: '25dp'
