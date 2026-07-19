@@ -5290,6 +5290,34 @@ class Makera(RelativeLayout):
         self.message_popup.btn_ok.disabled = btn_disabled
         self.message_popup.open()
 
+    def show_usb_reset_blocked_popup(self, *args):
+        content = BoxLayout(orientation="vertical", padding=dp(15))
+        lbl = Label(
+            text=tr._(
+                "As you are connected by USB, please use the power switch on the machine "
+                "to perform a reset.\n\n"
+                "The Makera control board design allows for the machine to "
+                "receive power over USB, which results in the machine being left in a "
+                "zombie-like state if a reset command is sent."
+            ),
+            halign="center",
+            valign="middle",
+        )
+        lbl.bind(size=lambda inst, val: setattr(inst, "text_size", val))
+        content.add_widget(lbl)
+        btns = BoxLayout(size_hint_y=0.35)
+        popup = Popup(
+            title=tr._("Cannot Reset Over USB"),
+            content=content,
+            size_hint=(0.55, 0.45),
+            auto_dismiss=False,
+        )
+        btn_ok = Button(text=tr._("Ok"))
+        btn_ok.bind(on_release=lambda *a: popup.dismiss())
+        btns.add_widget(btn_ok)
+        content.add_widget(btns)
+        popup.open()
+
     # -----------------------------------------------------------------------
     def compress_file(self, input_filename):
         try:
