@@ -13,7 +13,7 @@ PROTOCOL_CLASSES: dict[str, type[CommunicationProtocol]] = {
     "makera": MakeraProtocol,
 }
 
-DEFAULT_PROTOCOL = "smoothie"
+DEFAULT_PROTOCOL = "makera"
 
 
 def available_protocols() -> tuple[str, ...]:
