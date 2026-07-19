@@ -3770,7 +3770,7 @@
                                             size: self.size
                                             radius: [dp(12),]
                                     GridLayout:
-                                        cols: 4
+                                        cols: 3
                                         rows: 1
                                         spacing: '3dp'
                                         GridBoxLayout:
@@ -3942,15 +3942,12 @@
                                                 height: '35dp'
                                                 on_release: app.root.toggle_jog_mode()
                                         GridBoxLayout:
-                                            size_hint_x: 0.15
-                                        GridBoxLayout:
                                             ToggleButton:
                                                 id: kb_jog_btn
                                                 text: tr._('Keyboard Jogging')
                                                 height: '35dp'
                                                 state: app.jog_keyboard_enable
                                                 on_release: app.root.toggle_keyboard_jog_control()
-                                    
                                         GridBoxLayout:
                                             ToggleButton:
                                                 id: pendant_jogging_en_btn
@@ -3958,7 +3955,7 @@
                                                 state: app.jog_pendant_enable
                                                 height: '35dp'
                                                 on_release: app.root.toggle_pendant_jog_control()
-                                        
+
                         BoxLayout:
                             disabled: not (app.state == 'Idle' or app.state == 'Run' or app.state == 'Pause') or (app.playing and app.state != 'Pause') or (app.state == 'Run' and root.allow_jogging_while_machine_running == '0')
                             padding: '25dp'
