@@ -22,7 +22,7 @@
 - Enhancement: Log connect and manual disconnect with the connection method and address
 - Enhancement: Add a "Network..." option under Scan Wi-Fi in the connection dropdown to enter a machine network address
 - Enhancement: Reconnect supports USB as well as WiFi. Configure preferred method for app-launch auto-connect
-- Enhancement: added green question mark help buttons to the UI that link to the relavent documentation page
+- Enhancement: added green question mark help buttons to the UI that link to the relevant documentation page
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
 - Fixed: Repeated firmware checks now happen just once
 - Fixed: UI widget updates from the SerialMonitor() now dispatched via the main thread. This should reduce the number of RecycleView related crashes
@@ -48,7 +48,7 @@
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file
 - Change: Upgrade screen now will show the letter "c" at the end of the current firmware version if it's present. This indicates that it's Community firmware
 - Change: Auto-connect on app launch now is only performed if auto-reconnect is enabled
-- Change: Reconnect uses the last successful connection method. On fresh app launch it uses the configured prefered connection method
+- Change: Reconnect uses the last successful connection method. On fresh app launch it uses the configured preferred connection method
 - Change: USB devices in connection dropdown are filtered to only show devices specifically with the FTDI chip found on the Makera machines
 - Change: USB devices are now selected and stored by stable VID:PID:serial identity (instead of generic COM path)
 
