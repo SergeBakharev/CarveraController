@@ -1,17 +1,18 @@
+[unreleased]
 - Enhancement: Add multi-select to the remote file browser
 - Enhancement: Display error message in halt popup. Requires halt errors to start with "ERROR: " in the firmware
 - Enhancement: Add popup notice when using stock firmware instead of the Community Firmware
 - Enhancement: Improvements to saving changes in settings menu
 - Enhancement: Add syntax highlighting to the file viewer
-- Enhancement: Only re-render the G-Code viewer scene if something has changed
+- Enhancement: Only re-render the gcode viewer scene if something has changed
 - Enhancement: Add Facing wizard
 - Enhancement: Support gamepads as pendants
 - Enhancement: Added iPhone support
-- Enhancement: Improve Gcode viewer toolbar buttons layout
+- Enhancement: Improved gcode viewer toolbar buttons layout
 - Enhancement: Show current config probe tip diameter in probing panels
 - Enhancement: Add Probe Scan tool
 - Enhancement: Show tool change markers on the playback progress bar
-- Enhancement: Add grid visualization, ortho projection, view cube and color schemes selector to the G-Code viewer
+- Enhancement: Add grid visualization, ortho projection, view cube and color schemes selector to the gcode viewer
 - Enhancement: Detect WHB04 pendant permission errors instead of silently ignoring pendant
 - Enhancement: New M469.6 4th Axis calibration routine finds the true 4th axis center now replaces the previous M469.4 4th axis head stock calibration
 - Enhancement: Advanced TLO Calibration option. Here you can set the offset to use from tool setter, and/or the number of repeat probings to use
@@ -35,7 +36,7 @@
 - Fixed: Fix potential crashes due to an undefined FuncSetting key"
 - Fixed: Fix incorrect "No Pendant" in UI when pendant is working
 - Fixed: Fix invalid initial coordinates when resuming in the middle of a modal command
-- Fixed: 3D Visualisation of GCode movement would always show the initial movement as originating from the WCS Origin, this doesn't match reality. Now the Visualisation correctly shows the line as originating from above the first movement command at the configured clearance_z (default of MCS Z-3)
+- Fixed: 3D Visualisation of gcode movement would always show the initial movement as originating from the WCS Origin, this doesn't match reality. Now the Visualisation correctly shows the line as originating from above the first movement command at the configured clearance_z (default of MCS Z-3)
 - Fixed: When a USB connection was lost, the popup had a non-functioning reconnect button
 - Fixed: When connecting over USB the UI thread would freeze while it was opening the device
 - Fixed: USB higher-baud upgrade failed on Makera protocol (trailing newline in framed commands, race with config download, host baud switch). Upgrade now runs after config sync and verifies the link
