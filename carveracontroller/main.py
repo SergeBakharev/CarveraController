@@ -195,7 +195,12 @@ from kivy.lang import Builder
 from . import Utils, custom_widgets
 from .__version__ import __version__
 from .addons.probing.ProbingControls import ProbeButton
-from .addons.tool_visualization import extract_tool_table, format_tool_tooltip, get_tool_icon_path
+from .addons.tool_visualization import (
+    extract_tool_table,
+    format_tool_tooltip,
+    get_tool_icon_path,
+    get_tool_tooltip_icon_path,
+)
 from .addons.tooltips.Tooltips import Tooltip, ToolTipButton, ToolTipDropDown
 from .CNC import (
     CNC,
@@ -7261,7 +7266,7 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def _update_tool_button_icon_visibility(self, *_args):
         tool_bar = self.float_layout.tool_bar
-        tool_bar_icons_required_width = dp(438 + 6 * 58)
+        tool_bar_icons_required_width = dp(438 + 6 * 66)
         if tool_bar.width <= 0:
             return
         has_parsed_tools = bool(self.tool_table)
@@ -7293,7 +7298,7 @@ class Makera(RelativeLayout):
                 tool_button.tooltip_markup = True
                 tool_button.tooltip_horizontal = True
                 tool_button.tooltip_image_size = (64, 64)
-                tool_button.tooltip_image = get_tool_icon_path(tool_def)
+                tool_button.tooltip_image = get_tool_tooltip_icon_path(tool_def)
                 tool_button.tooltip_txt = format_tool_tooltip(tool_def)
             else:
                 tool_button.tooltip_txt = ""

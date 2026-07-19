@@ -271,19 +271,26 @@ class TestToolDefinitionHelpers:
 
 class TestIconBuilder:
     def test_default_icon_for_missing_tool(self):
-        assert get_tool_icon_path(None) == "data/GcodeViewer/tools/pointed_mill.png"
+        assert get_tool_icon_path(None) == "data/GcodeViewer/tools/pointed_mill_thumb.png"
 
     def test_maps_known_tool_types(self):
         tool_def = ToolDefinition(number=1, tool_type=ToolType.BALL_END_MILL)
-        assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/ball_end_mill.png"
+        assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/ball_end_mill_thumb.png"
 
     def test_maps_tapered_mill_icon(self):
         tool_def = ToolDefinition(number=12, tool_type=ToolType.TAPERED_MILL)
-        assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/tapered_mill.png"
+        assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/tapered_mill_thumb.png"
 
     def test_maps_engraving_to_default_pointed_icon(self):
         tool_def = ToolDefinition(number=1, tool_type=ToolType.ENGRAVING)
-        assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/pointed_mill.png"
+        assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/pointed_mill_thumb.png"
+
+    def test_tooltip_icons_use_full_body_assets(self):
+        from carveracontroller.addons.tool_visualization.icon_builder import get_tool_tooltip_icon_path
+
+        assert get_tool_tooltip_icon_path(None) == "data/GcodeViewer/tools/pointed_mill.png"
+        tool_def = ToolDefinition(number=1, tool_type=ToolType.BALL_END_MILL)
+        assert get_tool_tooltip_icon_path(tool_def) == "data/GcodeViewer/tools/ball_end_mill.png"
 
 
 class TestTooltipBuilder:
