@@ -1171,6 +1171,7 @@
 <StatusDropDown>:
     btn_connect_usb: btn_connect_usb
     btn_connect_wifi: btn_connect_wifi
+    btn_connect_network: btn_connect_network
     btn_unlock: btn_unlock
     btn_disconnect: btn_disconnect
     canvas.before:
@@ -1186,7 +1187,8 @@
         height: '40dp'
         disabled: app.state != 'N/A'
         on_release:
-            app.root.reconnect_wifi_conn(self)
+            app.root.reconnect_last_connection(quiet=False, for_app_launch=False)
+            root.select('')
 
     Button:
         id: btn_connect_wifi
@@ -1195,6 +1197,13 @@
         text: tr._('Scan Wi-Fi...')
         on_release:
             app.root.open_wifi_conn_drop_down(self)
+    Button:
+        id: btn_connect_network
+        size_hint_y: None
+        height: '40dp'
+        text: tr._('Network...')
+        on_release:
+            app.root.manually_input_ip()
     Button:
         id: btn_connect_usb
         size_hint_y: None

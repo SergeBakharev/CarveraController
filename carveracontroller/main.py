@@ -140,11 +140,6 @@ class LightProperty(BooleanProperty):
             BooleanProperty.set(self, obj, False)
 
 
-try:
-    from serial.tools.list_ports import comports
-except ImportError:
-    comports = None
-
 import webbrowser
 from functools import partial
 
@@ -203,6 +198,7 @@ from .CNC import (
 from .Controller import (
     CONN_USB,
     CONN_WIFI,
+    CONNECTED,
     LOAD_CONN_WIFI,
     LOAD_DIR,
     LOAD_MKDIR,
@@ -3110,12 +3106,13 @@ class Makera(RelativeLayout):
         self.load_gcode_viewer_config()
         self.load_pendant_config()
 
-        self.usb_event = lambda instance, x: self.openUSB(x)
+        self.usb_event = lambda instance, device_path: self.openUSB(device_path)
         self.wifi_event = lambda instance, x: self.openWIFI(x)
 
         self.heartbeat_time = 0
         self.machine_metadata_query_time = 0
         self.file_just_loaded = False
+        self.last_connection_method = Config.get("carvera", "last_connection_method", fallback="") or ""
 
         self.fill_remote_dir_callback = None
 
@@ -3170,8 +3167,9 @@ class Makera(RelativeLayout):
         #
         threading.Thread(target=self.monitorSerial).start()
 
-        # try to connect over wifi if we've used it before
-        Clock.schedule_once(self.reconnect_wifi_conn_quietly)
+        # Auto-connect on startup only when auto-reconnect is enabled.
+        if Config.getboolean("carvera", "auto_reconnect_enabled", fallback=True):
+            Clock.schedule_once(lambda dt: self.reconnect_last_connection(quiet=True, for_app_launch=True))
 
     def _parse_active_color(self, value):
         """Parse a color string like '0,255,255,255' into an RGBA list (0-1 range)."""
@@ -3634,12 +3632,29 @@ class Makera(RelativeLayout):
         # check heartbeat
         if self.controller.sendNUM != 0 or self.controller.loadNUM != 0:
             self.heartbeat_time = time.time()
+        if getattr(self.controller, "_refresh_heartbeat", False):
+            self.heartbeat_time = time.time()
+            self.controller._refresh_heartbeat = False
+        if getattr(self.controller, "_baud_switch_in_progress", False):
+            # Don't treat a temporary baud-switch pause as a dead connection.
+            self.heartbeat_time = time.time()
+            return
+        if getattr(self.controller, "_connecting", False) or getattr(self, "_usb_connect_in_progress", False):
+            # Open + protocol probe run off the UI thread; stream is unset until ready.
+            self.heartbeat_time = time.time()
+            return
+        grace_until = getattr(self.controller, "_heartbeat_grace_until", 0) or 0
+        if grace_until and time.time() < grace_until:
+            # USB DTR reset leaves the machine booting; wait for first status.
+            self.heartbeat_time = time.time()
+            return
 
         if self.file_just_loaded:
             self.file_just_loaded = False
             return
 
         if time.time() - self.heartbeat_time > HEARTBEAT_TIMEOUT and self.controller.stream:
+            logger.error("Connection to machine lost")
             # Check reconnection configuration (only if not a manual disconnect and not already reconnecting)
             if not self.controller._manual_disconnect and not self.reconnection_popup._is_open:
                 auto_reconnect_enabled = Config.getboolean("carvera", "auto_reconnect_enabled", fallback=True)
@@ -3649,8 +3664,8 @@ class Makera(RelativeLayout):
                 # Update controller reconnection settings
                 self.controller.set_reconnection_config(auto_reconnect_enabled, reconnect_wait_time, reconnect_attempts)
 
-                if auto_reconnect_enabled and self.controller.connection_type == CONN_WIFI:
-                    # Show reconnection popup with countdown
+                if auto_reconnect_enabled:
+                    # Show reconnection popup with countdown (WiFi or USB)
                     self.reconnection_popup.start_countdown(
                         reconnect_attempts, reconnect_wait_time, self.attempt_reconnect, self.on_reconnect_failed
                     )
@@ -3695,12 +3710,22 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def open_comports_drop_down(self, button):
+        """Show USB serial devices that have a VID/PID; labels are the USB serial number."""
         self.comports_drop_down.clear_widgets()
-        if comports:
-            devices = sorted([x[0] for x in comports()])
+        devices = Utils.list_identifiable_usb_serial_ports()
+        if not devices:
+            btn = Button(
+                text=tr._("No USB serial devices found"),
+                size_hint_y=None,
+                height="35dp",
+                color=(180 / 255, 180 / 255, 180 / 255, 1),
+            )
+            self.comports_drop_down.add_widget(btn)
+        else:
             for device in devices:
-                btn = Button(text=device, size_hint_y=None, height="35dp")
-                btn.bind(on_release=lambda btn: self.comports_drop_down.select(btn.text))
+                btn = Button(text=device["label"], size_hint_y=None, height="35dp")
+                btn.device_path = device["device_path"]
+                btn.bind(on_release=lambda b: self.comports_drop_down.select(b.device_path))
                 self.comports_drop_down.add_widget(btn)
         self.comports_drop_down.unbind(on_select=self.usb_event)
         self.comports_drop_down.bind(on_select=self.usb_event)
@@ -3797,38 +3822,109 @@ class Makera(RelativeLayout):
         self.remote_dir_drop_down.open(button)
 
     # -----------------------------------------------------------------------
-    def reconnect_wifi_conn_quietly(self, button):
-        if self.past_machine_addr:
-            if not self.machine_detector.is_machine_busy(self.past_machine_addr):
-                self.openWIFI(self.past_machine_addr)
+    def _remember_connection_method(self, method):
+        """Persist the last successful connection method (wifi|usb)."""
+        method = (method or "").lower()
+        if method not in ("wifi", "usb"):
+            return
+        self.last_connection_method = method
+        Config.set("carvera", "last_connection_method", method)
+        Config.write()
 
-    # -----------------------------------------------------------------------
-    def reconnect_wifi_conn(self, button):
+    def _preferred_reconnect_method(self, for_app_launch=False):
+        """
+        App launch uses the configured preferred method.
+        Otherwise prefer the last successful connection method.
+        """
+        if for_app_launch:
+            return Config.get("carvera", "reconnect_method", fallback="wifi").lower()
+        method = (
+            self.last_connection_method or Config.get("carvera", "last_connection_method", fallback="") or ""
+        ).lower()
+        if method in ("wifi", "usb"):
+            return method
+        return Config.get("carvera", "reconnect_method", fallback="wifi").lower()
+
+    def _store_usb_device_identity(self, device_id, serial=""):
+        """Record VID:PID and preferred serial for reconnect."""
+        if not device_id:
+            return
+        vid_pid, legacy_serial = Utils.parse_usb_device_id(device_id)
+        if not vid_pid:
+            return
+        Config.set("carvera", "usb_device_id", vid_pid)
+        Config.set("carvera", "usb_serial", (serial or legacy_serial or "").strip())
+        Config.write()
+
+    def _store_usb_device_id_for_path(self, device_path):
+        for entry in Utils.list_identifiable_usb_serial_ports():
+            if Utils.same_usb_device_path(entry["device_path"], device_path):
+                self._store_usb_device_identity(entry["device_id"], entry["serial"])
+                return
+
+    def _resolve_usb_reconnect_path(self):
+        """Resolve configured VID:PID (+ preferred serial) to a current OS path."""
+        device_id = Config.get("carvera", "usb_device_id", fallback="") or ""
+        serial = Config.get("carvera", "usb_serial", fallback="") or ""
+        path = None
+        if device_id or serial:
+            path = Utils.find_usb_device_path_by_id(device_id or None, serial=serial)
+        if path:
+            return path
+        # Fall back to last path only if that path still maps to an identifiable USB device.
+        last_path = getattr(self.controller, "connection_address", None)
+        if last_path:
+            for entry in Utils.list_identifiable_usb_serial_ports():
+                if Utils.same_usb_device_path(entry["device_path"], last_path):
+                    return entry["device_path"]
+        return None
+
+    def reconnect_last_connection(self, *args, quiet=False, for_app_launch=False):
+        """Reconnect using preferred/last method (WiFi address or USB device id)."""
+        method = self._preferred_reconnect_method(for_app_launch=for_app_launch)
+        if method == "usb":
+            path = self._resolve_usb_reconnect_path()
+            if path:
+                self.openUSB(path)
+                return True
+            if not quiet:
+                Clock.schedule_once(
+                    partial(
+                        self.show_message_popup,
+                        tr._("No matching USB device found. Connect once via USB... to record the serial number."),
+                        False,
+                    ),
+                    0,
+                )
+            else:
+                logger.info("Startup USB auto-connect skipped: no matching USB device for stored identity")
+            return False
+
+        # WiFi
         if self.past_machine_addr:
             if not self.machine_detector.is_machine_busy(self.past_machine_addr):
                 self.openWIFI(self.past_machine_addr)
-            else:
+                return True
+            if not quiet:
                 Clock.schedule_once(
                     partial(self.show_message_popup, tr._("Cannot connect, machine is busy or not available."), False),
                     0,
                 )
-        else:
+            return False
+        if not quiet:
             Clock.schedule_once(
                 partial(self.show_message_popup, tr._("No previous machine network address stored."), False), 0
             )
             self.manually_input_ip()
+        return False
 
     # -----------------------------------------------------------------------
     def attempt_reconnect(self):
         """Attempt to reconnect to the last known connection"""
-        if self.controller.connection_type == CONN_WIFI and self.past_machine_addr:
-            # Try to reconnect to WiFi
-            if not self.machine_detector.is_machine_busy(self.past_machine_addr):
-                self.openWIFI(self.past_machine_addr)
-                # Stop the countdown timer if reconnection popup is open
-                if self.reconnection_popup._is_open:
-                    Clock.unschedule(self.reconnection_popup.countdown_tick)
-                    self.reconnection_popup.dismiss()
+        if self.reconnection_popup._is_open:
+            Clock.unschedule(self.reconnection_popup.countdown_tick)
+            self.reconnection_popup.dismiss()
+        self.reconnect_last_connection(quiet=False, for_app_launch=False)
 
     def on_reconnect_failed(self):
         """Called when all reconnection attempts have failed"""
@@ -3890,10 +3986,12 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def manually_input_ip(self):
         self.input_popup.lb_title.text = tr._("Input machine network address:")
-        if self.past_machine_addr:
-            self.input_popup.txt_content.text = self.past_machine_addr
-        else:
-            self.input_popup.txt_content.text = ""
+        # Prefer the in-memory value; fall back to the saved config address.
+        saved = self.past_machine_addr
+        if not saved and Config.has_option("carvera", "address"):
+            saved = Config.get("carvera", "address")
+            self.past_machine_addr = saved
+        self.input_popup.txt_content.text = saved or ""
         self.input_popup.txt_content.password = False
         self.input_popup.confirm = self.manually_open_wifi
         self.input_popup.open(self)
@@ -3971,19 +4069,9 @@ class Makera(RelativeLayout):
                         Clock.schedule_once(partial(self.onFirmwareDetected, self.fw_version), 0)
                         if self.fw_version_new != "":
                             self.check_fw_version()
-                        # Request higher USB baud if firmware >= 2.1.0 and user has enabled it
-                        if (
-                            app.is_community_firmware
-                            and app.fw_version_digitized >= Utils.digitize_v("2.1.0")
-                            and self.controller.connection_type == CONN_USB
-                            and not self.controller._baud_upgrade_attempted
-                        ):
-                            use_higher_val = Config.get("carvera", "use_higher_baud", fallback="0")
-                            use_higher = str(use_higher_val).lower() in ("1", "true", "yes", "on")
-                            baud_str = Config.get("carvera", "usb_baud_rate", fallback="115200")
-                            if use_higher and baud_str and int(baud_str) != 115200:
-                                self.controller._baud_upgrade_attempted = True
-                                self.controller.request_baud_upgrade(int(baud_str))
+                        # Baud upgrade is deferred until after config download / sync
+                        # (see attempt_usb_baud_upgrade_if_eligible). Running it on the
+                        # version line races framed config transfer and breaks the link.
 
                     remote_model = re.search(r"model = (\w+), (\d+), (\d+), (\d+)", line)
                     if remote_model != None:
@@ -4010,6 +4098,12 @@ class Makera(RelativeLayout):
                     # handle specific messages
                     if "WP PAIR SUCCESS" in line:
                         self.pairing_popup.pairing_success = True
+
+                    # Framed MD5-match short-circuit uses FILE_CAN; firmware labels that as
+                    # "canceled by Controller" even though the transfer succeeded via cache.
+                    if "canceled by Controller" in line:
+                        logger.debug("MDI Received (transfer short-circuit): %s", line)
+                        continue
 
                     if msg == Controller.MSG_NORMAL:
                         logger.info(f"MDI Received: {line}")
@@ -4575,53 +4669,63 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def download_config_file(self):
-        app = App.get_running_app()
         self.downloading_size = 1024 * 5
         self.downloading_config = True
         remote_path = "/sd/config.txt"
+        self.downloading_file = remote_path
         local_path = os.path.join(self.temp_dir, "config.txt")
         threading.Thread(target=self.doDownload, args=(remote_path, local_path)).start()
 
     # -----------------------------------------------------------------------
     def finishLoadConfig(self, success, *args):
+        self.downloading_config = False
         if success:
-            self.setting_list.clear()
-            self.load_machine_config_defaults()
-            # caching config file
-            config_path = os.path.join(self.temp_dir, "config.txt")
-            with open(config_path) as f:
-                config_string = "[dummy_section]\n" + f.read()
-            # remove notes
-            config_string = re.sub(r"#.*", "", config_string)
-            # replace spaces to =
-            config_string = re.sub(r"([a-zA-Z])( |\t)+([a-zA-Z0-9-])", r"\1=\3", config_string)
+            try:
+                self.setting_list.clear()
+                self.load_machine_config_defaults()
+                # caching config file
+                config_path = os.path.join(self.temp_dir, "config.txt")
+                if not os.path.exists(config_path):
+                    raise FileNotFoundError(f"Cached config not found: {config_path}")
+                with open(config_path) as f:
+                    config_string = "[dummy_section]\n" + f.read()
+                # remove notes
+                config_string = re.sub(r"#.*", "", config_string)
+                # replace spaces to =
+                config_string = re.sub(r"([a-zA-Z])( |\t)+([a-zA-Z0-9-])", r"\1=\3", config_string)
 
-            setting_config = ConfigParser(allow_no_value=True)
-            setting_config.read_string(config_string)
-            for section_name in setting_config.sections():
-                for key, value in setting_config.items(section_name):
-                    try:
-                        self.setting_list[key.strip()] = value.strip()
-                    except AttributeError:
-                        Clock.schedule_once(
-                            partial(
-                                self.load_error,
-                                tr._(
-                                    "Error loading machine config setting. Possibly malformed value.\nSkipping setting key: "
-                                )
-                                + str(key),
-                            ),
-                            0,
-                        )
+                setting_config = ConfigParser(allow_no_value=True)
+                setting_config.read_string(config_string)
+                for section_name in setting_config.sections():
+                    for key, value in setting_config.items(section_name):
+                        try:
+                            self.setting_list[key.strip()] = value.strip()
+                        except AttributeError:
+                            Clock.schedule_once(
+                                partial(
+                                    self.load_error,
+                                    tr._(
+                                        "Error loading machine config setting. Possibly malformed value.\nSkipping setting key: "
+                                    )
+                                    + str(key),
+                                ),
+                                0,
+                            )
 
-            self.load_coordinates()
-            self.load_laser_offsets()
-            self.setting_change_list = {}
+                self.load_coordinates()
+                self.load_laser_offsets()
+                self.setting_change_list = {}
 
-            self.config_loaded = self.load_machine_config()
-            self.config_loading = False
-            self.config_popup.btn_apply.disabled = len(self.setting_change_list) == 0
+                self.config_loaded = self.load_machine_config()
+                self.config_popup.btn_apply.disabled = len(self.setting_change_list) == 0
+            except Exception as e:
+                logger.exception("Failed to load machine config")
+                self.config_loaded = False
+                self.controller.log.put((Controller.MSG_ERROR, tr._("Failed to load config file: {}").format(e)))
+            finally:
+                self.config_loading = False
         else:
+            self.config_loading = False
             self.controller.log.put((Controller.MSG_ERROR, tr._("Download config file error")))
             # self.controller.close()
 
@@ -4662,11 +4766,20 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def doDownload(self, remote_path, local_path, show_progress=True):
         app = App.get_running_app()
+        was_config_download = self.downloading_config
         if not self.downloading_config and not os.path.exists(os.path.dirname(local_path)):
             # os.mkdir(os.path.dirname(local_path))
             os.makedirs(os.path.dirname(local_path))
+        tmp_filename = local_path + ".tmp"
+        # Only use a temp file for MD5 skip when it is a copy of the real local file.
+        # Orphan .tmp leftovers must not suppress a real download.
         if os.path.exists(local_path):
-            shutil.copyfile(local_path, local_path + ".tmp")
+            shutil.copyfile(local_path, tmp_filename)
+        elif os.path.exists(tmp_filename):
+            try:
+                os.remove(tmp_filename)
+            except OSError:
+                pass
 
         if show_progress:
             Clock.schedule_once(
@@ -4678,19 +4791,25 @@ class Makera(RelativeLayout):
                 0,
             )
         self.downloading = True
-        download_result = False
+        # None = error/abort; never use False — `False >= 0` is True in Python.
+        download_result = None
         try:
-            tmp_filename = local_path + ".tmp"
-            md5 = ""
-            if os.path.exists(tmp_filename):
-                md5 = Utils.md5(tmp_filename)
-            self.controller.downloadCommand(remote_path)
-            self.controller.pauseStream(0.2)
-            download_result = self.controller.stream.download(
-                tmp_filename, md5, partial(self.downloadCallback, remote_path) if show_progress else None
-            )
-        except:
+            md5 = Utils.md5(tmp_filename) if os.path.exists(tmp_filename) else ""
+            # Makera framed transfer: pause RX before the download command so
+            # streamIO cannot steal the MD5 / file frames from XMODEM.
+            # Smoothie/XMODEM legacy: send first, then pause (OEM timing).
+            if self.controller.comms.uses_framed_transfer:
+                self.controller.pauseStream(0.0)
+                self.controller.downloadCommand(remote_path)
+                progress_cb = self.downloadCallback_framed if show_progress else None
+            else:
+                self.controller.downloadCommand(remote_path)
+                self.controller.pauseStream(0.2)
+                progress_cb = partial(self.downloadCallback, remote_path) if show_progress else None
+            download_result = self.controller.stream.download(tmp_filename, md5, progress_cb)
+        except Exception:
             logger.error(sys.exc_info()[1])
+            download_result = None
             self.controller.resumeStream()
             self.downloading = False
 
@@ -4700,9 +4819,10 @@ class Makera(RelativeLayout):
         self.heartbeat_time = time.time()
 
         if download_result is None:
-            os.remove(local_path + ".tmp")
+            if os.path.exists(tmp_filename):
+                os.remove(tmp_filename)
             # show message popup
-            if self.downloading_config:
+            if was_config_download:
                 Clock.schedule_once(partial(self.finishLoadConfig, False), 0.1)
                 Clock.schedule_once(partial(self.show_message_popup, tr._("Download config file error!"), False), 0.2)
             else:
@@ -4712,11 +4832,20 @@ class Makera(RelativeLayout):
                 # download success
                 if os.path.exists(local_path):
                     os.remove(local_path)
-                os.rename(local_path + ".tmp", local_path)
+                os.rename(tmp_filename, local_path)
             else:
-                # MD5 same
-                os.remove(local_path + ".tmp")
-            if self.downloading_config:
+                # MD5 matched: firmware reports "Download canceled by Controller!" for this
+                # intentional FILE_CAN; keep/promote the local cache instead of re-fetching.
+                if not os.path.exists(local_path) and os.path.exists(tmp_filename):
+                    os.rename(tmp_filename, local_path)
+                elif os.path.exists(tmp_filename):
+                    os.remove(tmp_filename)
+                if was_config_download:
+                    logger.info("Config unchanged (MD5 match), using cached file")
+                    self.controller.log.put(
+                        (Controller.MSG_NORMAL, tr._("Config unchanged (MD5 match), using cached file"))
+                    )
+            if was_config_download:
                 if show_progress:
                     Clock.schedule_once(partial(self.progressUpdate, 100, "", True), 0)
                 Clock.schedule_once(partial(self.finishLoadConfig, True), 0.1)
@@ -4734,6 +4863,8 @@ class Makera(RelativeLayout):
                 Clock.schedule_once(self.controller.queryFtype, 0.4)
                 # Schedule a one off diagnostic command to get the machine's extended state
                 Clock.schedule_once(self.controller.viewDiagnoseReport, 0.5)
+                # Baud upgrade after config + sync commands have had time to finish.
+                Clock.schedule_once(self.attempt_usb_baud_upgrade_if_eligible, 2.0)
             else:
                 if show_progress:
                     Clock.schedule_once(
@@ -4742,13 +4873,14 @@ class Makera(RelativeLayout):
                 # Clock.schedule_once(partial(self.load_gcode_file, local_path), 0.1)
                 self.load_gcode_file(local_path)
 
-            if not self.downloading_config:
+            if not was_config_download:
                 self.update_recent_remote_dir_list(os.path.dirname(remote_path))
 
         elif download_result < 0:
-            os.remove(local_path + ".tmp")
+            if os.path.exists(tmp_filename):
+                os.remove(tmp_filename)
             self.controller.log.put((Controller.MSG_NORMAL, tr._("Downloading is canceled manually.")))
-            if self.downloading_config:
+            if was_config_download:
                 Clock.schedule_once(partial(self.finishLoadConfig, False), 0)
 
         if show_progress:
@@ -4895,10 +5027,26 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def downloadCallback(self, remote_path, packet_size, success_count, error_count):
+        """Progress callback for legacy XMODEM downloads."""
         packets = self.downloading_size / packet_size + (1 if self.downloading_size % packet_size > 0 else 0)
         Clock.schedule_once(
             partial(
                 self.progressUpdate, success_count * 100.0 / packets, tr._("Downloading") + " \n%s" % remote_path, False
+            ),
+            0,
+        )
+
+    def downloadCallback_framed(self, seq_rev, totalpackets):
+        """Progress callback for Makera framed downloads (seq, total)."""
+        if not totalpackets:
+            return
+        remote_path = getattr(self, "downloading_file", "") or ""
+        Clock.schedule_once(
+            partial(
+                self.progressUpdate,
+                seq_rev * 100.0 / totalpackets,
+                tr._("Downloading") + " \n%s" % remote_path,
+                False,
             ),
             0,
         )
@@ -5548,6 +5696,10 @@ class Makera(RelativeLayout):
             if app is None:
                 return
 
+            # First real machine state ends the post-connect heartbeat grace window.
+            if CNC.vars["state"] not in (NOT_CONNECTED, CONNECTED):
+                self.controller._heartbeat_grace_until = 0
+
             if app.state != CNC.vars["state"]:
                 prev_state = app.state
                 app.state = CNC.vars["state"]
@@ -5572,6 +5724,7 @@ class Makera(RelativeLayout):
                     self.status_data_view.minr_text = tr._("disconnect")
                     self.status_drop_down.btn_connect_usb.disabled = False
                     self.status_drop_down.btn_connect_wifi.disabled = False
+                    self.status_drop_down.btn_connect_network.disabled = False
                     self.status_drop_down.btn_disconnect.disabled = True
                     self.config_loaded = False
                     self.config_loading = False
@@ -5592,15 +5745,12 @@ class Makera(RelativeLayout):
                     # Check if we should show reconnection popup (only if not a manual disconnect and not already reconnecting)
                     if not self.controller._manual_disconnect and not self.reconnection_popup._is_open:
                         auto_reconnect_enabled = Config.getboolean("carvera", "auto_reconnect_enabled", fallback=True)
-                        if (
-                            auto_reconnect_enabled
-                            and self.controller.connection_type == CONN_WIFI
-                            and self.past_machine_addr
-                        ):
-                            # Show reconnection popup
-                            reconnect_wait_time = Config.getint("carvera", "reconnect_wait_time", fallback=10)
-                            reconnect_attempts = Config.getint("carvera", "reconnect_attempts", fallback=3)
-
+                        reconnect_wait_time = Config.getint("carvera", "reconnect_wait_time", fallback=10)
+                        reconnect_attempts = Config.getint("carvera", "reconnect_attempts", fallback=3)
+                        self.controller.set_reconnection_config(
+                            auto_reconnect_enabled, reconnect_wait_time, reconnect_attempts
+                        )
+                        if auto_reconnect_enabled:
                             self.reconnection_popup.start_countdown(
                                 reconnect_attempts,
                                 reconnect_wait_time,
@@ -5608,27 +5758,16 @@ class Makera(RelativeLayout):
                                 self.on_reconnect_failed,
                             )
                             self.reconnection_popup.open()
-
-                            # Start countdown timer
                             Clock.schedule_interval(self.reconnection_popup.countdown_tick, 1.0)
-
-                            # Also trigger the controller reconnection logic
-                            self.controller.set_reconnection_config(
-                                auto_reconnect_enabled, reconnect_wait_time, reconnect_attempts
-                            )
                             self.controller.start_reconnection()
-                        elif (
-                            not auto_reconnect_enabled
-                            and self.controller.connection_type == CONN_WIFI
-                            and self.past_machine_addr
-                        ):
-                            # Show reconnection popup in manual mode
+                        else:
                             self.reconnection_popup.show_manual_reconnect(self.attempt_reconnect)
                             self.reconnection_popup.open()
                 else:
                     self.status_data_view.minr_text = "WiFi" if self.controller.connection_type == CONN_WIFI else "USB"
                     self.status_drop_down.btn_connect_usb.disabled = True
                     self.status_drop_down.btn_connect_wifi.disabled = True
+                    self.status_drop_down.btn_connect_network.disabled = True
                     self.status_drop_down.btn_disconnect.disabled = False
 
                     # If we just reconnected, stop any reconnection popup and timer
@@ -6166,22 +6305,61 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def openUSB(self, device):
+        # Serial open + DTR reset sleeps (~1s) + protocol probe must not run on the UI thread.
+        if getattr(self, "_usb_connect_in_progress", False):
+            return
+        self._usb_connect_in_progress = True
+        self.heartbeat_time = time.time()
+        self.status_drop_down.select("")
+        # Keep VID:PID + serial in sync even when reconnecting by resolved path.
+        self._store_usb_device_id_for_path(device)
+        label = device
+        for entry in Utils.list_identifiable_usb_serial_ports():
+            if Utils.same_usb_device_path(entry["device_path"], device):
+                label = entry["label"]
+                break
+        Clock.schedule_once(
+            partial(self.progressStart, tr._("Connecting via USB...\n%s") % label, None),
+            0,
+        )
+        threading.Thread(target=self._open_usb_worker, args=(device,), daemon=True).start()
+
+    def _open_usb_worker(self, device):
+        success = False
         try:
-            self.controller.open(CONN_USB, device)
+            success = bool(self.controller.open(CONN_USB, device))
             self.controller.connection_type = CONN_USB
+        except Exception:
+            logger.exception("USB connection failed for %s", device)
+            success = False
+        Clock.schedule_once(lambda dt, ok=success: self._finish_usb_open(ok), 0)
+
+    def _finish_usb_open(self, success):
+        self._usb_connect_in_progress = False
+        if self.progress_popup._is_open:
+            self.progress_popup.dismiss()
+        if success:
+            self.heartbeat_time = time.time()
+            self._remember_connection_method("usb")
             # Fallback: attempt baud upgrade after 10s if version is > 2.1.0c and conditions met
             Clock.schedule_once(self.attempt_usb_baud_upgrade_if_eligible, 10)
-        except:
-            logger.error(sys.exc_info()[1])
+        else:
+            logger.error("USB connection attempt finished without an active link")
         self.updateStatus()
-        self.status_drop_down.select("")
 
     def attempt_usb_baud_upgrade_if_eligible(self, dt):
-        """If on USB, firmware >= 2.1.0, and use_higher_baud is on, request higher baud (fallback if version line was missed)."""
+        """If on USB, firmware >= 2.1.0, and use_higher_baud is on, request higher baud."""
         app = App.get_running_app()
         if self.controller.connection_type != CONN_USB or self.controller.stream != self.controller.usb_stream:
             return
         if self.controller._baud_upgrade_attempted:
+            return
+        # Never interrupt framed file transfer / config download with a baud switch.
+        if self.downloading or self.downloading_config or self.uploading:
+            Clock.schedule_once(self.attempt_usb_baud_upgrade_if_eligible, 1.0)
+            return
+        if self.controller.paused or self.controller.sendNUM != 0 or self.controller.loadNUM != 0:
+            Clock.schedule_once(self.attempt_usb_baud_upgrade_if_eligible, 1.0)
             return
         if not app.is_community_firmware or not self.fw_version or app.fw_version_digitized < Utils.digitize_v("2.1.0"):
             return
@@ -6189,16 +6367,22 @@ class Makera(RelativeLayout):
         use_higher = str(use_higher_val).lower() in ("1", "true", "yes", "on")
         baud_str = Config.get("carvera", "usb_baud_rate", fallback="115200")
         if use_higher and baud_str and int(baud_str) != 115200:
+            baud = int(baud_str)
             self.controller._baud_upgrade_attempted = True
-            self.controller.request_baud_upgrade(int(baud_str))
+            threading.Thread(
+                target=self.controller.request_baud_upgrade,
+                args=(baud,),
+                daemon=True,
+            ).start()
 
     # -----------------------------------------------------------------------
     def openWIFI(self, address):
         try:
-            self.controller.open(CONN_WIFI, address)
-            self.controller.connection_type = CONN_WIFI
-            self.store_machine_address(address.split(":")[0])
-        except:
+            if self.controller.open(CONN_WIFI, address):
+                self.controller.connection_type = CONN_WIFI
+                self.store_machine_address(address.split(":")[0])
+                self._remember_connection_method("wifi")
+        except Exception:
             logger.error(sys.exc_info()[1])
         self.updateStatus()
         self.status_drop_down.select("")
@@ -6459,8 +6643,8 @@ class Makera(RelativeLayout):
     def setup_pendant(self):
         self.handle_pendant_disconnected()
         if self.controller.continuous_jog_active and self.controller.stream is not None:
-            self.controller.stream.send(b"\031")
-        self.controller.continuous_jog_active = False
+            self.controller.executeRealtime(0x19)
+        self.controller._clear_continuous_jog_state()
 
         type_name = Config.get("carvera", "pendant_type")
         pendant_type = SUPPORTED_PENDANTS.get(type_name, SUPPORTED_PENDANTS["None"])
@@ -7520,6 +7704,21 @@ def set_config_defaults(default_lang):
         Config.set("carvera", "use_higher_baud", "0")
     if not Config.has_option("carvera", "usb_baud_rate"):
         Config.set("carvera", "usb_baud_rate", "1500000")
+    if not Config.has_option("carvera", "reconnect_method"):
+        Config.set("carvera", "reconnect_method", "wifi")
+    if not Config.has_option("carvera", "usb_device_id"):
+        Config.set("carvera", "usb_device_id", "")
+    if not Config.has_option("carvera", "usb_serial"):
+        Config.set("carvera", "usb_serial", "")
+    if not Config.has_option("carvera", "last_connection_method"):
+        Config.set("carvera", "last_connection_method", "")
+    # Migrate legacy VID:PID:SERIAL stored in usb_device_id.
+    legacy_id = Config.get("carvera", "usb_device_id", fallback="") or ""
+    vid_pid, legacy_serial = Utils.parse_usb_device_id(legacy_id)
+    if vid_pid and legacy_serial and legacy_id.count(":") >= 2:
+        Config.set("carvera", "usb_device_id", vid_pid)
+        if not Config.get("carvera", "usb_serial", fallback=""):
+            Config.set("carvera", "usb_serial", legacy_serial)
     if not Config.has_option("carvera", "high_precision_reamining_time_estimate"):
         Config.set("carvera", "high_precision_reamining_time_estimate", "1")
     if not Config.has_option("carvera", "background_image"):
