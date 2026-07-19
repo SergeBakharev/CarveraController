@@ -89,6 +89,8 @@ class WIFIStream:
         handler.setFormatter(formatter)
         self.modem.log.addHandler(handler)
         self.log_sent_receive = log_sent_receive
+        # Set by Controller when the communication protocol is selected.
+        self.uses_framed_transfer = False
 
     # ----------------------------------------------------------------------
     def send(self, data):
@@ -161,15 +163,20 @@ class WIFIStream:
         return self.socket.send(data) or None
 
     def upload(self, filename, local_md5, callback):
-        # do upload
         stream = open(filename, "rb")
-        result = self.modem.send(stream, md5=local_md5, retry=10, callback=callback)
+        if self.uses_framed_transfer:
+            result = self.modem.send(stream, md5=local_md5, retry=50, callback=callback)
+        else:
+            result = self.modem.send_legacy(stream, md5=local_md5, retry=10, callback=callback)
         stream.close()
         return result
 
     def download(self, filename, local_md5, callback):
         stream = open(filename, "wb")
-        result = self.modem.recv(stream, md5=local_md5, retry=10, callback=callback)
+        if self.uses_framed_transfer:
+            result = self.modem.recv(stream, md5=local_md5, retry=50, callback=callback)
+        else:
+            result = self.modem.recv_legacy(stream, md5=local_md5, retry=10, callback=callback)
         stream.close()
         return result
 
