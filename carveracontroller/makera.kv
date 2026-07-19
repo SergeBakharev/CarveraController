@@ -514,6 +514,12 @@
         on_release:
             root.select('Third Item')
             app.root.controller.clearAutoLeveling()
+    BoxLayout:
+        size_hint_y: None
+        height: '48dp'
+        HelpButton:
+            helpPath: "https://carvera-community.gitbook.io/docs/controller/features/auto-leveling"
+
 
 
 <ADropDown>:
@@ -1508,6 +1514,12 @@
                     root.dismiss()
                     if root.unlock_safe_z:\
                     root.unlock_safe_z()
+            BoxLayout:
+                size_hint_x: 0.25
+                HelpButton:
+                    size_hint: 1,1
+                    helpPath: "https://carvera-community.gitbook.io/docs/controller/common-error-messages"
+
 
 <SelectAndCalibrateProbePopup>:
     lb_title: lb_title
@@ -1736,6 +1748,7 @@
                         id: btn_ok
                         text: tr._('Ok')
                         on_release: root.on_ok_pressed()
+                    
 
         TabbedPanelItem:
             text: tr._('Set By XYZ Probe')
@@ -3790,6 +3803,7 @@
                                                 text: tr._('Macro 3')
                                                 height: '35dp'
                                                 on_release: app.root.run_macro(3)
+
                             Widget:
                                 size_hint_y: 0.15
                             BoxLayout:
@@ -3936,7 +3950,6 @@
                                                 text: tr._('Jog Mode:Step')
                                                 height: '35dp'
                                                 on_release: app.root.toggle_jog_mode()
-
                                         GridBoxLayout:
                                             ToggleButton:
                                                 id: kb_jog_btn
@@ -3944,7 +3957,6 @@
                                                 height: '35dp'
                                                 state: app.jog_keyboard_enable
                                                 on_release: app.root.toggle_keyboard_jog_control()
-                                    
                                         GridBoxLayout:
                                             ToggleButton:
                                                 id: pendant_jogging_en_btn
@@ -5444,6 +5456,11 @@
                 on_release:
                     root.apply_changes()
                     root.dismiss()
+            BoxLayout:
+                size_hint_x: 0.2
+                HelpButton:
+                    helpPath: "https://carvera-community.gitbook.io/docs/controller/features/workspace-management"
+
 
 <SetRotationPopup>:
     size_hint: 0.5, 0.4
@@ -5506,6 +5523,11 @@
                 text: tr._('Ok')
                 on_release:
                     on_release: root.on_ok_pressed()
+            BoxLayout:
+                size_hint_x: 0.2
+                HelpButton:
+                    helpPath: "https://carvera-community.gitbook.io/docs/controller/features/wcs-rotation"
+
 
 # Solid disabled look (no faded theme atlas / no ghost text): mute bg + text vs enabled row.
 <OpaqueDisabledButton@Button>:
