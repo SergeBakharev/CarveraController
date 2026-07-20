@@ -126,9 +126,7 @@ class TestFusion360MakeraParser:
         assert table[5].shank_diameter == 6.0
 
     def test_chamfer_mill_keeps_chamfer_type(self, parser):
-        lines = [
-            "(T1  Single Flute Engraving Metal 60 deg*.1mm      D=3.175 TAPER=30deg - ZMIN=0. - chamfer mill)\n"
-        ]
+        lines = ["(T1  Single Flute Engraving Metal 60 deg*.1mm      D=3.175 TAPER=30deg - ZMIN=0. - chamfer mill)\n"]
         table = parser.parse(lines)
 
         assert table[1].tool_type == ToolType.CHAMFER_MILL
@@ -168,10 +166,7 @@ class TestFusion360MakeraParser:
         assert table[4].shank_diameter == 6.0
 
     def test_parses_extended_geometry_fields(self, parser):
-        lines = [
-            "(T7  Chamfer  Vendor  PID  D=6 SD=6 TD=0.2 FL=8 SL=12 BL=20 "
-            "TAPER=45deg - ZMIN=-1 - chamfer mill)\n"
-        ]
+        lines = ["(T7  Chamfer  Vendor  PID  D=6 SD=6 TD=0.2 FL=8 SL=12 BL=20 TAPER=45deg - ZMIN=-1 - chamfer mill)\n"]
         table = parser.parse(lines)
 
         tool = table[7]
