@@ -211,10 +211,27 @@
     {
         "type": "bool",
         "title": "Auto-Reconnection",
-        "desc": "Automatically attempt to reconnect when connection is lost",
+        "desc": "Automatically attempt to reconnect when connection is lost, and auto-connect on app launch",
         "section": "carvera",
         "key": "auto_reconnect_enabled",
         "default": "true"
+    },
+    {
+        "type": "options",
+        "title": "Preferred reconnection method",
+        "desc": "Connection method used for auto-connect on app launch. After you connect manually, Reconnect uses the last successful method instead",
+        "section": "carvera",
+        "key": "reconnect_method",
+        "default": "wifi",
+        "options": ["wifi", "usb"]
+    },
+    {
+        "type": "string",
+        "title": "USB serial number",
+        "desc": "Preferred USB serial number for reconnect. Updated automatically when you connect over USB",
+        "section": "carvera",
+        "key": "usb_serial",
+        "default": ""
     },
     {
         "type": "numeric",

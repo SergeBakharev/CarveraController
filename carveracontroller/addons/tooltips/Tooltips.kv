@@ -78,3 +78,28 @@
         Rectangle:
             size: self.size
             pos: self.pos
+
+<HelpButton>
+    id: help_button
+    orientation: 'vertical'
+    halign: 'center'
+    pos_hint: {'center_x': 0.5, 'center_y': 0.5}
+    size_hint: None, None
+    height: self.parent.height
+    width: self.parent.height * 2
+    state_image: self.background_normal if self.state == 'normal' else self.background_down
+    disabled_image: self.background_disabled_normal if self.state == 'normal' else self.background_disabled_down
+    canvas:
+        Color:
+            rgba: 0, 1, 0, 1
+        BorderImage:
+            border: self.border
+            pos: self.pos
+            size: self.size
+            source: self.disabled_image if self.disabled else self.state_image
+    Image:
+        id: image
+        source: root.image_source
+        fit_mode: 'scale-down'
+        size_hint: 0.3,0.3
+        pos_hint: {'center_x': 0.5, 'center_y': 0.5}

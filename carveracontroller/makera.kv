@@ -519,6 +519,12 @@
         on_release:
             root.select('Third Item')
             app.root.controller.clearAutoLeveling()
+    BoxLayout:
+        size_hint_y: None
+        height: '48dp'
+        HelpButton:
+            helpPath: "https://carvera-community.gitbook.io/docs/controller/features/auto-leveling"
+
 
 
 <ADropDown>:
@@ -1176,6 +1182,7 @@
 <StatusDropDown>:
     btn_connect_usb: btn_connect_usb
     btn_connect_wifi: btn_connect_wifi
+    btn_connect_network: btn_connect_network
     btn_unlock: btn_unlock
     btn_disconnect: btn_disconnect
     canvas.before:
@@ -1191,7 +1198,8 @@
         height: '40dp'
         disabled: app.state != 'N/A'
         on_release:
-            app.root.reconnect_wifi_conn(self)
+            app.root.reconnect_last_connection(quiet=False, for_app_launch=False)
+            root.select('')
 
     Button:
         id: btn_connect_wifi
@@ -1200,6 +1208,13 @@
         text: tr._('Scan Wi-Fi...')
         on_release:
             app.root.open_wifi_conn_drop_down(self)
+    Button:
+        id: btn_connect_network
+        size_hint_y: None
+        height: '40dp'
+        text: tr._('Network...')
+        on_release:
+            app.root.manually_input_ip()
     Button:
         id: btn_connect_usb
         size_hint_y: None
@@ -1333,6 +1348,9 @@
             size_hint_y: 0.4
             text: tr._('Select Language')
             bold: True
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             orientation: 'vertical'
             Label:
@@ -1365,6 +1383,9 @@
             id: lb_title
             text: tr._('Input Box')
             bold: True
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             orientation: 'vertical'
             Label:
@@ -1402,6 +1423,9 @@
             id: lb_title1
             text: tr._('Input Box')
             bold: True
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             orientation: 'vertical'
             Label:
@@ -1417,6 +1441,9 @@
             id: lb_title2
             text: tr._('Input Box')
             bold: True
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             orientation: 'vertical'
             Label:
@@ -1452,12 +1479,15 @@
             id: lb_title
             text: tr._('Confirm Box')
             bold: True
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         Label:
             id: lb_content
             text: tr._('Confirm to continue?')
-            text_size: self.size
             halign: 'center'
             valign: 'middle'
+            text_size: self.size
         BoxLayout:
             size_hint_y: 0.3
             Button:
@@ -1486,9 +1516,15 @@
             id: lb_title
             text: tr._('Machine Is Halted')
             bold: True
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         Label:
             id: lb_content
             text: tr._('Choose unlock option:')
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             size_hint_y: 0.4
             Button:
@@ -1507,6 +1543,12 @@
                     root.dismiss()
                     if root.unlock_safe_z:\
                     root.unlock_safe_z()
+            BoxLayout:
+                size_hint_x: 0.25
+                HelpButton:
+                    size_hint: 1,1
+                    helpPath: "https://carvera-community.gitbook.io/docs/controller/common-error-messages"
+
 
 <SelectAndCalibrateProbePopup>:
     lb_title: lb_title
@@ -1521,6 +1563,9 @@
             id: lb_title
             text: tr._('A probing tool needs to be selected to locate your workpiece')
             bold: True
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             size_hint_y: 0.4
             Button:
@@ -1551,6 +1596,9 @@
         Label:
             id: lb_content
             text: tr._('Confirm to continue?')
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             id: btn_ok
             size_hint_y: 0.4
@@ -1569,6 +1617,9 @@
         Label:
             id: lb_content
             text: tr._('Connection lost. Attempting to reconnect...')
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             size_hint_y: 0.4
             spacing: '10dp'
@@ -1595,6 +1646,8 @@
             id: progress_label
             text: root.progress_text
             halign: 'center'
+            valign: 'middle'
+            text_size: self.size
 
         ProgressBar:
             id: progress_bar
@@ -1735,6 +1788,7 @@
                         id: btn_ok
                         text: tr._('Ok')
                         on_release: root.on_ok_pressed()
+                    
 
         TabbedPanelItem:
             text: tr._('Set By XYZ Probe')
@@ -1819,6 +1873,7 @@
             text: tr._('Z Probe Config')
             halign: 'left'
             valign: 'middle'
+            text_size: self.size
         BoxLayout:
             size_hint_y: None
             height: '50dp'
@@ -1902,6 +1957,7 @@
             text: tr._('XYZ Probe At Current Position')
             halign: 'left'
             valign: 'middle'
+            text_size: self.size
         BoxLayout:
             size_hint_y: None
             height: '25dp'
@@ -1977,6 +2033,7 @@
             text: tr._('Pairing Wireless Probe')
             halign: 'left'
             valign: 'middle'
+            text_size: self.size
         BoxLayout:
             size_hint_y: None
             height: '25dp'
@@ -2041,6 +2098,7 @@
             text: tr._('Auto Leveling Config')
             halign: 'left'
             valign: 'middle'
+            text_size: self.size
         Label:
             size_hint_y: None
             height: '10dp'
@@ -3745,12 +3803,12 @@
                                         tooltip_radius: 30 
                                 GridBoxLayout:
                         BoxLayout:
-                            disabled: not (app.state == 'Idle' or app.state == 'Run' or app.state == 'Pause') or (app.playing and app.state != 'Pause') or (app.state == 'Run' and root.allow_jogging_while_machine_running == '0')
                             orientation: 'vertical'
                             padding: '10dp'
                             Widget:
                                 size_hint_y: 0.15
                             BoxLayout:
+                                disabled: not (app.state == 'Idle' or app.state == 'Run' or app.state == 'Pause') or (app.playing and app.state != 'Pause') or (app.state == 'Run' and root.allow_jogging_while_machine_running == '0')
                                 orientation: 'vertical'
                                 padding: '3dp'
                                 size_hint_y: 0.3
@@ -3789,10 +3847,13 @@
                                                 text: tr._('Macro 3')
                                                 height: '35dp'
                                                 on_release: app.root.run_macro(3)
+
                             Widget:
                                 size_hint_y: 0.15
                             BoxLayout:
-                                disabled: app.state != 'Idle'
+                                # Enabled for Idle/Run/Tool/Pause so Light & Ext. Control stay usable mid-job.
+                                # Other buttons below keep their own Idle-only disabled rules.
+                                disabled: app.state != 'Idle' and app.state != 'Run' and app.state != 'Tool' and app.state != 'Pause'
                                 orientation: 'vertical'
                                 padding: '3dp'
                                 size_hint_min_y: '176dp'  # 35dp button x4 + 10dp spacing between buttons x 3 + 3dp padding top + 3dp padding bottom
@@ -3812,14 +3873,17 @@
                                         spacing: dp(3)
                                         GridBoxLayout:
                                             SmallRoundButton:
+                                                disabled: app.state != 'Idle'
                                                 text: tr._('Unlock')
                                                 on_release: root.controller.unlock()
                                         GridBoxLayout:
                                             SmallRoundButton:
+                                                disabled: app.state != 'Idle'
                                                 text: tr._('Reset')
                                                 on_release: root.controller.reset()
                                         GridBoxLayout:
                                             SmallRoundButton:
+                                                disabled: app.state != 'Idle'
                                                 text: tr._('Home')
                                                 on_release: root.controller.home()
                                         GridBoxLayout:
@@ -3859,6 +3923,7 @@
                                             Spinner:
                                                 center: 0.5, 0.5
                                                 height: '35dp'
+                                                disabled: app.state != 'Idle'
                                                 text: tr._('Goto...')
                                                 values: 'Clearance', 'Work Origin', 'Path Origin', 'Anchor1', 'Anchor2'
                                                 on_text:
@@ -3866,11 +3931,12 @@
                                                     if self.text != tr._("Goto..."): self.text = tr._('Goto...')
                                         GridBoxLayout:
                                             SmallRoundButton:
+                                                disabled: app.state != 'Idle'
                                                 text: tr._('Set Origin')
                                                 on_release: root.coord_popup.origin_popup.open()
                                         GridBoxLayout:
                                             SmallRoundButton:
-                                                disabled: not app.is_community_firmware
+                                                disabled: not app.is_community_firmware or app.state != 'Idle'
                                                 text: tr._('Probing...')
                                                 on_release: app.root.open_probing_popup()
 
@@ -3903,6 +3969,7 @@
                             Widget:
                                 size_hint_y: 0.1
                             BoxLayout:
+                                disabled: not (app.state == 'Idle' or app.state == 'Run' or app.state == 'Pause') or (app.playing and app.state != 'Pause') or (app.state == 'Run' and root.allow_jogging_while_machine_running == '0')
                                 orientation: 'vertical'
                                 padding: '3dp'
                                 size_hint_y: 0.5
@@ -3935,7 +4002,6 @@
                                                 text: tr._('Jog Mode:Step')
                                                 height: '35dp'
                                                 on_release: app.root.toggle_jog_mode()
-
                                         GridBoxLayout:
                                             ToggleButton:
                                                 id: kb_jog_btn
@@ -3943,7 +4009,6 @@
                                                 height: '35dp'
                                                 state: app.jog_keyboard_enable
                                                 on_release: app.root.toggle_keyboard_jog_control()
-                                    
                                         GridBoxLayout:
                                             ToggleButton:
                                                 id: pendant_jogging_en_btn
@@ -4596,6 +4661,7 @@
             text: tr._('WCS Settings')
             halign: 'left'
             valign: 'middle'
+            text_size: self.size
         
         ScrollView:
             GridLayout:
@@ -5461,6 +5527,11 @@
                 on_release:
                     root.apply_changes()
                     root.dismiss()
+            BoxLayout:
+                size_hint_x: 0.2
+                HelpButton:
+                    helpPath: "https://carvera-community.gitbook.io/docs/controller/features/workspace-management"
+
 
 <SetRotationPopup>:
     size_hint: 0.5, 0.4
@@ -5485,6 +5556,7 @@
             text: tr._('Set Rotation')
             halign: 'left'
             valign: 'middle'
+            text_size: self.size
         
         BoxLayout:
             padding: '15dp'
@@ -5523,6 +5595,11 @@
                 text: tr._('Ok')
                 on_release:
                     on_release: root.on_ok_pressed()
+            BoxLayout:
+                size_hint_x: 0.2
+                HelpButton:
+                    helpPath: "https://carvera-community.gitbook.io/docs/controller/features/wcs-rotation"
+
 
 # Solid disabled look (no faded theme atlas / no ghost text): mute bg + text vs enabled row.
 <OpaqueDisabledButton@Button>:
