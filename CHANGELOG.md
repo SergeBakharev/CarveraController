@@ -53,6 +53,7 @@
 - Change: Reconnect uses the last successful connection method. On fresh app launch it uses the configured preferred connection method
 - Change: USB devices in connection dropdown are filtered to only show devices specifically with the FTDI chip found on the Makera machines
 - Change: USB devices are now selected and stored by stable VID:PID:serial identity (instead of generic COM path)
+- Change: Machine Light, and Ext. Control buttons now usable while machine is in Run, Tool or Paused states
 
 [2.1.0]
 - Enhancement: Add right-click menu option to clear resume-at-line setting
