@@ -5294,11 +5294,11 @@ class Makera(RelativeLayout):
         content = BoxLayout(orientation="vertical", padding=dp(15))
         lbl = Label(
             text=tr._(
-                "As you are connected by USB, please use the power switch on the machine "
+                "As you are connected over USB, please disconnect the USB cable, then use the power switch on the machine "
                 "to perform a reset.\n\n"
-                "The Makera control board design allows for the machine to "
-                "receive power over USB, which results in the machine being left in a "
-                "zombie-like state if a reset command is sent."
+                "The Makera control board design allows the machine to "
+                "receive power over USB, which results in it being left in a "
+                "zombie-like state if a reset command is sent using the Controller."
             ),
             halign="center",
             valign="middle",
