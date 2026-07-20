@@ -3,7 +3,10 @@
 The post processor's `dumpToolInformation()` CPS function writes one comment
 line per tool, on its own line, with the following layout:
 
-T<number>  <description>  <vendor>  <productId>  D=<diameter> CR=<cornerRadius>[ TAPER=<angle>deg][ - ZMIN=<zmin>] - <toolTypeName>
+T<number>  <description>  <vendor>  <productId>  D=<diameter>
+  [CR=<cornerRadius>] [SD=<shaftDiameter>] [TD=<tipDiameter>] [FL=<fluteLength>]
+  [SL=<shoulderLength>] [BL=<bodyLength>] [TP=<threadPitch>] [TAPER=<angle>deg]
+  [- ZMIN=<zmin>] - <toolTypeName>
 """
 
 import logging
@@ -14,7 +17,7 @@ from carveracontroller.addons.tool_visualization.tool_definition import ToolDefi
 
 logger = logging.getLogger(__name__)
 
-# Tool type names as exported by the Fusion 360 Makera post processor's getToolTypeName()
+# Tool type names as exported by the getToolTypeName() function of Fusion.
 TOOL_TYPE_NAME_MAP = {
     "flat end mill": ToolType.FLAT_END_MILL,
     "ball end mill": ToolType.BALL_END_MILL,
@@ -29,7 +32,14 @@ TOOL_TYPE_NAME_MAP = {
 _NUMBER = r"[-+]?\d+\.?\d*"
 
 TOOL_LINE_RE = re.compile(
-    r"^T(?P<number>\d+)\s+(?P<middle>.*?)\s+D=(?P<diameter>" + _NUMBER + r")\s+CR=(?P<corner_radius>" + _NUMBER + r")"
+    r"^T(?P<number>\d+)\s+(?P<middle>.*?)\s+D=(?P<diameter>" + _NUMBER + r")"
+    r"(?:\s+CR=(?P<corner_radius>" + _NUMBER + r"))?"
+    r"(?:\s+SD=(?P<shaft_diameter>" + _NUMBER + r"))?"
+    r"(?:\s+TD=(?P<tip_diameter>" + _NUMBER + r"))?"
+    r"(?:\s+FL=(?P<flute_length>" + _NUMBER + r"))?"
+    r"(?:\s+SL=(?P<shoulder_length>" + _NUMBER + r"))?"
+    r"(?:\s+BL=(?P<body_length>" + _NUMBER + r"))?"
+    r"(?:\s+TP=(?P<thread_pitch>" + _NUMBER + r"))?"
     r"(?:\s+TAPER=(?P<taper>" + _NUMBER + r")deg)?"
     r"(?:\s*-\s*ZMIN=" + _NUMBER + r")?"
     r"\s*-\s*(?P<type_name>.+?)\s*$",
@@ -46,6 +56,12 @@ def _to_float(value):
         return float(value)
     except ValueError:
         return None
+
+
+def _positive_or_none(value):
+    if value is None or value <= 0:
+        return None
+    return value
 
 
 def _infer_shank_diameter(tool_type, diameter, corner_radius=None):
@@ -124,14 +140,27 @@ class Fusion360MakeraParser(ToolTableParser):
         tool_type = resolve_tool_type(type_name, TOOL_TYPE_NAME_MAP)
         diameter = _to_float(match.group("diameter"))
         corner_radius = _to_float(match.group("corner_radius"))
+        shaft_diameter = _positive_or_none(_to_float(match.group("shaft_diameter")))
+        tip_diameter = _to_float(match.group("tip_diameter"))
+        flute_length = _positive_or_none(_to_float(match.group("flute_length")))
+        shoulder_length = _positive_or_none(_to_float(match.group("shoulder_length")))
+        body_length = _positive_or_none(_to_float(match.group("body_length")))
+        thread_pitch = _positive_or_none(_to_float(match.group("thread_pitch")))
 
         return ToolDefinition(
             number=number,
             tool_type=tool_type,
             diameter=diameter,
-            shank_diameter=_infer_shank_diameter(tool_type, diameter, corner_radius),
+            shank_diameter=shaft_diameter
+            if shaft_diameter is not None
+            else _infer_shank_diameter(tool_type, diameter, corner_radius),
+            tip_diameter=tip_diameter,
             corner_radius=corner_radius,
             taper_angle_deg=_to_float(match.group("taper")),
+            length=body_length if body_length is not None else shoulder_length,
+            flute_length=flute_length,
+            shoulder_length=shoulder_length,
+            thread_pitch=thread_pitch,
             description=description,
             vendor=vendor,
             product_id=product_id,

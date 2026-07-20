@@ -84,14 +84,14 @@ class TestFusion360MakeraParser:
         return Fusion360MakeraParser()
 
     def test_parses_basic_flat_end_mill_comment(self, parser):
-        lines = ["(T1  Flat end mill  Vendor  PID  D=6 CR=0 - flat end mill)\n", "G0 X0\n"]
+        lines = ["(T1  Flat end mill  Vendor  PID  D=6 - flat end mill)\n", "G0 X0\n"]
         table = parser.parse(lines)
 
         assert table[1].number == 1
         assert table[1].tool_type == ToolType.FLAT_END_MILL
         assert table[1].diameter == 6.0
         assert table[1].shank_diameter == 6.0
-        assert table[1].corner_radius == 0.0
+        assert table[1].corner_radius is None
         assert table[1].description == "Flat end mill"
         assert table[1].vendor == "Vendor"
         assert table[1].product_id == "PID"
@@ -127,7 +127,7 @@ class TestFusion360MakeraParser:
 
     def test_chamfer_mill_keeps_chamfer_type(self, parser):
         lines = [
-            "(T1  Single Flute Engraving Metal 60 deg*.1mm      D=3.175 CR=0. TAPER=30deg - ZMIN=0. - chamfer mill)\n"
+            "(T1  Single Flute Engraving Metal 60 deg*.1mm      D=3.175 TAPER=30deg - ZMIN=0. - chamfer mill)\n"
         ]
         table = parser.parse(lines)
 
@@ -136,14 +136,14 @@ class TestFusion360MakeraParser:
         assert table[1].taper_angle_deg == 30.0
 
     def test_lollipop_leaves_shank_unset(self, parser):
-        lines = ["(T8  Under  D=6 CR=0 - lollipop mill)\n"]
+        lines = ["(T8  Under  D=6 - lollipop mill)\n"]
         table = parser.parse(lines)
 
         assert table[8].tool_type == ToolType.LOLLIPOP_MILL
         assert table[8].shank_diameter is None
 
     def test_parses_semicolon_comments(self, parser):
-        lines = [";T3  Thread cutter  D=4 CR=0 - thread mill\n"]
+        lines = [";T3  Thread cutter  D=4 - thread mill\n"]
         table = parser.parse(lines)
 
         assert table[3].tool_type == ToolType.THREAD_MILL
@@ -151,8 +151,8 @@ class TestFusion360MakeraParser:
 
     def test_ignores_duplicate_tool_entries(self, parser):
         lines = [
-            "(T1  First  D=6 CR=0 - flat end mill)\n",
-            "(T1  Second  D=8 CR=0 - ball end mill)\n",
+            "(T1  First  D=6 - flat end mill)\n",
+            "(T1  Second  D=8 - ball end mill)\n",
         ]
         table = parser.parse(lines)
 
@@ -160,12 +160,53 @@ class TestFusion360MakeraParser:
         assert table[1].tool_type == ToolType.FLAT_END_MILL
 
     def test_unknown_tool_type_falls_back_to_unknown(self, parser):
-        lines = ["(T4  Mystery  D=6 CR=0 - mystery cutter)\n"]
+        lines = ["(T4  Mystery  D=6 - mystery cutter)\n"]
         table = parser.parse(lines)
 
         assert table[4].tool_type == ToolType.UNKNOWN
         assert table[4].type_name == "mystery cutter"
         assert table[4].shank_diameter == 6.0
+
+    def test_parses_extended_geometry_fields(self, parser):
+        lines = [
+            "(T7  Chamfer  Vendor  PID  D=6 SD=6 TD=0.2 FL=8 SL=12 BL=20 "
+            "TAPER=45deg - ZMIN=-1 - chamfer mill)\n"
+        ]
+        table = parser.parse(lines)
+
+        tool = table[7]
+        assert tool.tool_type == ToolType.CHAMFER_MILL
+        assert tool.diameter == 6.0
+        assert tool.shank_diameter == 6.0
+        assert tool.tip_diameter == 0.2
+        assert tool.flute_length == 8.0
+        assert tool.shoulder_length == 12.0
+        assert tool.length == 20.0
+        assert tool.taper_angle_deg == 45.0
+        assert tool.vendor == "Vendor"
+        assert tool.product_id == "PID"
+
+    def test_parses_thread_pitch_field(self, parser):
+        lines = ["(T9  Thread  D=4 FL=10 TP=0.75 - thread mill)\n"]
+        table = parser.parse(lines)
+
+        assert table[9].tool_type == ToolType.THREAD_MILL
+        assert table[9].thread_pitch == 0.75
+        assert table[9].flute_length == 10.0
+
+    def test_explicit_shaft_overrides_inference_for_lollipop(self, parser):
+        lines = ["(T8  Under  D=6 SD=4 - lollipop mill)\n"]
+        table = parser.parse(lines)
+
+        assert table[8].tool_type == ToolType.LOLLIPOP_MILL
+        assert table[8].shank_diameter == 4.0
+
+    def test_legacy_cr_zero_still_parses(self, parser):
+        lines = ["(T1  Flat  D=6 CR=0 - flat end mill)\n"]
+        table = parser.parse(lines)
+
+        assert table[1].corner_radius == 0.0
+        assert table[1].tool_type == ToolType.FLAT_END_MILL
 
 
 class TestMakeraStudioParser:
