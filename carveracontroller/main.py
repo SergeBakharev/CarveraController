@@ -212,6 +212,7 @@ from .Controller import (
     Controller,
 )
 from .GcodeViewer import GCodeViewer
+from .VideoStreamManager import VideoStreamManager
 from .ui import widget_helpers
 from .ui.PlayProgressBar import play_percent_from_line, tool_change_markers_to_percents
 from .ui.popups.adv_calibrate import AdvCalibratePopup
@@ -3092,6 +3093,8 @@ class Makera(RelativeLayout):
             "carvera", "high_precision_reamining_time_estimate", fallback=True
         )
         self.gcode_viewer_container.add_widget(self.gcode_viewer)
+        # init Z1 camera live-view manager (WiFi-only; inert on other machines)
+        self.video_manager = VideoStreamManager(self)
         self.gcode_viewer.set_frame_callback(self.gcode_play_call_back)
         self.gcode_viewer.set_play_over_callback(self.gcode_play_over_call_back)
         self.gcode_viewer.set_error_popup_callback(self._on_gcode_cannot_visualise)
@@ -5767,6 +5770,10 @@ class Makera(RelativeLayout):
                     self.config_loaded = False
                     self.config_loading = False
                     self.fw_version_checked = False
+
+                    # Stop the Z1 camera stream if it was running
+                    if self.video_manager.is_connected():
+                        self.video_manager.disconnect()
                     self.fw_version = ""
                     app.model = ""
                     app.fw_version_digitized = 0
@@ -7580,6 +7587,12 @@ class MakeraApp(App):
     loading_page = BooleanProperty(False)
     model = StringProperty("")
     is_community_firmware = BooleanProperty(False)
+    # Z1 live camera view (WiFi-only)
+    video_connected = BooleanProperty(False)
+    video_adjust_open = BooleanProperty(False)
+    video_brightness = NumericProperty(1.0)
+    video_contrast = NumericProperty(1.0)
+    video_gamma = NumericProperty(1.0)
     supports_auto_ext_out = BooleanProperty(False)
     fw_version_digitized = NumericProperty(0)
     show_tooltips = BooleanProperty(True)
