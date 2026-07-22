@@ -4987,6 +4987,10 @@ class Makera(RelativeLayout):
         if app.model == "CA1":
             CNC.vars["rotation_base_width"] = 300
             CNC.vars["rotation_head_width"] = 56.5
+        elif app.model == "Z1":
+            # TODO Add correct values for Z1
+            CNC.vars["rotation_base_width"] = 301
+            CNC.vars["rotation_head_width"] = 56
         elif app.model == "C1":
             if CNC.vars["FuncSetting"] & 1:
                 CNC.vars["rotation_base_width"] = 330

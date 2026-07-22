@@ -11,6 +11,7 @@ from typing import Any
 ROOT_PATH = Path(__file__).resolve().parents[1]
 DEFAULT_C1_JSON = ROOT_PATH / "carveracontroller" / "config_c1.json"
 DEFAULT_CA1_JSON = ROOT_PATH / "carveracontroller" / "config_ca1.json"
+DEFAULT_Z1_JSON = ROOT_PATH / "carveracontroller" / "config_z1.json"
 SKIPPED_SETTING_TYPES = {"button", "title"}
 SKIPPED_SETTING_KEYS = {"restore", "default", "backup"}
 
@@ -102,20 +103,24 @@ def update_json_defaults(
     )
 
 
+# TODO find out where config2 is used and add config3
 def update_default_files(
     config_default_path: Path,
     config2_default_path: Path,
+    config3_default_path: Path,
     *,
     c1_json_path: Path = DEFAULT_C1_JSON,
     ca1_json_path: Path = DEFAULT_CA1_JSON,
+    z1_json_path: Path = DEFAULT_Z1_JSON,
     check: bool = False,
 ) -> dict[str, UpdateResult]:
     c1_defaults = parse_config_defaults(config_default_path)
     ca1_defaults = parse_config_defaults(config2_default_path)
-
+    z1_defaults = parse_config_defaults(config3_default_path)
     return {
         "C1": update_json_defaults(c1_json_path, c1_defaults, check=check),
         "CA1": update_json_defaults(ca1_json_path, ca1_defaults, check=check),
+        "Z1": update_json_defaults(z1_json_path, z1_defaults, check=check),
     }
 
 
@@ -123,11 +128,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Set controller JSON default values from firmware config files. "
-            "C1 uses config.default; CA1 uses config2.default."
+            "C1 uses config.default; CA1 uses config2.default; Z1 uses config3.default."
         )
     )
     parser.add_argument("config_default", type=Path, help="Firmware src/config.default path")
     parser.add_argument("config2_default", type=Path, help="Firmware src/config2.default path")
+    parser.add_argument("config3_default", type=Path, help="Firmware src/config3.default path")
     parser.add_argument(
         "--c1-json",
         type=Path,
@@ -139,6 +145,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_CA1_JSON,
         help=f"Controller CA1 settings JSON path, default: {DEFAULT_CA1_JSON}",
+    )
+    parser.add_argument(
+        "--z1-json",
+        type=Path,
+        default=DEFAULT_Z1_JSON,
+        help=f"Controller Z1 settings JSON path, default: {DEFAULT_Z1_JSON}",
     )
     parser.add_argument(
         "--check",
@@ -170,8 +182,10 @@ def main(argv: list[str] | None = None) -> int:
     results = update_default_files(
         args.config_default,
         args.config2_default,
+        args.config3_default,
         c1_json_path=args.c1_json,
         ca1_json_path=args.ca1_json,
+        z1_json_path=args.z1_json,
         check=args.check,
     )
     print_results(results)
