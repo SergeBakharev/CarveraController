@@ -2990,7 +2990,7 @@
                     padding: '0.5dp'
                     size_hint_y: None
                     height: '30dp'
-                    disabled: app.model == 'CA1' or app.model == 'Z1'
+                    disabled: app.model != 'C1'
                     Label:
                         text: tr._("Auto Vacuum")
                         halign: "left"
@@ -3428,7 +3428,7 @@
                     id: sw_air
                     label: tr._('Air Assist')
                     control_name: 'air_switch'
-                    disabled: app.model == 'CA1' or app.model == 'Z1'
+                    disabled: app.model != 'C1'
             BoxLayout:
                 orientation: 'vertical'
                 size_hint_x: 1.5
