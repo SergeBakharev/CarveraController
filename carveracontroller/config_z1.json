@@ -469,7 +469,7 @@
         "desc": "Maximum RPM value the machine will allow",
         "section": "Advanced",
         "key": "spindle.max_rpm",
-        "default": "14000"
+        "default": "13000"
     },
     {
         "type": "numeric",
