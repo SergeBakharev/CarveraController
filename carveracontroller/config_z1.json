@@ -68,18 +68,9 @@
         "options": [
             "None",
             "Sleep",
-            "Repeat",
-            "ToolChange"
+            "Repeat"
         ],
         "default": "None"
-    },
-    {
-        "type": "bool",
-        "title": "Beeper on",
-        "desc": "Whether the beeper is enabled",
-        "section": "Basic",
-        "key": "switch.beep.enable",
-        "default": "true"
     },
     {
         "type": "title",
@@ -92,7 +83,7 @@
         "desc": "X Machine coordinates of anchor1",
         "section": "Advanced",
         "key": "coordinate.anchor1_x",
-        "default": "-190.5"
+        "default": "-190.56"
     },
     {
         "type": "numeric",
@@ -100,7 +91,7 @@
         "desc": "Y Machine coordinates of anchor1",
         "section": "Advanced",
         "key": "coordinate.anchor1_y",
-        "default": "-195.0"
+        "default": "-194.72"
     },
     {
         "type": "numeric",
@@ -117,14 +108,6 @@
         "section": "Advanced",
         "key": "coordinate.anchor2_offset_y",
         "default": "20.0"
-    },
-    {
-        "type": "numeric",
-        "title": "Reference Tool MCS Z",
-        "desc": "The MCS Z height when probing an empty collet",
-        "section": "Advanced",
-        "key": "coordinate.reference_tool_mz",
-        "default": "-115.34"
     },
     {
         "type": "numeric",
@@ -212,7 +195,7 @@
         "desc": "Enabled to precheck if gCode commands will exceed the travel limits",
         "section": "Advanced",
         "key": "soft_endstop.enable",
-        "default": "false"
+        "default": "true"
     },
     {
         "type": "numeric",
@@ -237,14 +220,6 @@
         "section": "Advanced",
         "key": "soft_endstop.z_min",
         "default": "-102.0"
-    },
-    {
-        "type": "numeric",
-        "title": "A Axis Microsteps per degree rotation",
-        "desc": "Changes the number of microsteps between degrees of rotation. Useful if you change the A axis gearing.",
-        "section": "Advanced",
-        "key": "delta_steps_per_mm",
-        "default": "888.888889"
     },
     {
         "type": "title",
@@ -313,15 +288,7 @@
         "desc": "Acceleration for rotation axis (degree/second/second)",
         "section": "Advanced",
         "key": "delta_acceleration",
-        "default": "150.0"
-    },
-    {
-        "type": "bool",
-        "title": "Skip move to path origin on playback start",
-        "desc": "When true, the start of gcode playback will only move to SafeZ position then start running the file instead of first moving to the path origin",
-        "default": "false",
-        "section": "Advanced",
-        "key": "atc.skip_path_origin"
+        "default": "360.0"
     },
     {
         "type": "title",
@@ -334,7 +301,7 @@
         "desc": "Machine name that is shown in the WiFi list",
         "section": "Advanced",
         "key": "wifi.machine_name",
-        "default": "MAKEWRA_Z1_01001"
+        "default": "MAKERA_Z1_01001"
     },
     {
         "type": "title",
@@ -524,15 +491,5 @@
         "desc": "Enter upper case: 'DEFAULT' to save default",
         "section": "Restore",
         "key": "default"
-    },
-    {
-        "type": "options",
-        "title": "Back up configuration files",
-        "desc": "config.txt, flex_compensation.dat, etc. will be backed up to your computer",
-        "section": "Backup",
-        "key": "backup",
-        "options": [
-            "Back up files now"
-        ]
     }
 ]
