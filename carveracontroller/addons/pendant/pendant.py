@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
@@ -181,7 +182,18 @@ if WHB04_SUPPORTED:
             except ValueError:
                 pass
             # end of feedrate fix
-            daemon.set_display_spindle_speed(self._cnc.vars["curspindle"])
+            spindle_value = self._cnc.vars.get("curspindle", 0)
+            try:
+                raw_spindle = float(spindle_value)
+            except OverflowError:
+                # A finite integer can exceed float's range; clamp it by sign.
+                raw_spindle = 65535.0 if spindle_value > 0 else 0.0
+            except (TypeError, ValueError):
+                raw_spindle = 0.0
+            if not math.isfinite(raw_spindle):
+                raw_spindle = 0.0
+            safe_spindle = max(0.0, min(raw_spindle, 65535.0))
+            daemon.set_display_spindle_speed(safe_spindle)
 
             # Update the step indicator to reflect current jog mode
             if self._controller.jog_mode == self._controller.JOG_MODE_CONTINUOUS:
@@ -426,8 +438,8 @@ class GamepadPendant(Pendant):
 
     def close(self) -> None:
         if self._controller.stream is not None:
-            self._controller.stream.send(b"\031")
-        self._controller.continuous_jog_active = False
+            self._controller.executeRealtime(0x19)
+        self._controller._clear_continuous_jog_state()
         self._active_continuous_jog_action = None
         self._manager.close()
         self._report_disconnection()
