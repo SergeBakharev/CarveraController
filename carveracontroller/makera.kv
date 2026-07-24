@@ -7,6 +7,7 @@
 #:import _ carveracontroller.ui.DropDownSplitter
 #:import play_progress_bar carveracontroller.ui.PlayProgressBar
 #:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
+#:import CameraView carveracontroller.addons.camera.CameraView.CameraView
 #:import LASER_TOOL_NUMBER carveracontroller.CNC.LASER_TOOL_NUMBER
 #:import ZPROBE_TOOL_NUMBER carveracontroller.CNC.ZPROBE_TOOL_NUMBER
 #:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
@@ -20,6 +21,7 @@
 #:include ui/popups/adv_calibrate/adv_calibrate.kv
 #:include addons/probe_scan/ui/ProbeScanPopup.kv
 #:include addons/facing/FacingWizardPopup.kv
+#:include addons/camera/CameraControls.kv
 
 <Label>:
     font_name: 'ARIALUNI'
@@ -4234,6 +4236,7 @@
                         FloatBox:
                             id: float_layout
                             color_scheme_panel: color_scheme_panel
+                            camera_controls: camera_controls
                             tool_bar: tool_bar
                             t1: t1
                             t2: t2
@@ -4250,20 +4253,17 @@
                                 orientation: 'vertical'
                             GcodeColorSchemePanel:
                                 id: color_scheme_panel
-                            # Z1 live camera view: sits in the free band between the top
-                            # tool bar and the bottom control bar (fills the pane when
-                            # those bars are collapsed). Host-side brightness/contrast/gamma.
                             CameraView:
-                                id: video_image
-                                brightness: app.video_brightness
-                                contrast: app.video_contrast
-                                gamma: app.video_gamma
+                                id: camera_view
+                                brightness: app.camera_brightness
+                                contrast: app.camera_contrast
+                                gamma: app.camera_gamma
                                 size_hint: None, None
                                 x: float_layout.x
                                 width: float_layout.width
                                 y: gcode_ctl_bar.top
-                                height: (tool_bar.y - gcode_ctl_bar.top) if (app.video_connected and app.model == 'Z1') else 0
-                                opacity: 1 if (app.video_connected and app.model == 'Z1') else 0
+                                height: (tool_bar.y - gcode_ctl_bar.top) if app.camera_streaming else 0
+                                opacity: 1 if app.camera_streaming else 0
                             BoxLayout:
                                 id: tool_bar
                                 orbit: True
@@ -4499,107 +4499,9 @@
                                     max: 1000
                                     value: 1000
                                     disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
-                            # Z1 camera controls stacked top-right of the viewer: stream
-                            # toggle, adjustment gear, then the slider panel. One vertical
-                            # container lets the layout engine stack them cleanly.
-                            BoxLayout:
-                                id: video_controls
-                                orientation: 'vertical'
-                                size_hint: None, None
-                                width: '250dp'
-                                height: self.minimum_height
+                            CameraControls:
+                                id: camera_controls
                                 pos_hint: {'right': 1, 'top': 1}
-                                opacity: 1 if app.model == 'Z1' else 0
-                                AnchorLayout:
-                                    anchor_x: 'right'
-                                    anchor_y: 'top'
-                                    size_hint_y: None
-                                    height: '50dp' if app.model == 'Z1' else 0
-                                    TransparentButton:
-                                        id: video_toggle
-                                        icon: 'data/video.png'
-                                        active: app.video_connected
-                                        size_hint: None, None
-                                        width: '50dp'
-                                        height: '50dp'
-                                        disabled: app.state == 'N/A' or app.model != 'Z1'
-                                        on_release:
-                                            app.root.video_manager.toggle_video_stream()
-                                AnchorLayout:
-                                    anchor_x: 'right'
-                                    anchor_y: 'top'
-                                    size_hint_y: None
-                                    height: '50dp' if (app.model == 'Z1' and app.video_connected) else 0
-                                    opacity: 1 if (app.model == 'Z1' and app.video_connected) else 0
-                                    TransparentButton:
-                                        id: video_adjust_btn
-                                        icon: 'data/configure.png'
-                                        active: app.video_adjust_open
-                                        size_hint: None, None
-                                        width: '50dp'
-                                        height: '50dp'
-                                        disabled: not app.video_connected
-                                        on_release:
-                                            app.video_adjust_open = not app.video_adjust_open
-                                BoxLayout:
-                                    id: video_adjust_panel
-                                    orientation: 'vertical'
-                                    size_hint_y: None
-                                    height: '160dp' if (app.video_adjust_open and app.video_connected and app.model == 'Z1') else 0
-                                    opacity: 1 if (app.video_adjust_open and app.video_connected and app.model == 'Z1') else 0
-                                    disabled: not (app.video_adjust_open and app.video_connected and app.model == 'Z1')
-                                    padding: '8dp'
-                                    spacing: '4dp'
-                                    canvas.before:
-                                        Color:
-                                            rgba: 0, 0, 0, 0.6
-                                        Rectangle:
-                                            pos: self.pos
-                                            size: self.size
-                                    BoxLayout:
-                                        size_hint_y: None
-                                        height: '30dp'
-                                        Label:
-                                            text: tr._('Brightness')
-                                            size_hint_x: 0.42
-                                            font_size: '13sp'
-                                        Slider:
-                                            min: 0.2
-                                            max: 3.0
-                                            value: app.video_brightness
-                                            on_value: app.video_brightness = self.value
-                                    BoxLayout:
-                                        size_hint_y: None
-                                        height: '30dp'
-                                        Label:
-                                            text: tr._('Contrast')
-                                            size_hint_x: 0.42
-                                            font_size: '13sp'
-                                        Slider:
-                                            min: 0.2
-                                            max: 3.0
-                                            value: app.video_contrast
-                                            on_value: app.video_contrast = self.value
-                                    BoxLayout:
-                                        size_hint_y: None
-                                        height: '30dp'
-                                        Label:
-                                            text: tr._('Gamma')
-                                            size_hint_x: 0.42
-                                            font_size: '13sp'
-                                        Slider:
-                                            min: 0.2
-                                            max: 3.0
-                                            value: app.video_gamma
-                                            on_value: app.video_gamma = self.value
-                                    Button:
-                                        size_hint_y: None
-                                        height: '30dp'
-                                        text: tr._('Reset')
-                                        on_release:
-                                            app.video_brightness = 1.0
-                                            app.video_contrast = 1.0
-                                            app.video_gamma = 1.0
 
             SettingPage:
                 name: 'Setting'

@@ -182,6 +182,8 @@ from kivy.lang import Builder
 
 from . import Utils, custom_widgets
 from .__version__ import __version__
+from .addons.camera.CameraStream import CameraStream, find_camera
+from .addons.camera.CameraView import ADJUST_DEFAULT
 from .addons.probing.ProbingControls import ProbeButton
 from .addons.tooltips.Tooltips import Tooltip, ToolTipButton, ToolTipDropDown
 from .CNC import (
@@ -212,7 +214,6 @@ from .Controller import (
     Controller,
 )
 from .GcodeViewer import GCodeViewer
-from .VideoStreamManager import VideoStreamManager
 from .ui import widget_helpers
 from .ui.PlayProgressBar import play_percent_from_line, tool_change_markers_to_percents
 from .ui.popups.adv_calibrate import AdvCalibratePopup
@@ -411,12 +412,15 @@ class GcodePlaySlider(Slider):
 class FloatBox(FloatLayout):
     touch_interval = 0
     color_scheme_panel = ObjectProperty(None)
+    camera_controls = ObjectProperty(None)
 
     def _viewer_chrome_hit(self, touch):
         if self.gcode_ctl_bar.collide_point(*touch.pos):
             return True
-        panel = self.color_scheme_panel
-        return bool(panel is not None and panel.collide_point(*touch.pos))
+        return any(
+            panel is not None and panel.collide_point(*touch.pos)
+            for panel in (self.color_scheme_panel, self.camera_controls)
+        )
 
     def on_touch_down(self, touch):
         if super().on_touch_down(touch):
@@ -3093,13 +3097,20 @@ class Makera(RelativeLayout):
             "carvera", "high_precision_reamining_time_estimate", fallback=True
         )
         self.gcode_viewer_container.add_widget(self.gcode_viewer)
-        # init Z1 camera live-view manager (WiFi-only; inert on other machines)
-        self.video_manager = VideoStreamManager(self)
         self.gcode_viewer.set_frame_callback(self.gcode_play_call_back)
         self.gcode_viewer.set_play_over_callback(self.gcode_play_over_call_back)
         self.gcode_viewer.set_error_popup_callback(self._on_gcode_cannot_visualise)
         self.gcode_viewer.time_estimate_progress_callback = self._on_time_estimate_progress
         self.float_layout.tool_bar.show_grid = self.gcode_viewer.is_grid_visible()
+
+        # init camera live view
+        self.camera_checked = False
+        self.camera_endpoint = None
+        self.camera_stream = CameraStream(
+            on_frame=self._show_camera_frame,
+            on_streaming=self._set_camera_streaming,
+            on_error=partial(self.show_message_popup, btn_disabled=False),
+        )
 
         # init settings
         self.config = ConfigParser()
@@ -5770,15 +5781,15 @@ class Makera(RelativeLayout):
                     self.config_loaded = False
                     self.config_loading = False
                     self.fw_version_checked = False
-
-                    # Stop the Z1 camera stream if it was running
-                    if self.video_manager.is_connected():
-                        self.video_manager.disconnect()
                     self.fw_version = ""
                     app.model = ""
                     app.fw_version_digitized = 0
                     app.is_community_firmware = False
                     app.supports_auto_ext_out = False
+                    app.supports_camera = False
+                    self.camera_checked = False
+                    self.camera_endpoint = None
+                    self.camera_stream.stop()
                     self.controller.is_community_firmware = False
                     self.machine_metadata_query_time = 0
 
@@ -5825,6 +5836,11 @@ class Makera(RelativeLayout):
 
                     # Reset manual disconnect flag since we're now connected
                     self.controller._manual_disconnect = False
+
+                    # Look for a camera, only one time per connection
+                    if not self.camera_checked and self.controller.connection_type == CONN_WIFI:
+                        self.camera_checked = True
+                        threading.Thread(target=self._detect_camera, daemon=True).start()
 
                 self.status_drop_down.btn_unlock.disabled = app.state != "Alarm" and app.state != "Sleep"
                 if (CNC.vars["halt_reason"] in HALT_REASON and CNC.vars["halt_reason"] > 20) or app.state == "Sleep":
@@ -7177,6 +7193,34 @@ class Makera(RelativeLayout):
             self.gcode_viewer.dynamic_display = True
 
     # -----------------------------------------------------------------------
+    def toggle_camera_stream(self):
+        if self.camera_stream.is_streaming():
+            self.camera_stream.stop()
+        else:
+            host = self.controller.connection_address.split(":")[0]
+            self.camera_stream.start(host, self.camera_endpoint)
+
+    # -----------------------------------------------------------------------
+    def _detect_camera(self):
+        endpoint = find_camera(self.controller.connection_address.split(":")[0])
+        Clock.schedule_once(partial(self._on_camera_detected, endpoint), 0)
+
+    # -----------------------------------------------------------------------
+    def _on_camera_detected(self, endpoint, *args):
+        if not self.camera_checked:
+            return
+        self.camera_endpoint = endpoint
+        App.get_running_app().supports_camera = endpoint is not None
+
+    # -----------------------------------------------------------------------
+    def _show_camera_frame(self, jpeg):
+        self.ids.camera_view.show_frame(jpeg)
+
+    # -----------------------------------------------------------------------
+    def _set_camera_streaming(self, streaming):
+        App.get_running_app().camera_streaming = streaming
+
+    # -----------------------------------------------------------------------
     def clear_selection(self):
         self.gcode_rv.data = []
         self.gcode_rv.data_length = 0
@@ -7587,12 +7631,11 @@ class MakeraApp(App):
     loading_page = BooleanProperty(False)
     model = StringProperty("")
     is_community_firmware = BooleanProperty(False)
-    # Z1 live camera view (WiFi-only)
-    video_connected = BooleanProperty(False)
-    video_adjust_open = BooleanProperty(False)
-    video_brightness = NumericProperty(1.0)
-    video_contrast = NumericProperty(1.0)
-    video_gamma = NumericProperty(1.0)
+    supports_camera = BooleanProperty(False)
+    camera_streaming = BooleanProperty(False)
+    camera_brightness = NumericProperty(ADJUST_DEFAULT)
+    camera_contrast = NumericProperty(ADJUST_DEFAULT)
+    camera_gamma = NumericProperty(ADJUST_DEFAULT)
     supports_auto_ext_out = BooleanProperty(False)
     fw_version_digitized = NumericProperty(0)
     show_tooltips = BooleanProperty(True)
