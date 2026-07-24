@@ -30,8 +30,6 @@ from .preview.ProbingPreviewPopup import ProbingPreviewPopup
 
 logger = logging.getLogger(__name__)
 
-import webbrowser
-
 from kivy.app import App
 
 
@@ -64,9 +62,6 @@ class ProbingPopup(ModalView):
     def allows_external_jog(self) -> bool:
         """Allow keyboard/pendant jog while the probing screen is open."""
         return self._is_open
-
-    def open_probe_info_url(self):
-        webbrowser.open("https://carvera-community.gitbook.io/docs/firmware/features/3d-probe-support")
 
     def delayed_bind(self, dt):
         self.outside_corner_settings = self.ids.outside_corner_settings

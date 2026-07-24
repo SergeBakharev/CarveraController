@@ -249,18 +249,17 @@ class FacingWizardPopup(ModalView):
             return
         list_h = min(dp(280), max(dp(120), len(names) * dp(46)))
         outer = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
-        outer.add_widget(
-            Label(
-                text=tr._("Tap a preset to load."),
-                size_hint_y=None,
-                height=dp(32),
-                font_size=dp(12),
-                color=(0.75, 0.76, 0.8, 1),
-                text_size=(root.width * 0.5, None),
-                halign="left",
-                valign="top",
-            )
+        lbl = Label(
+            text=tr._("Tap a preset to load."),
+            size_hint_y=None,
+            height=dp(32),
+            font_size=dp(12),
+            color=(0.75, 0.76, 0.8, 1),
+            halign="left",
+            valign="top",
         )
+        lbl.bind(size=lambda inst, val: setattr(inst, "text_size", val))
+        outer.add_widget(lbl)
         scroll = ScrollView(
             size_hint_y=None,
             height=list_h,
@@ -313,18 +312,17 @@ class FacingWizardPopup(ModalView):
             return
         list_h = min(dp(280), max(dp(120), len(names) * dp(46)))
         outer = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(8))
-        outer.add_widget(
-            Label(
-                text=tr._("Tap a preset to delete."),
-                size_hint_y=None,
-                height=dp(32),
-                font_size=dp(12),
-                color=(0.75, 0.76, 0.8, 1),
-                text_size=(root.width * 0.5, None),
-                halign="left",
-                valign="top",
-            )
+        lbl = Label(
+            text=tr._("Tap a preset to delete."),
+            size_hint_y=None,
+            height=dp(32),
+            font_size=dp(12),
+            color=(0.75, 0.76, 0.8, 1),
+            halign="left",
+            valign="top",
         )
+        lbl.bind(size=lambda inst, val: setattr(inst, "text_size", val))
+        outer.add_widget(lbl)
         scroll = ScrollView(
             size_hint_y=None,
             height=list_h,

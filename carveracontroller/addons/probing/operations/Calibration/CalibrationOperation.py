@@ -23,7 +23,11 @@ class CalibrationOperationFourthY(OperationsBase):
     def generate(self, input_config: dict[str, float]):
         config = {key: input_config[key] for key in self.ALLOWED_PARAMS if key in input_config}
 
-        return "M469.6 " + self.config_to_gcode(config) + "\n Make sure 4th Axis and 3 axis probe are installed"
+        return (
+            "M469.6 "
+            + self.config_to_gcode(config)
+            + "\n Make sure the 4th Axis and 3axis probe are installed, and the Probe is above the artifact (Chuck or Dowel etc) being used for calibration"
+        )
 
     def get_missing_config(self, config: dict[str, float]):
         if self.requires_x:
