@@ -1,28 +1,10 @@
 """Tests for defensive WHB04 input packet handling."""
 
-import importlib.util
 import struct
-import sys
-import types
-from pathlib import Path
 
 import pytest
 
-try:
-    import hid  # noqa: F401
-except ModuleNotFoundError:
-    hid = types.ModuleType("hid")
-    hid.Device = type("Device", (), {})
-    hid.DeviceInfo = dict
-    hid.enumerate = lambda: []
-    sys.modules["hid"] = hid
-
-MODULE_PATH = Path(__file__).parents[2] / "carveracontroller/addons/pendant/whb04.py"
-SPEC = importlib.util.spec_from_file_location("whb04_under_test", MODULE_PATH)
-assert SPEC is not None and SPEC.loader is not None
-whb04 = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = whb04
-SPEC.loader.exec_module(whb04)
+from carveracontroller.addons.pendant import whb04
 
 
 @pytest.mark.parametrize(
