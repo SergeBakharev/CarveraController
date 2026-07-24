@@ -1,54 +1,42 @@
 """
-Live camera stream over MJPEG-over-WebSocket.
+Live camera stream session.
 
-A machine's network module serves the stream at the port and path given by its
-endpoint: the client sends a text start message and the server then pushes every
-camera frame as a binary WebSocket message of raw JPEG bytes. The stream needs a
-network connection because it does not exist on the serial link, and it carries
-no camera parameter controls, so it is view-only.
-
-Any machine answering a handshake on a known endpoint is treated as having a
-camera, so no model detection is involved.
+A camera is found by trying each known endpoint until one answers, and the
+source it returns yields whole JPEG frames from then on. The stream needs a
+network connection because it does not exist on the serial link, and no source
+carries camera parameter controls, so it is view-only.
 
 Frames are read on a worker thread; callbacks are dispatched on the Kivy main
 thread.
 """
 
 import logging
-import socket
 import threading
 
 from kivy.clock import Clock
 
 from carveracontroller.addons.camera.endpoints import CAMERA_ENDPOINTS
-from carveracontroller.addons.camera.websocket import (
-    OP_BINARY,
-    OP_CLOSE,
-    OP_CONTINUATION,
-    OP_PING,
-    OP_PONG,
-    OP_TEXT,
-    WebSocketClient,
-)
+from carveracontroller.addons.camera.sources.base import CameraStreamClosed
 from carveracontroller.translation import tr
 
+CONNECT_TIMEOUT = 5.0
 PROBE_TIMEOUT = 1.5
 
 logger = logging.getLogger(__name__)
 
 
 def find_camera(host, endpoints=CAMERA_ENDPOINTS, timeout=PROBE_TIMEOUT):
-    """Return the first endpoint that completes a handshake with ``host``, else None.
+    """Return the first endpoint that a camera answers on ``host``, else None.
 
     Blocks for up to ``timeout`` per endpoint, so call it off the main thread.
     """
     for endpoint in endpoints:
         try:
-            client = WebSocketClient(host, endpoint.port, endpoint.path, handshake_timeout=timeout)
+            source = endpoint.open(host, timeout)
         except OSError as exc:
-            logger.info("No camera at ws://%s:%d%s (%s)", host, endpoint.port, endpoint.path, exc)
+            logger.info("No %s camera at %s:%d%s (%s)", endpoint.source.name, host, endpoint.port, endpoint.path, exc)
             continue
-        client.close()
+        source.close()
         return endpoint
     return None
 
@@ -64,7 +52,7 @@ class CameraStream:
         self._on_frame = on_frame
         self._on_streaming = on_streaming
         self._on_error = on_error
-        self._client = None
+        self._source = None
         self._streaming = False
         self._session = 0
 
@@ -80,59 +68,45 @@ class CameraStream:
         threading.Thread(target=self._read_frames, args=(host, endpoint, self._session), daemon=True).start()
 
     def stop(self):
-        """Invalidate the running worker's session, then close its socket."""
+        """Invalidate the running worker's session, then close its source."""
         if not self._streaming:
             return
         self._session += 1
         self._streaming = False
-        client, self._client = self._client, None
-        if client is not None:
-            client.close()
+        source, self._source = self._source, None
+        if source is not None:
+            source.close()
         self._notify(self._on_streaming, False)
 
     def _read_frames(self, host, endpoint, session):
-        """Reassemble JPEG messages until stopped or superseded by a newer session.
+        """Forward frames until stopped, closed, or superseded by a newer session.
 
-        The socket is only ever reached through the local ``client``, so a newer
-        session replacing ``self._client`` can neither be read nor torn down
-        here. Text frames (status chatter) are ignored by this view-only stream.
+        The source is only ever reached through the local ``source``, so a newer
+        session replacing ``self._source`` can neither be read nor torn down
+        here.
         """
-        client = None
-        pending = bytearray()
-        receiving = False
+        source = None
         try:
-            client = WebSocketClient(host, endpoint.port, endpoint.path)
-            self._client = client
-            client.send(OP_TEXT, endpoint.start_message)
-            logger.info("Camera stream connected to ws://%s:%d%s", host, endpoint.port, endpoint.path)
+            source = endpoint.open(host, CONNECT_TIMEOUT)
+            self._source = source
+            logger.info(
+                "Camera stream connected: %s at %s:%d%s", endpoint.source.name, host, endpoint.port, endpoint.path
+            )
             while self._streaming and self._session == session:
-                try:
-                    frame = client.read_frame()
-                except socket.timeout:
-                    continue
-                if frame.opcode == OP_CLOSE:
-                    break
-                if frame.opcode == OP_PING:
-                    client.send(OP_PONG, frame.payload)
-                elif frame.opcode == OP_BINARY:
-                    pending = bytearray(frame.payload)
-                    receiving = not frame.fin
-                    if frame.fin:
-                        self._notify(self._on_frame, bytes(pending))
-                elif frame.opcode == OP_CONTINUATION and receiving:
-                    pending += frame.payload
-                    if frame.fin:
-                        receiving = False
-                        self._notify(self._on_frame, bytes(pending))
+                jpeg = source.next_frame()
+                if jpeg is not None:
+                    self._notify(self._on_frame, jpeg)
+        except CameraStreamClosed:
+            logger.info("Camera stream closed by the machine")
         except OSError as exc:
             if self._streaming and self._session == session:
                 logger.error("Camera stream failed: %s", exc)
                 self._notify(self._on_error, tr._("Camera stream error: {}").format(exc))
         finally:
-            if client is not None:
-                client.close()
+            if source is not None:
+                source.close()
             if self._session == session:
-                self._client = None
+                self._source = None
                 self._streaming = False
                 self._notify(self._on_streaming, False)
 

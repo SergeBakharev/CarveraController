@@ -7196,7 +7196,7 @@ class Makera(RelativeLayout):
     def toggle_camera_stream(self):
         if self.camera_stream.is_streaming():
             self.camera_stream.stop()
-        else:
+        elif self.camera_endpoint is not None:
             host = self.controller.connection_address.split(":")[0]
             self.camera_stream.start(host, self.camera_endpoint)
 

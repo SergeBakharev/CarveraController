@@ -26,7 +26,7 @@
 - Enhancement: added green question mark help buttons to the UI that link to the relevant documentation page
 - Enhancement: Block sending the `reset` command over USB and show a popup directing the user to use the power switch instead
 - Enhancement: Initial Z1 support
-- Enhancement: Live camera view for machines that serve a camera stream over the network, such as the Makera Z1, with host-side brightness, contrast and gamma adjustment
+- Enhancement: Live camera view for machines with a built-in camera, such as the Makera Z1. Brightness, contrast and gamma can be adjusted while viewing
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
 - Fixed: Confirmation dialogs no longer retain expanded layouts from laser and resume warnings
 - Fixed: Repeated firmware checks now happen just once

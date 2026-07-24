@@ -1,17 +1,35 @@
-"""Known camera stream endpoints, probed in order to find a machine's camera."""
+"""
+Camera endpoints probed in order to find a machine's camera.
+
+To support another camera, add a source module under
+``carveracontroller.addons.camera.sources`` and register the location it serves
+in ``CAMERA_ENDPOINTS`` below.
+"""
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 
+from carveracontroller.addons.camera.sources.base import CameraSource
+from carveracontroller.addons.camera.sources.mjpeg_http import MjpegHttpSource
+from carveracontroller.addons.camera.sources.mjpeg_websocket import MjpegWebSocketSource
+
 
 @dataclass(frozen=True)
-class MjpegEndpoint:
-    """Where and how to open an MJPEG-over-WebSocket camera stream."""
+class CameraEndpoint:
+    """A camera location and the source class that speaks its protocol."""
 
+    source: type[CameraSource]
     port: int
     path: str
-    start_message: bytes
+
+    def open(self, host, timeout):
+        return self.source(host, self.port, self.path, timeout)
 
 
-MAKERA_WIFI_CAMERA = MjpegEndpoint(port=82, path="/ws_video", start_message=b"start_stream")
-
-CAMERA_ENDPOINTS = (MAKERA_WIFI_CAMERA,)
+# Probed in order, so keep this list short: every entry that does not answer
+# costs one connection timeout before the next is tried.
+CAMERA_ENDPOINTS = (
+    CameraEndpoint(MjpegWebSocketSource, 82, "/ws_video"),
+    CameraEndpoint(MjpegHttpSource, 81, "/stream"),
+)
