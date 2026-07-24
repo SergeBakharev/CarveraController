@@ -29,11 +29,11 @@ class BoreOperation(OperationsBase):
     def get_missing_config(self, config: dict[str, float]):
         if self.requires_x:
             definition = BoreParameterDefinitions.XAxisDistance
-            if not definition.code in config:
+            if definition.code not in config or not config[definition.code].strip():
                 return definition
         if self.requires_y:
             definition = BoreParameterDefinitions.YAxisDistance
-            if not definition.code in config:
+            if definition.code not in config or not config[definition.code].strip():
                 return definition
 
         required_definitions = {

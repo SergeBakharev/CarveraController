@@ -1,24 +1,33 @@
+[unreleased]
 - Enhancement: Add multi-select to the remote file browser
 - Enhancement: Display error message in halt popup. Requires halt errors to start with "ERROR: " in the firmware
 - Enhancement: Add popup notice when using stock firmware instead of the Community Firmware
 - Enhancement: Improvements to saving changes in settings menu
 - Enhancement: Add syntax highlighting to the file viewer
-- Enhancement: Only re-render the G-Code viewer scene if something has changed
+- Enhancement: Only re-render the gcode viewer scene if something has changed
 - Enhancement: Add Facing wizard
 - Enhancement: Support gamepads as pendants
 - Enhancement: Added iPhone support
-- Enhancement: Improve Gcode viewer toolbar buttons layout
+- Enhancement: Improved gcode viewer toolbar buttons layout
 - Enhancement: Show current config probe tip diameter in probing panels
 - Enhancement: Add Probe Scan tool
 - Enhancement: Show tool change markers on the playback progress bar
-- Enhancement: Add grid visualization, ortho projection, view cube and color schemes selector to the G-Code viewer
+- Enhancement: Add grid visualization, ortho projection, view cube and color schemes selector to the gcode viewer
 - Enhancement: Detect WHB04 pendant permission errors instead of silently ignoring pendant
 - Enhancement: New M469.6 4th Axis calibration routine finds the true 4th axis center now replaces the previous M469.4 4th axis head stock calibration
 - Enhancement: Advanced TLO Calibration option. Here you can set the offset to use from tool setter, and/or the number of repeat probings to use
 - Enhancement: Added a warning popup if the controller version is lower than the firmware. This is not a supported config
 - Enhancement: Added Auto Ext. Out toggle to spindle dropdown and Config and Run screen. This can be used to automatically run a vacuum or compressor when the spindle is running
-- Fixed: Resume-at-line restores spindle speed from zero-padded M03 commands
+- Enhancement: Autodetect Smoothie vs Makera communication protocol on connect and use it for the session
+- Enhancement: Show a connecting progress popup while opening a USB device
+- Enhancement: Log connect and manual disconnect with the connection method and address
+- Enhancement: Add a "Network..." option under Scan Wi-Fi in the connection dropdown to enter a machine network address
+- Enhancement: Reconnect supports USB as well as WiFi. Configure preferred method for app-launch auto-connect
+- Enhancement: added green question mark help buttons to the UI that link to the relevant documentation page
+- Enhancement: Block sending the `reset` command over USB and show a popup directing the user to use the power switch instead
+- Enhancement: Initial Z1 support
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
+- Fixed: Confirmation dialogs no longer retain expanded layouts from laser and resume warnings
 - Fixed: Repeated firmware checks now happen just once
 - Fixed: UI widget updates from the SerialMonitor() now dispatched via the main thread. This should reduce the number of RecycleView related crashes
 - Fixed: Spindle temp reporting when running Analog type spindle without rpm reporting
@@ -30,10 +39,27 @@
 - Fixed: Fix potential crashes due to an undefined FuncSetting key"
 - Fixed: Fix incorrect "No Pendant" in UI when pendant is working
 - Fixed: Fix invalid initial coordinates when resuming in the middle of a modal command
-- Fixed: 3D Visualisation of GCode movement would always show the initial movement as originating from the WCS Origin, this doesn't match reality. Now the Visualisation correctly shows the line as originating from above the first movement command at the configured clearance_z (default of MCS Z-3)
+- Fixed: 3D Visualisation of gcode movement would always show the initial movement as originating from the WCS Origin, this doesn't match reality. Now the Visualisation correctly shows the line as originating from above the first movement command at the configured clearance_z (default of MCS Z-3)
+- Fixed: When a USB connection was lost, the popup had a non-functioning reconnect button
+- Fixed: When connecting over USB the UI thread would freeze while it was opening the device
+- Fixed: USB higher-baud upgrade failed on Makera protocol (trailing newline in framed commands, race with config download, host baud switch). Upgrade now runs after config sync and verifies the link
+- Fixed: Config download / MD5-match cache path could fail to load settings and block later USB baud upgrade
+- Fixed: Status and diagnose parsers mishandled trailing newlines in Makera payloads (e.g. RSSI parse warnings)
+- Fixed: Fresh USB-only connects could immediately show "Connection to machine lost" while the machine was still booting after DTR reset; "Connection to machine lost" is now also logged
+- Fixed: Elapsed and remaining job timers now pause while playback is paused
+- Fixed: Sanitize missing or malformed spindle values before updating the WHB04 display
+- Fixed: Treat blank conditionally required X/Y probing inputs as missing
+- Fixed: Resume-at-line restores spindle speed from zero-padded M03 commands
+- Change: Misleading "Download canceled by Controller!" MDI message is suppressed, in logs a message is recorded that cached version of the config.txt was used
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file
 - Change: Upgrade screen now will show the letter "c" at the end of the current firmware version if it's present. This indicates that it's Community firmware
+- Change: Auto-connect on app launch now is only performed if auto-reconnect is enabled
+- Change: Reconnect uses the last successful connection method. On fresh app launch it uses the configured preferred connection method
+- Change: USB devices in connection dropdown are filtered to only show devices specifically with the FTDI chip found on the Makera machines
+- Change: USB devices are now selected and stored by stable VID:PID:serial identity (instead of generic COM path)
+- Change: Machine Light, and Ext. Control buttons now usable while machine is in Run, Tool or Paused states
+- Change: Text properly fits into popup boxes based on actual box size
 
 [2.1.0]
 - Enhancement: Add right-click menu option to clear resume-at-line setting

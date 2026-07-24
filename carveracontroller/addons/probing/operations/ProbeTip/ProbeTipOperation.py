@@ -34,11 +34,11 @@ class ProbeTipOperationBore(OperationsBase):
     def get_missing_config(self, config: dict[str, float]):
         if self.requires_x:
             definition = ProbeTipParameterDefinitions.XAxisDistance
-            if not definition.code in config:
+            if definition.code not in config or not config[definition.code].strip():
                 return definition
         if self.requires_y:
             definition = ProbeTipParameterDefinitions.YAxisDistance
-            if not definition.code in config:
+            if definition.code not in config or not config[definition.code].strip():
                 return definition
 
         required_definitions = {
@@ -75,11 +75,11 @@ class ProbeTipOperationBoss(OperationsBase):
     def get_missing_config(self, config: dict[str, float]):
         if self.requires_x:
             definition = ProbeTipParameterDefinitions.XAxisDistance
-            if not definition.code in config:
+            if definition.code not in config or not config[definition.code].strip():
                 return definition
         if self.requires_y:
             definition = ProbeTipParameterDefinitions.YAxisDistance
-            if not definition.code in config:
+            if definition.code not in config or not config[definition.code].strip():
                 return definition
 
         required_definitions = {
@@ -116,11 +116,11 @@ class ProbeTipOperationAnchor(OperationsBase):
     def get_missing_config(self, config: dict[str, float]):
         if self.requires_x:
             definition = ProbeTipParameterDefinitions.XAxisDistance
-            if not definition.code in config:
+            if definition.code not in config or not config[definition.code].strip():
                 return definition
         if self.requires_y:
             definition = ProbeTipParameterDefinitions.YAxisDistance
-            if not definition.code in config:
+            if definition.code not in config or not config[definition.code].strip():
                 return definition
 
         required_definitions = {

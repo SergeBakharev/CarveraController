@@ -326,17 +326,8 @@ def version_type(version_string):
             "Must be in X.Y.Z[-SUFFIX] format (e.g., 1.2.3, v1.2.3, 2.0.0-RC1, or v2.0.0-RC1)"
         )
 
-    # Remove 'v' prefix if present
-    version_string = version_string.lstrip("v")
-
-    # Split version into parts
-    parts = version_string.split(".")
-
-    # If first part is 4 digits, take last 2 digits
-    if len(parts[0]) == 4:
-        parts[0] = parts[0][-2:]
-
-    return ".".join(parts)
+    # Remove 'v' prefix if present; keep full YYYY for date-based dev versions
+    return version_string.lstrip("v")
 
 
 def rename_release_file(os_name, package_version):
