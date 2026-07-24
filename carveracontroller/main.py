@@ -445,12 +445,19 @@ class ConfirmPopup(ModalView):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        # Capture KV (or constructor) defaults so expanded workflows can restore them.
+        self._default_size_hint = tuple(self.size_hint)
+        self._default_pos_hint = dict(self.pos_hint)
+        self._default_title_size_hint_y = self.lb_title.size_hint_y
 
     def on_open(self):
         self.showing = True
 
     def on_dismiss(self):
         self.showing = False
+        self.size_hint = self._default_size_hint
+        self.pos_hint = dict(self._default_pos_hint)
+        self.lb_title.size_hint_y = self._default_title_size_hint_y
 
 
 class UnlockPopup(ModalView):

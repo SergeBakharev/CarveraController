@@ -25,7 +25,9 @@
 - Enhancement: Reconnect supports USB as well as WiFi. Configure preferred method for app-launch auto-connect
 - Enhancement: added green question mark help buttons to the UI that link to the relevant documentation page
 - Enhancement: Block sending the `reset` command over USB and show a popup directing the user to use the power switch instead
+- Enhancement: Initial Z1 support
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
+- Fixed: Confirmation dialogs no longer retain expanded layouts from laser and resume warnings
 - Fixed: Repeated firmware checks now happen just once
 - Fixed: UI widget updates from the SerialMonitor() now dispatched via the main thread. This should reduce the number of RecycleView related crashes
 - Fixed: Spindle temp reporting when running Analog type spindle without rpm reporting
