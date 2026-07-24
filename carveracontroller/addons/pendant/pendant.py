@@ -438,8 +438,8 @@ class GamepadPendant(Pendant):
 
     def close(self) -> None:
         if self._controller.stream is not None:
-            self._controller.stream.send(b"\031")
-        self._controller.continuous_jog_active = False
+            self._controller.executeRealtime(0x19)
+        self._controller._clear_continuous_jog_state()
         self._active_continuous_jog_action = None
         self._manager.close()
         self._report_disconnection()
