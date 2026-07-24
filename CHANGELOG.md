@@ -49,6 +49,7 @@
 - Fixed: Elapsed and remaining job timers now pause while playback is paused
 - Fixed: Sanitize missing or malformed spindle values before updating the WHB04 display
 - Fixed: Treat blank conditionally required X/Y probing inputs as missing
+- Fixed: Resume-at-line restores spindle speed from zero-padded M03 commands
 - Change: Misleading "Download canceled by Controller!" MDI message is suppressed, in logs a message is recorded that cached version of the config.txt was used
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file
