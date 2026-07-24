@@ -62,7 +62,7 @@
     {
         "type": "options",
         "title": "Main button long press function",
-        "desc": "Triggered after 3 seconds when pressing\nNone   ------Do Nothing\nSleep  ------Enter sleep mode\nRepeat------Repeat Last Job\nTool Change------Clamp/Unclamp Collet for Tool Changes (Community Firmware Only)",
+        "desc": "Triggered after 3 seconds when pressing\nNone   ------Do Nothing\nSleep  ------Enter sleep mode\nRepeat------Repeat Last Job",
         "section": "Basic",
         "key": "main_button_long_press_enable",
         "options": [
