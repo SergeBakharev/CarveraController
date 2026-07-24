@@ -923,52 +923,16 @@ class Controller:
             if start_line < 1 or start_line > len(lines):
                 return None
 
-            # Search backwards for G1/G01/G2/G02/G3/G03 commands
+            # F is modal independently of a motion command, so the most recent
+            # feed word may be on a standalone or tightly packed G-code line.
             for i in range(start_line - 2, -1, -1):
-                original_line = lines[i]
-                line = original_line.strip()
-
-                # Remove comments using string methods
-                if ";" in line:
-                    line = line[: line.index(";")]
-                # Remove parentheses comments using string methods
-                while "(" in line and ")" in line:
-                    start_paren = line.index("(")
-                    end_paren = line.index(")", start_paren)
-                    line = line[:start_paren] + line[end_paren + 1 :]
-
-                line = line.strip()
-                if not line:
-                    continue
-
-                # Check if line contains G1/G01/G2/G02/G3/G03
-                line_upper = line.upper()
-                # Check for G1/G01/G2/G02/G3/G03 commands
-                # These can appear at start of line or anywhere in the line
-                g_commands = ["G1", "G01", "G2", "G02", "G3", "G03"]
-                found_g_command = False
-                for cmd in g_commands:
-                    # Check if command appears at start
-                    if line_upper.startswith(cmd):
-                        found_g_command = True
-                        break
-                    # Check if command appears in the middle of line (preceded by non-alphanumeric)
-                    cmd_pos = line_upper.find(cmd)
-                    if cmd_pos > 0 and not line_upper[cmd_pos - 1].isalnum():
-                        # Make sure it's not followed by a digit (to avoid matching G10, G20, etc.)
-                        if cmd_pos + len(cmd) >= len(line_upper) or not line_upper[cmd_pos + len(cmd)].isdigit():
-                            found_g_command = True
-                            break
-
-                if found_g_command:
-                    # Extract F parameter using regex
-                    f_match = re.search(r"F(\d+\.?\d*)", line)
-                    if f_match:
-                        try:
-                            feed_rate = float(f_match.group(1))
-                            return feed_rate
-                        except (ValueError, TypeError):
-                            continue
+                for token in reversed(self._gcode_line_to_cmd_tokens(lines[i])):
+                    if token[:1].upper() != "F":
+                        continue
+                    try:
+                        return float(token[1:])
+                    except (ValueError, TypeError):
+                        continue
 
             return None
 
