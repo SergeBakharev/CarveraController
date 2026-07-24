@@ -20,8 +20,7 @@ def test_build_frame_wire_format():
     assert struct.unpack_from(">Q", large, 2)[0] == 70000
 
 
-def test_parse_frame_decodes_server_frames():
-    # Servers send unmasked frames, so these are hand-built rather than round-tripped.
+def test_parse_frame_decodes_unmasked_server_frames():
     small = bytes([0x80 | OP_BINARY, 4]) + b"jpeg"
     frame, consumed = parse_frame(small)
     assert (frame.fin, frame.opcode, frame.payload) == (True, OP_BINARY, b"jpeg")

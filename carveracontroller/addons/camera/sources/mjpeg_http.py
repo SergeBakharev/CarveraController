@@ -1,12 +1,10 @@
 """
 MJPEG-over-HTTP camera source.
 
-The near-universal format for network cameras, including the ESP32-CAM modules
-people retrofit to their machines: the server answers a plain GET with
-``multipart/x-mixed-replace`` and writes each JPEG frame as one part. Parts are
-split on the boundary declared in the response content type, using the part's
-``Content-Length`` when it sends one and the next boundary marker when it does
-not.
+The near-universal format for network cameras, including retrofitted ESP32-CAM
+modules: the server answers a plain GET with ``multipart/x-mixed-replace`` and
+writes each JPEG frame as one part. Parts are split on ``Content-Length`` when one
+is sent and on the next boundary marker when not.
 """
 
 from __future__ import annotations

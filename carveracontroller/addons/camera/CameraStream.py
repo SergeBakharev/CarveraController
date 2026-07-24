@@ -1,10 +1,9 @@
 """
 Live camera stream session.
 
-A camera is found by trying each known endpoint until one answers, and the
-source it returns yields whole JPEG frames from then on. The stream needs a
-network connection because it does not exist on the serial link, and no source
-carries camera parameter controls, so it is view-only.
+A camera is found by trying each known endpoint until one answers; the source it
+returns yields whole JPEG frames from then on. No source carries camera
+parameter controls, so the stream is view-only.
 
 Frames are read on a worker thread; callbacks are dispatched on the Kivy main
 thread.
@@ -81,9 +80,8 @@ class CameraStream:
     def _read_frames(self, host, endpoint, session):
         """Forward frames until stopped, closed, or superseded by a newer session.
 
-        The source is only ever reached through the local ``source``, so a newer
-        session replacing ``self._source`` can neither be read nor torn down
-        here.
+        Only the local ``source`` is used, so a newer session replacing
+        ``self._source`` can neither be read nor torn down here.
         """
         source = None
         try:

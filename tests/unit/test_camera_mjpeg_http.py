@@ -28,9 +28,7 @@ def test_parse_part_uses_content_length_when_present():
     assert _drain(_part(JPEG) * 2) == [JPEG, JPEG]
 
 
-def test_parse_part_falls_back_to_next_boundary_without_content_length():
-    # Without a length a part is only delimited by the following boundary, so the
-    # last part on the wire stays pending until the next frame starts arriving.
+def test_parse_part_without_content_length_needs_the_following_boundary():
     assert _drain(_part(JPEG, content_length=False) * 3) == [JPEG, JPEG]
 
 

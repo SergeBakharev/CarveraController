@@ -59,10 +59,7 @@ class CameraView(Widget):
         )
 
     def show_frame(self, jpeg):
-        """Decode one JPEG frame, dropping partial or garbled ones.
-
-        Linear filtering keeps the sensor frame smooth when upscaled.
-        """
+        """Decode one JPEG frame, dropping partial or garbled ones."""
         try:
             texture = CoreImage(BytesIO(jpeg), ext="jpg").texture
         except Exception as exc:

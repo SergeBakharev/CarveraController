@@ -1,10 +1,8 @@
 """
 Minimal RFC 6455 WebSocket client: frame encode/decode plus a blocking socket.
 
-Client side only, plain ``ws://`` (no TLS) and no protocol extensions, which is
-all the controller needs. Hand-rolled rather than pulling in a ``websockets``
-dependency that would have to be threaded through the desktop, Android and iOS
-builds.
+Client side only, plain ``ws://`` and no protocol extensions. Hand-rolled to avoid
+threading a ``websockets`` dependency through the desktop, Android and iOS builds.
 """
 
 from __future__ import annotations

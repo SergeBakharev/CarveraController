@@ -1,10 +1,9 @@
 """
 MJPEG-over-WebSocket camera source.
 
-The camera's network module serves a WebSocket endpoint: the client sends a text
-start message and the server then pushes every frame as a binary message of raw
-JPEG bytes. Fragmented messages are reassembled before a frame is returned, and
-text frames (status chatter) are ignored by this view-only source.
+The client sends a text start message and the server then pushes every frame as a
+binary message of raw JPEG bytes. Fragmented messages are reassembled before a
+frame is returned, and text frames are ignored.
 """
 
 import socket
