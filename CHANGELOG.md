@@ -47,6 +47,7 @@
 - Fixed: Status and diagnose parsers mishandled trailing newlines in Makera payloads (e.g. RSSI parse warnings)
 - Fixed: Fresh USB-only connects could immediately show "Connection to machine lost" while the machine was still booting after DTR reset; "Connection to machine lost" is now also logged
 - Fixed: Elapsed and remaining job timers now pause while playback is paused
+- Fixed: Sanitize missing or malformed spindle values before updating the WHB04 display
 - Change: Misleading "Download canceled by Controller!" MDI message is suppressed, in logs a message is recorded that cached version of the config.txt was used
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file
