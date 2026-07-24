@@ -3,7 +3,6 @@
 
 import logging
 import math
-import os
 import re
 import sys
 import threading
@@ -11,8 +10,6 @@ import time
 import webbrowser
 
 logger = logging.getLogger(__name__)
-
-from datetime import datetime
 
 try:
     from Queue import *
@@ -23,9 +20,9 @@ from functools import partial
 
 from . import Utils
 from .CNC import CMDPAT, CNC, LASER_TOOL_NUMBER, PARENPAT, SEMIPAT, ZPROBE_TOOL_NUMBER
+from .protocols import MessageKind, ProtocolSession
 from .USBStream import USBStream
 from .WIFIStream import WIFIStream
-from .XMODEM import CAN, EOT
 
 try:
     from kivy.app import App
@@ -159,6 +156,14 @@ class Controller:
 
         self._baud_upgrade_attempted = False
         self._baud_switch_in_progress = False
+        self._refresh_heartbeat = False
+        # True from open() start until streamIO is running (hides half-open links from heartbeat).
+        self._connecting = False
+        # Epoch seconds; while time.time() < this, heartbeat will not drop the link.
+        # Used after USB DTR reset while the machine is still booting.
+        self._heartbeat_grace_until = 0.0
+        # True while streamIO is idle (paused / no stream); used to sync baud switch.
+        self._stream_io_parked = True
 
         self._msg = None
         self._sumcline = 0
@@ -175,10 +180,29 @@ class Controller:
 
         self.is_community_firmware = False
 
+        # Connection-scoped comms protocol (detect on open; follows M485 switches)
+        self.comms = ProtocolSession(on_change=self._on_comms_protocol_changed)
+
         # Jog related variables
         self.jog_mode = Controller.JOG_MODE_STEP
         self.jog_speed = 10000  # mm/min. A value of 0 here would suggest to use last used feed
         self.continuous_jog_active = False
+        # True after Ctrl+Y until firmware acks (^Y) — suppresses keepalives without
+        # allowing a new $J -c to start before the previous jog has stopped.
+        self._continuous_jog_stopping = False
+
+    @property
+    def protocol_ready(self):
+        return self.comms.ready
+
+    def _on_comms_protocol_changed(self, name, uses_framed_transfer):
+        """Keep transports' file-transfer mode aligned with the comms session."""
+        if self.usb_stream is not None:
+            self.usb_stream.uses_framed_transfer = uses_framed_transfer
+        if self.wifi_stream is not None:
+            self.wifi_stream.uses_framed_transfer = uses_framed_transfer
+        if self.comms.ready:
+            self.log.put((self.MSG_NORMAL, f"Using {name} communication protocol"))
 
     # ----------------------------------------------------------------------
     def quit(self, event=None):
@@ -211,19 +235,74 @@ class Controller:
         #    time.sleep(0.5)
         if self.stream and line:
             try:
-                if line[-1] != "\n":
+                if isinstance(line, str) and not line.endswith("\n"):
                     line += "\n"
-                self.stream.send(line.encode())
+                # Soft `reset` over USB leaves the board powered (zombie state).
+                if isinstance(line, str) and self.connection_type == CONN_USB and line.lower().startswith("reset"):
+                    self._notify_usb_reset_blocked()
+                    return
+                payload = line.encode() if isinstance(line, str) else line
+                self.stream.send(self.comms.encode_command(payload))
                 if self.execCallback:
-                    # 检查文件名是否以 ".lz" 结尾
-                    if line.endswith(".lz\n"):
-                        # 删除 ".lz" 后缀
-                        new_line = line[:-4] + "\n"
+                    display = line if isinstance(line, str) else line.decode(errors="ignore")
+                    # Strip ".lz" suffix for display
+                    if display.endswith(".lz\n"):
+                        new_line = display[:-4] + "\n"
                     else:
-                        # 如果没有 ".lz" 后缀，直接赋值
-                        new_line = line
+                        new_line = display
                     self.execCallback(new_line)
-            except:
+            except Exception:
+                self.log.put((Controller.MSG_ERROR, str(sys.exc_info()[1])))
+
+    def _notify_usb_reset_blocked(self):
+        if App is None or Clock is None:
+            return
+        app = App.get_running_app()
+        if app is None or getattr(app, "root", None) is None:
+            return
+        root = app.root
+        if hasattr(root, "show_usb_reset_blocked_popup"):
+            Clock.schedule_once(lambda dt: root.show_usb_reset_blocked_popup(), 0)
+
+    def executeRealtime(self, char):
+        """Send a single-byte realtime control through the active protocol."""
+        self.executeRealtimeSequence(char)
+
+    def executeRealtimeSequence(self, *chars):
+        """Send one or more realtime bytes in a single write.
+
+        Smoothie continuous-jog keepalive is the digram ``?1``. Sending ``?`` and
+        ``1`` as separate writes races with other commands and leaves orphaned
+        ``1`` bytes in the firmware command buffer (seen as ``111…$J …``).
+        """
+        if not self.stream or not chars:
+            return
+        try:
+            payload = bytearray()
+            for char in chars:
+                if isinstance(char, (bytes, bytearray)):
+                    char = char[0]
+                payload.extend(self.comms.encode_realtime(int(char)))
+            self.stream.send(bytes(payload))
+        except Exception:
+            self.log.put((Controller.MSG_ERROR, str(sys.exc_info()[1])))
+
+    def executeFileCommand(self, line):
+        """Send an upload/download initiation command through the active protocol."""
+        if self.stream and line:
+            try:
+                if isinstance(line, str) and not line.endswith("\n"):
+                    line += "\n"
+                payload = line.encode() if isinstance(line, str) else line
+                self.stream.send(self.comms.encode_file_command(payload))
+                if self.execCallback:
+                    display = line if isinstance(line, str) else line.decode(errors="ignore")
+                    if display.endswith(".lz\n"):
+                        new_line = display[:-4] + "\n"
+                    else:
+                        new_line = display
+                    self.execCallback(new_line)
+            except Exception:
                 self.log.put((Controller.MSG_ERROR, str(sys.exc_info()[1])))
 
     # ----------------------------------------------------------------------
@@ -611,13 +690,13 @@ class Controller:
         upload_command = "upload %s\n" % filename.replace(" ", "\x01")
         if "\\" in filename:
             upload_command = "upload %s\n" % "/".join(filename.split("\\")).replace(" ", "\x01")
-        self.executeCommand(self.escape(upload_command))
+        self.executeFileCommand(self.escape(upload_command))
 
     def downloadCommand(self, filename):
         download_command = "download %s\n" % filename.replace(" ", "\x01")
         if "\\" in filename:
             download_command = "download %s\n" % "/".join(filename.split("\\")).replace(" ", "\x01")
-        self.executeCommand(self.escape(download_command))
+        self.executeFileCommand(self.escape(download_command))
 
     def suspendCommand(self):
         self.executeCommand("suspend\n")
@@ -1259,27 +1338,23 @@ class Controller:
         self.executeCommand("abort\n")
 
     def feedholdCommand(self):
-        if self.stream:
-            self.stream.send(b"!")
+        self.executeRealtime(ord("!"))
 
     def toggleFeedholdCommand(self, holding):
-        if self.stream:
-            if holding:
-                self.stream.send(b"~")
-            else:
-                self.stream.send(b"!")
+        if holding:
+            self.executeRealtime(ord("~"))
+        else:
+            self.executeRealtime(ord("!"))
 
     def cyclestartCommand(self):
-        if self.stream:
-            self.stream.send(b"~")
+        self.executeRealtime(ord("~"))
 
     def estopCommand(self):
-        if self.stream:
-            self.stream.send(b"\x18")
+        self.executeRealtime(0x18)
 
     # ----------------------------------------------------------------------
     def hardResetPre(self):
-        self.stream.send(b"reset\n")
+        self.executeCommand("reset\n")
 
     def hardResetAfter(self):
         time.sleep(6)
@@ -1291,7 +1366,13 @@ class Controller:
         # R: Rotation Angle; G: active Coord System;
         # <Idle|MPos:68.9980,-49.9240,40.0000,12.3456|WPos:68.9980,-49.9240,40.0000,5.3|R:0.0|G:0|F:12345.12,100.0|S:1.2,100.0|T:1|L:0>
         # F: Feed, overide | S: Spindle RPM
-        ln = line[1:-1]  # strip off < .. >
+        # Comms delivers newline-trimmed text; keep delimiter extraction so a
+        # trailing junk byte after '>' cannot poison the last field.
+        start = line.find("<")
+        end = line.rfind(">")
+        if start < 0 or end <= start:
+            raise ValueError(f"Malformed status report: {line!r}")
+        ln = line[start + 1 : end]
 
         # split fields
         l = ln.split("|")
@@ -1420,8 +1501,14 @@ class Controller:
         self.posUpdate = True
 
     def parseBigParentheses(self, line):
-        # {S:0,5000|L:0,0|F:1,0|V:0,1|G:0|T:0|E:0,0,0,0,0,0|P:0,0|A:1,0}
-        ln = line[1:-1]  # strip off < .. >
+        # {S:0,5000|L:0,0|F:1,0|V:0,1|G:0|T:0|E:0,0,0,0,0,0|P:0,0|A:1,0|RSSI:-57}
+        # Comms delivers newline-trimmed text; keep delimiter extraction so a
+        # trailing junk byte after '}' cannot poison the last field.
+        start = line.find("{")
+        end = line.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError(f"Malformed diagnose report: {line!r}")
+        ln = line[start + 1 : end]
 
         # split fields
         l = ln.split("|")
@@ -1472,6 +1559,8 @@ class Controller:
             CNC.vars["st_tool_sensor"] = int(d["A"][1])
         if "I" in d:
             CNC.vars["st_e_stop"] = int(d["I"][0])
+        if "RSSI" in d:
+            CNC.vars["RSSI"] = int(d["RSSI"][0])
 
         self.diagnoseUpdate = True
 
@@ -1482,23 +1571,60 @@ class Controller:
     # ----------------------------------------------------------------------
     # Open serial port or wifi connect
     # ----------------------------------------------------------------------
+    def _close_existing_connection(self):
+        """Stop streamIO and close any active transport before opening a new one."""
+        if self.stream is None and self.thread is None:
+            return
+        self.stopRun()
+        thread = self.thread
+        self.thread = None
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
+        if self.stream is not None:
+            try:
+                self.stream.close()
+            except Exception:
+                pass
+            self.stream = None
+        self.comms.reset()
+        self.clearRun()
+
     def open(self, conn_type, address):
         # init connection
+        method = "USB serial" if conn_type == CONN_USB else "WiFi"
+        # Single user-visible connect log (monitorSerial emits one MDI Received line).
+        self.log.put((self.MSG_NORMAL, f"Connecting via {method}: {address}"))
+
         self.connection_type = conn_type
         # Persist the last connection target so callers can detect "same machine"
         # reconnects (e.g. for resume-at-line selection / loaded lines behavior).
         self.connection_address = address
+        self._connecting = True
+        self._heartbeat_grace_until = 0.0
+        # Keep self.stream unset until open + protocol detect finish so heartbeat
+        # cannot treat a half-open link as a live connection and tear it down.
         if conn_type == CONN_USB:
-            self.stream = self.usb_stream
+            transport = self.usb_stream
             self._baud_upgrade_attempted = False
         else:
-            self.stream = self.wifi_stream
+            transport = self.wifi_stream
 
-        if self.stream.open(address):
+        try:
+            # Switching WiFi ↔ USB (or reconnecting) must tear down the old link first.
+            self._close_existing_connection()
+
+            if not transport.open(address):
+                self.log.put((self.MSG_ERROR, "Connection Failed!"))
+                return False
+
+            if conn_type == CONN_USB:
+                # USB open toggles DTR and resets the machine; wait for firmware boot
+                # before protocol probe / status polling.
+                time.sleep(2.0)
+
             CNC.vars["state"] = CONNECTED
             CNC.vars["color"] = STATECOLOR[CNC.vars["state"]]
             self.log.put((self.MSG_NORMAL, "Connected to machine!"))
-            # self.stream.send(b"\n")
             self._gcount = 0
             self._alarm = True
             CNC.vars["alarm_message"] = ""
@@ -1506,12 +1632,18 @@ class Controller:
             self._manual_disconnect = False
             try:
                 self.clearRun()
-            except:
+            except Exception:
                 self.log.put((self.MSG_ERROR, "Controller clear thread error!"))
+            self.comms.detect_and_select(transport)
+            self.stream = transport
             self.thread = threading.Thread(target=self.streamIO)
             self.thread.start()
+            self._refresh_heartbeat = True
+            # USB needs a longer post-reset grace; WiFi is usually ready immediately.
+            self._heartbeat_grace_until = time.time() + (20.0 if conn_type == CONN_USB else 5.0)
             return True
-        self.log.put((self.MSG_ERROR, "Connection Failed!"))
+        finally:
+            self._connecting = False
 
     # ----------------------------------------------------------------------
     # Close connection port
@@ -1521,39 +1653,44 @@ class Controller:
             return
         try:
             self.stopRun()
-        except:
+        except Exception:
             self.log.put((self.MSG_ERROR, "Controller stop thread error!"))
         self._runLines = 0
         time.sleep(0.5)
         self.thread = None
         try:
             self.stream.close()
-        except:
+        except Exception:
             self.log.put((self.MSG_ERROR, "Controller close stream error!"))
         self.stream = None
+        self.comms.reset()
         CNC.vars["state"] = NOT_CONNECTED
         CNC.vars["color"] = STATECOLOR[CNC.vars["state"]]
 
-        # Start reconnection if enabled
-        if self.reconnect_enabled and self.reconnect_callback and self.connection_type == CONN_WIFI:
+        # Start reconnection if enabled (WiFi or USB; callback resolves the method).
+        if self.reconnect_enabled and self.reconnect_callback:
             self.start_reconnection()
 
     def close_manual(self):
         """Close connection manually (user initiated) - don't auto-reconnect"""
         if self.stream is None:
             return
+        method = "USB serial" if self.connection_type == CONN_USB else "WiFi"
+        address = self.connection_address or "unknown"
+        self.log.put((self.MSG_NORMAL, f"Disconnected via {method}: {address}"))
         try:
             self.stopRun()
-        except:
+        except Exception:
             self.log.put((self.MSG_ERROR, "Controller stop thread error!"))
         self._runLines = 0
         time.sleep(0.5)
         self.thread = None
         try:
             self.stream.close()
-        except:
+        except Exception:
             self.log.put((self.MSG_ERROR, "Controller close stream error!"))
         self.stream = None
+        self.comms.reset()
         # Set a flag to indicate this was a manual disconnection
         self._manual_disconnect = True
         CNC.vars["state"] = NOT_CONNECTED
@@ -1639,24 +1776,28 @@ class Controller:
     def sendHex(self, hexcode):
         if self.stream is None:
             return
-        self.stream.send(chr(int(hexcode, 16)))
-        self.stream.flush()
+        self.executeRealtime(int(hexcode, 16))
 
     def viewStatusReport(self, sio_status):
         if self.loadNUM == 0 and self.sendNUM == 0:
-            if self.stream is None:
+            if self.stream is None or not self.protocol_ready:
                 return
-            if self.continuous_jog_active:
-                self.stream.send(b"?1")
+            if self.continuous_jog_active and not self._continuous_jog_stopping:
+                # Smoothie uses "?1"; Makera uses "?" + Ctrl+Z keepalive.
+                # Always one write so keepalive can't be interleaved/orphaned.
+                if self.comms.uses_framed_transfer:
+                    self.executeRealtimeSequence(ord("?"), 0x1A)
+                else:
+                    self.executeRealtimeSequence(ord("?"), ord("1"))
             else:
-                self.stream.send(b"?")
+                self.executeRealtime(ord("?"))
             self.sio_status = sio_status
 
     def viewDiagnoseReport(self, sio_diagnose):
         if self.loadNUM == 0 and self.sendNUM == 0:
-            if self.stream is None:
+            if self.stream is None or not self.protocol_ready:
                 return
-            self.stream.send(b"diagnose\n")
+            self.executeCommand("diagnose\n")
             self.sio_diagnose = sio_diagnose
 
     # ----------------------------------------------------------------------
@@ -1674,8 +1815,7 @@ class Controller:
         self.notBusy()
 
     def softReset(self, clearAlarm=True):
-        if self.stream:
-            self.stream.send(b"\030")
+        self.executeRealtime(0x18)
         self.stopProbe()
         if clearAlarm:
             self._alarm = False
@@ -1704,7 +1844,7 @@ class Controller:
         self.sendGCode("$G")
 
     def viewBuild(self):
-        self.stream.send(b"version\n")
+        self.executeCommand("version\n")
         self.sendGCode("$I")
 
     def viewStartup(self):
@@ -1714,7 +1854,7 @@ class Controller:
         pass
 
     def grblHelp(self):
-        self.stream.send(b"help\n")
+        self.executeCommand("help\n")
 
     def grblRestoreSettings(self):
         pass
@@ -1738,9 +1878,14 @@ class Controller:
 
     def startContinuousJog(self, _dir, speed=None, scale_feed_override=None):
         """Start continuous jogging in the specified direction"""
-        if self.jog_mode != Controller.JOG_MODE_CONTINUOUS or self.continuous_jog_active:
+        if (
+            self.jog_mode != Controller.JOG_MODE_CONTINUOUS
+            or self.continuous_jog_active
+            or self._continuous_jog_stopping
+        ):
             return
         self.continuous_jog_active = True
+        self._continuous_jog_stopping = False
         if speed is None:
             if self.jog_speed > 0 and self.jog_speed < 10000:
                 self.executeCommand(f"$J -c {_dir} F{self.jog_speed}")
@@ -1758,9 +1903,16 @@ class Controller:
         if self.jog_mode != Controller.JOG_MODE_CONTINUOUS:
             return
 
-        # Send Y^ (Ctrl+Y) to stop continuous jogging
-        if self.stream is not None and self.continuous_jog_active:
-            self.stream.send(b"\031")
+        # Send Ctrl+Y, then wait for firmware ^Y before allowing a new $J -c.
+        # Mark stopping immediately so status polls stop sending keepalives that
+        # would otherwise fight the stop request.
+        if self.stream is not None and self.continuous_jog_active and not self._continuous_jog_stopping:
+            self._continuous_jog_stopping = True
+            self.executeRealtime(0x19)
+
+    def _clear_continuous_jog_state(self):
+        self.continuous_jog_active = False
+        self._continuous_jog_stopping = False
 
     def jog(self, _dir, speed=None):
         if self.jog_mode == Controller.JOG_MODE_STEP:
@@ -1864,8 +2016,7 @@ class Controller:
             return
         if self.stream is None:
             return
-        self.stream.send(b"!")
-        self.stream.flush()
+        self.executeRealtime(ord("!"))
         self._pause = True
 
     def resume(self, event=None):
@@ -1873,8 +2024,7 @@ class Controller:
             return
         if self.stream is None:
             return
-        self.stream.send(b"~")
-        self.stream.flush()
+        self.executeRealtime(ord("~"))
         self._alarm = False
         CNC.vars["alarm_message"] = ""
         self._pause = False
@@ -1888,20 +2038,102 @@ class Controller:
             self.feedHold()
 
     # ----------------------------------------------------------------------
+    def _drain_stream_messages(self, timeout_s=0.3):
+        """Read and parse pending RX bytes for up to timeout_s; return messages."""
+        messages = []
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if not self.stream or not self.stream.waiting_for_recv():
+                time.sleep(0.01)
+                continue
+            data = self.stream.recv()
+            if data:
+                messages.extend(self.comms.feed(data, allow_wire_switch=False))
+        return messages
+
+    def _flush_rx(self):
+        """Discard any unread host RX bytes and reset the protocol parser."""
+        serial_port = getattr(self.stream, "serial", None) if self.stream else None
+        if serial_port is not None:
+            try:
+                serial_port.reset_input_buffer()
+            except Exception:
+                pass
+            try:
+                while serial_port.in_waiting:
+                    serial_port.read(serial_port.in_waiting)
+            except Exception:
+                pass
+        self.comms.reset_parser()
+
+    @staticmethod
+    def _looks_like_status(text):
+        t = (text or "").lstrip()
+        return t.startswith("<") and ("|" in t or "MPos" in t or "Idle" in t or "Run" in t)
+
+    def _await_status_response(self, timeout_s=1.0):
+        """Send a status query and wait for a status frame/line."""
+        self.executeRealtime(ord("?"))
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            for message in self._drain_stream_messages(timeout_s=0.05):
+                if self._looks_like_status(message.text):
+                    return True
+        return False
+
     def request_baud_upgrade(self, baud):
-        """Send firmware baud command and reopen serial at new baud (machine switches immediately)."""
+        """Send firmware baud command, then switch the host UART to match."""
         if self.connection_type != CONN_USB or self.stream != self.usb_stream:
             return
+        if not hasattr(self.usb_stream, "reopen_at_baud"):
+            return
+        if self.sendNUM != 0 or self.loadNUM != 0:
+            self.log.put((self.MSG_ERROR, "Failed to change serial speed: transfer in progress"))
+            return
+        baud = int(baud)
         self._baud_switch_in_progress = True
+        self._refresh_heartbeat = True
+        # Stop streamIO and wait until it is parked so it cannot steal the "ok".
+        self.pauseStream(0.0)
         try:
-            self.stream.send(f"baud {baud}\n".encode())
-            if hasattr(self.usb_stream, "reopen_at_baud"):
-                self.usb_stream.reopen_at_baud(baud)
-                self.log.put((self.MSG_NORMAL, f"Serial speed set to {baud} baud"))
+            self.executeCommand(f"baud {baud}\n")
+            # Firmware prints framed/text "ok" at the old baud, then switches.
+            # Give TX time to finish, then reopen the host port at the new rate.
+            time.sleep(0.15)
+            self._flush_rx()
+            if not self.usb_stream.reopen_at_baud(baud):
+                raise RuntimeError("Failed to set host serial baud rate")
+            # Ensure Controller still points at the reopened USB stream.
+            self.stream = self.usb_stream
+            self.comms.reset_parser()
+            if not self._await_status_response(timeout_s=1.5):
+                # Recover: try bringing both sides back to 115200.
+                self._recover_baud_after_failed_upgrade(baud)
+                raise RuntimeError(f"no status response after switching to {baud} baud")
+            self.log.put((self.MSG_NORMAL, f"Serial speed set to {baud} baud"))
+            self._refresh_heartbeat = True
         except Exception as e:
             self.log.put((self.MSG_ERROR, f"Failed to change serial speed: {e}"))
+            self._refresh_heartbeat = True
         finally:
             self._baud_switch_in_progress = False
+            self.resumeStream()
+
+    def _recover_baud_after_failed_upgrade(self, attempted_baud):
+        """Best-effort restore of 115200 after a failed high-baud switch."""
+        try:
+            # Machine may already be at attempted_baud — ask it to drop back.
+            self.executeCommand("baud 115200\n")
+            time.sleep(0.15)
+        except Exception:
+            pass
+        try:
+            self._flush_rx()
+            if self.usb_stream.reopen_at_baud(115200):
+                self.stream = self.usb_stream
+            self.comms.reset_parser()
+        except Exception:
+            logger.exception("Failed to revert host baud to 115200 after upgrade to %s", attempted_baud)
 
     # ----------------------------------------------------------------------
     def parseLine(self, line):
@@ -1926,7 +2158,7 @@ class Controller:
                 self.log.put((self.MSG_INTERIOR, line))
             elif line[0] == "^":
                 if line[1] == "Y":
-                    self.continuous_jog_active = False
+                    self._clear_continuous_jog_state()
             elif "error" in line.lower() or "alarm" in line.lower():
                 self.log.put((self.MSG_ERROR, line))
                 if line.upper().startswith("ERROR:"):
@@ -1934,8 +2166,11 @@ class Controller:
                     if msg:
                         CNC.vars["alarm_message"] = msg
             else:
+                # Firmware continuous-jog timeout: clear local state so jogging can restart.
+                if "Stop request timeout" in line or "Internal stop request reset" in line:
+                    self._clear_continuous_jog_state()
                 self.log.put((self.MSG_NORMAL, line))
-        except (LookupError, ArithmeticError) as e:
+        except (LookupError, ArithmeticError, ValueError) as e:
             self.log.put((self.MSG_ERROR, f"Failed to parse machine response: {line}"))
             logger.error(f"Parser error in parseLine: {e}, line: {line}")
 
@@ -1954,15 +2189,55 @@ class Controller:
             except Empty:
                 break
 
-    def pauseStream(self, wait_s):
+    def pauseStream(self, wait_s=0.0):
+        """Stop the streamIO RX loop so file transfer owns the byte stream."""
         self.pausing = True
-        time.sleep(wait_s)
+        # Pause RX immediately — do not wait before setting paused, or framed
+        # file-transfer packets (MD5/etc.) can be consumed by streamIO.
         self.paused = True
+        # Wait until streamIO acknowledges the pause before the caller touches RX.
+        deadline = time.time() + 1.0
+        while not self._stream_io_parked and time.time() < deadline:
+            time.sleep(0.01)
+        if wait_s > 0:
+            time.sleep(wait_s)
         self.pausing = False
 
     def resumeStream(self):
         self.paused = False
         self.pausing = False
+        self._stream_io_parked = False
+
+    def _handle_protocol_message(self, message):
+        """Dispatch a ParsedMessage from the active communication protocol."""
+        if message.kind == MessageKind.LOAD_EOF:
+            self.loadEOF = True
+            return
+        if message.kind == MessageKind.LOAD_ERROR:
+            self.loadERR = True
+            return
+
+        text = message.text or ""
+        if message.kind == MessageKind.LOAD_CHUNK:
+            cleaned = re.sub(r"<.*?>", "", text).strip()
+            if not cleaned:
+                return
+            for line2 in cleaned.replace("\r\n", "\n").split("\n"):
+                if line2:
+                    self.load_buffer.put(line2)
+                    self.load_buffer_size += len(line2) + 1
+            return
+
+        # LINE
+        if self.loadNUM == 0 or "|MPos" in text:
+            self.parseLine(text)
+            return
+        cleaned_line = re.sub(r"<.*?>", "", text).strip()
+        if cleaned_line:
+            for line2 in cleaned_line.replace("\r\n", "\n").split("\n"):
+                if line2:
+                    self.load_buffer.put(line2)
+                    self.load_buffer_size += len(line2) + 1
 
     # ----------------------------------------------------------------------
     # thread performing I/O on serial line
@@ -1972,18 +2247,20 @@ class Controller:
         self.sio_diagnose = False
         dynamic_delay = 0.1
         tr = td = time.time()
-        line = b""
         last_error = ""
 
         while not self.stop.is_set():
             if not self.stream or self.paused:
-                time.sleep(1)
+                self._stream_io_parked = True
+                # Short sleep so baud-switch / file-transfer pause ends promptly.
+                time.sleep(0.05)
                 continue
+            self._stream_io_parked = False
             t = time.time()
             # refresh machine position?
             running = self.sendNUM > 0 or self.loadNUM > 0 or self.pausing
             try:
-                if not running:
+                if not running and self.protocol_ready:
                     if t - tr > STREAM_POLL:
                         self.viewStatusReport(True)
                         tr = t
@@ -1995,37 +2272,11 @@ class Controller:
                     td = t
 
                 if self.stream.waiting_for_recv():
-                    received = [bytes([b]) for b in self.stream.recv()]
-                    for c in received:
-                        if c in (EOT, CAN):
-                            # Ctrl + Z means transmission complete, Ctrl + D means transmission cancel or error
-                            if len(line) > 0:
-                                self.load_buffer.put(line.decode(errors="ignore"))
-                                if self.loadNUM > 0:
-                                    self.load_buffer_size += len(line)
-                            line = b""
-                            if c == EOT:
-                                self.loadEOF = True
-                            else:
-                                self.loadERR = True
-                        else:
-                            if c == b"\n":
-                                # (line.decode(errors='ignore'))
-                                if self.loadNUM == 0 or "|MPos" in line.decode(errors="ignore"):
-                                    self.parseLine(line.decode(errors="ignore"))
-                                else:
-                                    # 将字节串解码为字符串
-                                    decoded_line = line.decode(errors="ignore")
-                                    # 使用正则表达式去除以"<"开头，以">"结尾的部分
-                                    cleaned_line = re.sub(r"<.*?>", "", decoded_line)
-                                    # 去除多余的空格（如果需要）
-                                    cleaned_line = cleaned_line.strip()
-                                    if len(cleaned_line) != 0:
-                                        self.load_buffer.put(cleaned_line)
-                                        self.load_buffer_size += len(cleaned_line) + 1
-                                line = b""
-                            else:
-                                line += c
+                    data = self.stream.recv()
+                    if data:
+                        allow_wire_switch = self.sendNUM == 0 and self.loadNUM == 0
+                        for message in self.comms.feed(data, allow_wire_switch=allow_wire_switch):
+                            self._handle_protocol_message(message)
                     dynamic_delay = 0
                 else:
                     if self.sendNUM == 0 and self.loadNUM == 0:
@@ -2034,7 +2285,7 @@ class Controller:
                         dynamic_delay = 0
 
             except Exception:
-                line = b""
+                self.comms.reset_parser()
                 exc_msg = str(sys.exc_info()[1])
                 if self._baud_switch_in_progress:
                     last_error = exc_msg

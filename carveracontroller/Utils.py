@@ -7,11 +7,9 @@
 __author__ = "Vasilis Vlachoudis"
 __email__ = "vvlachoudis@gmail.com"
 
-import glob
 import hashlib
 import os
 import sys
-import traceback
 
 try:
     import ConfigParser
@@ -316,6 +314,149 @@ def comports(include_links=True):
             except:
                 pass
     return comports
+
+
+# ------------------------------------------------------------------------------
+# USB serial identity helpers (VID:PID + optional serial), independent of COM path.
+# ------------------------------------------------------------------------------
+def usb_device_id_from_port(port):
+    """
+    Build a USB device type id from a pyserial ListPortInfo-like object.
+
+    Format: ``VID:PID`` (hex). Returns None if the port is not a USB device
+    (Bluetooth/debug ports without VID/PID, etc.).
+    """
+    vid = getattr(port, "vid", None)
+    pid = getattr(port, "pid", None)
+    if vid is None or pid is None:
+        return None
+    return f"{int(vid):04X}:{int(pid):04X}"
+
+
+def usb_device_label_from_port(port):
+    """Dropdown label: USB serial number when present, else a short product name."""
+    serial_number = (getattr(port, "serial_number", None) or "").strip()
+    if serial_number:
+        return serial_number
+    return (getattr(port, "product", None) or getattr(port, "description", None) or "USB serial").strip()
+
+
+def usb_port_short_name(device_path):
+    """Short OS path for disambiguation (COM3, ttyUSB0, cu.usbserial-...)."""
+    if not device_path:
+        return ""
+    name = os.path.basename(device_path.replace("\\", "/"))
+    return name or device_path
+
+
+def same_usb_device_path(a, b):
+    """Compare serial device paths; case-insensitive on Windows (COM3 vs com3)."""
+    if not a or not b:
+        return False
+    if sys.platform.startswith("win"):
+        return a.lower() == b.lower()
+    return a == b
+
+
+def same_usb_serial(a, b):
+    """Compare USB serial strings case-insensitively (OS reporting varies)."""
+    a = (a or "").strip()
+    b = (b or "").strip()
+    if not a or not b:
+        return False
+    return a.casefold() == b.casefold()
+
+
+def parse_usb_device_id(device_id):
+    """
+    Normalize a stored device id to ``(vid_pid, serial_or_empty)``.
+
+    Accepts ``VID:PID`` or legacy ``VID:PID:SERIAL``.
+    """
+    if not device_id:
+        return None, ""
+    parts = device_id.strip().split(":")
+    if len(parts) < 2:
+        return None, ""
+    vid_pid = f"{parts[0].upper()}:{parts[1].upper()}"
+    serial = parts[2].strip() if len(parts) >= 3 else ""
+    return vid_pid, serial
+
+
+def list_identifiable_usb_serial_ports(port_iter=None):
+    """
+    List USB serial ports that have a VID/PID.
+
+    Returns a list of dicts: device_path, device_id, label, vid, pid, serial.
+
+    On macOS pyserial returns ``/dev/cu.*`` callout devices (correct for open).
+    On Linux ``/dev/ttyUSB*`` / ``/dev/ttyACM*``. On Windows ``COMn``.
+    Duplicate labels (common when serial is missing) get a short path suffix.
+    """
+    if port_iter is None:
+        try:
+            from serial.tools.list_ports import comports as list_ports_comports
+        except ImportError:
+            return []
+        # include_links=False avoids duplicate /dev/serial/by-id entries on Linux.
+        port_iter = list_ports_comports()
+
+    devices = []
+    for port in port_iter:
+        device_id = usb_device_id_from_port(port)
+        if not device_id:
+            continue
+        devices.append(
+            {
+                "device_path": port.device,
+                "device_id": device_id,
+                "label": usb_device_label_from_port(port),
+                "vid": int(port.vid),
+                "pid": int(port.pid),
+                "serial": (getattr(port, "serial_number", None) or "").strip(),
+            }
+        )
+
+    # Disambiguate identical labels (empty/cloned serials) with the OS short name.
+    label_counts = {}
+    for entry in devices:
+        label_counts[entry["label"]] = label_counts.get(entry["label"], 0) + 1
+    for entry in devices:
+        if label_counts[entry["label"]] > 1:
+            short = usb_port_short_name(entry["device_path"])
+            if short and short != entry["label"]:
+                entry["label"] = f"{entry['label']} ({short})"
+
+    devices.sort(key=lambda d: (d["label"].lower(), d["device_path"].lower()))
+    return devices
+
+
+def find_usb_device_path_by_id(device_id=None, serial=None, port_iter=None):
+    """
+    Resolve a stored USB identity to the current OS path.
+
+    Prefers VID/PID + serial when available. If only a serial is known, matches
+    that serial across USB ports. Falls back to the first VID/PID match.
+    """
+    vid_pid, legacy_serial = parse_usb_device_id(device_id) if device_id else (None, "")
+    prefer_serial = (serial or legacy_serial or "").strip()
+    devices = list_identifiable_usb_serial_ports(port_iter=port_iter)
+
+    if prefer_serial:
+        serial_matches = [entry for entry in devices if same_usb_serial(entry["serial"], prefer_serial)]
+        if vid_pid:
+            for entry in serial_matches:
+                if entry["device_id"].upper() == vid_pid.upper():
+                    return entry["device_path"]
+        elif serial_matches:
+            return serial_matches[0]["device_path"]
+
+    if not vid_pid:
+        return None
+    matches = [entry for entry in devices if entry["device_id"].upper() == vid_pid.upper()]
+    if not matches:
+        return None
+    return matches[0]["device_path"]
 
 
 suffixes = ["B", "KB", "MB", "GB", "TB", "PB"]
@@ -686,34 +827,3 @@ def digitize_v(version):
         cleaned_parts.append(0)
 
     return cleaned_parts[0] * 1000 * 1000 + cleaned_parts[1] * 1000 + cleaned_parts[2]
-
-
-def _version_numeric_parts(version, count=3):
-    cleaned_parts = []
-    for part in version.split(".")[:count]:
-        numeric_part = ""
-        for char in part:
-            if char.isdigit():
-                numeric_part += char
-            else:
-                break
-        cleaned_parts.append(int(numeric_part if numeric_part else "0"))
-    while len(cleaned_parts) < count:
-        cleaned_parts.append(0)
-    return cleaned_parts
-
-
-def digitize_major_minor(version):
-    major, minor = _version_numeric_parts(version, 2)
-    return major * 1000 + minor
-
-
-def is_unversioned_controller(ctl_version):
-    major, minor, patch = _version_numeric_parts(ctl_version, 3)
-    return major == 0 and minor == 0 and patch == 0
-
-
-def is_dev_version_pair(fw_version, ctl_version):
-    fw_major, _ = _version_numeric_parts(fw_version, 2)
-    ctl_major, _ = _version_numeric_parts(ctl_version, 2)
-    return fw_major > 2025 and ctl_major > 2025
