@@ -182,8 +182,8 @@ from kivy.lang import Builder
 
 from . import Utils, custom_widgets
 from .__version__ import __version__
-from .addons.camera.CameraStream import CameraStream, find_camera
 from .addons.camera.CameraView import ADJUST_DEFAULT
+from .addons.camera.Z1Camera import Z1Camera, has_camera
 from .addons.probing.ProbingControls import ProbeButton
 from .addons.tooltips.Tooltips import Tooltip, ToolTipButton, ToolTipDropDown
 from .CNC import (
@@ -3105,8 +3105,8 @@ class Makera(RelativeLayout):
 
         # init camera live view
         self.camera_checked = False
-        self.camera_endpoint = None
-        self.camera_stream = CameraStream(
+        self.camera_probe = 0
+        self.camera_stream = Z1Camera(
             on_frame=self._show_camera_frame,
             on_streaming=self._set_camera_streaming,
             on_error=partial(self.show_message_popup, btn_disabled=False),
@@ -5788,7 +5788,7 @@ class Makera(RelativeLayout):
                     app.supports_auto_ext_out = False
                     app.supports_camera = False
                     self.camera_checked = False
-                    self.camera_endpoint = None
+                    self.camera_probe += 1  # discard the result of a probe still in flight
                     self.camera_stream.stop()
                     self.controller.is_community_firmware = False
                     self.machine_metadata_query_time = 0
@@ -5840,7 +5840,11 @@ class Makera(RelativeLayout):
                     # Look for a camera, only one time per connection
                     if not self.camera_checked and self.controller.connection_type == CONN_WIFI:
                         self.camera_checked = True
-                        threading.Thread(target=self._detect_camera, daemon=True).start()
+                        self.camera_probe += 1
+                        host = self.controller.connection_address.split(":")[0]
+                        threading.Thread(
+                            target=self._detect_camera, args=(host, self.camera_probe), daemon=True
+                        ).start()
 
                 self.status_drop_down.btn_unlock.disabled = app.state != "Alarm" and app.state != "Sleep"
                 if (CNC.vars["halt_reason"] in HALT_REASON and CNC.vars["halt_reason"] > 20) or app.state == "Sleep":
@@ -7196,21 +7200,20 @@ class Makera(RelativeLayout):
     def toggle_camera_stream(self):
         if self.camera_stream.is_streaming():
             self.camera_stream.stop()
-        elif self.camera_endpoint is not None:
-            host = self.controller.connection_address.split(":")[0]
-            self.camera_stream.start(host, self.camera_endpoint)
+        elif App.get_running_app().supports_camera:
+            self.camera_stream.start(self.controller.connection_address.split(":")[0])
 
     # -----------------------------------------------------------------------
-    def _detect_camera(self):
-        endpoint = find_camera(self.controller.connection_address.split(":")[0])
-        Clock.schedule_once(partial(self._on_camera_detected, endpoint), 0)
+    def _detect_camera(self, host, probe):
+        found = has_camera(host)
+        Clock.schedule_once(partial(self._on_camera_detected, probe, found), 0)
 
     # -----------------------------------------------------------------------
-    def _on_camera_detected(self, endpoint, *args):
-        if not self.camera_checked:
+    def _on_camera_detected(self, probe, found, *args):
+        """Ignore a probe that a disconnect or a newer probe has superseded."""
+        if probe != self.camera_probe:
             return
-        self.camera_endpoint = endpoint
-        App.get_running_app().supports_camera = endpoint is not None
+        App.get_running_app().supports_camera = found
 
     # -----------------------------------------------------------------------
     def _show_camera_frame(self, jpeg):
