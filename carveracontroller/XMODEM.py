@@ -92,11 +92,28 @@ __copyright__ = ["Copyright (c) 2010 Wijnand Modderman", "Copyright (c) 1981 Chu
 __license__ = "MIT"
 __version__ = "0.4.5"
 
+import hashlib
 import logging
+import math
 import platform
+import struct
 import sys
 import time
-from functools import partial
+from enum import Enum, auto
+
+from .protocols.framing import (
+    FRAME_END,
+    FRAME_HEADER,
+    MAX_FRAME_DATA_LENGTH,
+    PTYPE_FILE_CAN,
+    PTYPE_FILE_DATA,
+    PTYPE_FILE_END,
+    PTYPE_FILE_MD5,
+    PTYPE_FILE_RETRY,
+    PTYPE_FILE_VIEW,
+    build_frame,
+    validate_packet_data,
+)
 
 # Protocol bytes
 SOH = b"\x01"
@@ -107,6 +124,19 @@ DLE = b"\x10"
 NAK = b"\x15"
 CAN = b"\x16"
 CRC = b"C"
+
+
+class RevPacketState(Enum):
+    WAIT_HEADER = auto()
+    READ_LENGTH = auto()
+    READ_DATA = auto()
+    CHECK_FOOTER = auto()
+
+
+class FileTransState(Enum):
+    WAIT_MD5 = auto()
+    WAIT_FILE_VIEW = auto()
+    READ_FILE_DATA = auto()
 
 
 class XMODEM:
@@ -413,23 +443,369 @@ class XMODEM:
         self.pad = pad
         self.log = logging.getLogger("xmodem.XMODEM")
         self.canceled = False
+        self.currentState = RevPacketState.WAIT_HEADER
+        self.packetData = bytearray()
+        self.headerBuffer = bytearray(2)
+        self.footerBuffer = bytearray(2)
+        self.bytesNeeded = 2
+        self.expectedLength = 0
+        self.FileRcvState = FileTransState.WAIT_MD5
+        # Hex digest advertised by the machine; set when a .lz payload defers verification
+        # until after decompress. Cleared at the start of each download and after checking.
+        self.deferred_download_md5 = None
+        self.download_md5_failed = False
 
     def clear_mode_set(self):
         self.mode_set = False
 
-    def abort(self, count=2, timeout=60):
-        """
-        Send an abort sequence using CAN bytes.
+    def _framed_packet_size(self):
+        try:
+            return {
+                "xmodem": 128,
+                "USBMode": 128,
+                "xmodem8k": 8192,
+                "wifiMode": 8192,
+            }[self.mode]
+        except KeyError as exc:
+            raise ValueError(f"Invalid mode specified: {self.mode!r}") from exc
 
-        :param count: how many abort characters to send
-        :type count: int
-        :param timeout: timeout in seconds
-        :type timeout: int
-        """
+    def abort(self, count=2, timeout=60):
+        """Abort a legacy XMODEM transfer with CAN bytes."""
         for _ in range(count):
             self.putc(CAN, timeout)
 
+    def abort_framed(self):
+        """Abort a Makera framed file transfer."""
+        self._send_file_trans_command(PTYPE_FILE_CAN, b"")
+
+    def _send_file_trans_command(self, cmd: int, data: bytes) -> None:
+        self.putc(build_frame(cmd, data))
+
+    @staticmethod
+    def _normalize_advertised_md5(expected_md5):
+        """Return lowercase hex digest, or None when the machine advertised nothing usable."""
+        if expected_md5 is None:
+            return None
+        if isinstance(expected_md5, (bytes, bytearray)):
+            advertised = bytes(expected_md5).decode("ascii", errors="replace")
+        else:
+            advertised = str(expected_md5)
+        advertised = advertised.strip().lower()
+        return advertised or None
+
+    def _finalize_download_integrity(self, expected_md5, received_md5, income_size, first_bytes=b""):
+        """
+        Apply download MD5 policy.
+
+        - Empty/missing advertised digest: skip check
+        - QuickLZ payload (``\\x00\\x00`` prefix): defer check until after decompress
+        - Otherwise: require the received bytes to match the advertised digest
+
+        Returns True when the transfer may be treated as successful.
+        """
+        self.deferred_download_md5 = None
+        self.download_md5_failed = False
+        actual = received_md5.hexdigest()
+        advertised = self._normalize_advertised_md5(expected_md5)
+
+        if advertised is None:
+            self.log.info(
+                "Download MD5 check skipped (none advertised by machine), actual=%s (%d bytes)",
+                actual,
+                income_size,
+            )
+            return True
+
+        if first_bytes[:2] == b"\x00\x00":
+            self.deferred_download_md5 = advertised
+            self.log.info(
+                "Download MD5 deferred until decompress (advertised=%s, compressed actual=%s, %d bytes)",
+                advertised,
+                actual,
+                income_size,
+            )
+            return True
+
+        if actual != advertised:
+            self.download_md5_failed = True
+            self.log.error(
+                "Download error: MD5 mismatch (expected=%s, actual=%s)",
+                advertised,
+                actual,
+            )
+            return False
+
+        self.log.info(
+            "Download MD5 matched advertised digest: %s (%d bytes)",
+            actual,
+            income_size,
+        )
+        return True
+
+    def recv_packet(self, timeout=0.5):
+        """Read one Makera frame into ``self.packetData``. Returns 1 on success."""
+        self.currentState = RevPacketState.WAIT_HEADER
+        while True:
+            byte = self.getc(1, timeout)
+            if not byte:
+                return None
+            byte = ord(byte)
+            if self.currentState == RevPacketState.WAIT_HEADER:
+                self.headerBuffer[0] = self.headerBuffer[1]
+                self.headerBuffer[1] = byte
+                checksum = (self.headerBuffer[0] << 8) | self.headerBuffer[1]
+                if checksum == FRAME_HEADER:
+                    self.currentState = RevPacketState.READ_LENGTH
+                    self.bytesNeeded = 2
+                    self.packetData.clear()
+
+            elif self.currentState == RevPacketState.READ_LENGTH:
+                self.packetData.append(byte)
+                self.bytesNeeded -= 1
+                if self.bytesNeeded == 0:
+                    self.expectedLength = (self.packetData[0] << 8) | self.packetData[1]
+                    if 0 <= self.expectedLength <= MAX_FRAME_DATA_LENGTH:
+                        self.currentState = RevPacketState.READ_DATA
+                        self.bytesNeeded = self.expectedLength
+                    else:
+                        self.currentState = RevPacketState.WAIT_HEADER
+
+            elif self.currentState == RevPacketState.READ_DATA:
+                self.packetData.append(byte)
+                self.bytesNeeded -= 1
+                while self.bytesNeeded > 0:
+                    bytess = self.getc(self.bytesNeeded, timeout)
+                    if bytess:
+                        self.packetData.extend(bytess)
+                        self.bytesNeeded = 0
+                    else:
+                        return None
+                if self.bytesNeeded == 0:
+                    self.currentState = RevPacketState.CHECK_FOOTER
+                    self.bytesNeeded = 2
+
+            elif self.currentState == RevPacketState.CHECK_FOOTER:
+                self.footerBuffer[0] = self.footerBuffer[1]
+                self.footerBuffer[1] = byte
+                self.bytesNeeded -= 1
+                if self.bytesNeeded == 0:
+                    checksum = (self.footerBuffer[0] << 8) | self.footerBuffer[1]
+                    self.currentState = RevPacketState.WAIT_HEADER
+                    if checksum == FRAME_END and validate_packet_data(self.packetData):
+                        return 1
+                    return None
+
+    def recv(self, stream, md5="", crc_mode=1, retry=5, timeout=5, delay=0.1, quiet=0, callback=None):
+        """Receive a file using the Makera framed transfer protocol."""
+        success_count = 0
+        error_count = 0
+        totalerr_count = 0
+        total_packet = 0
+        sequence = 0
+        income_size = 0
+        expected_md5 = None
+        received_md5 = hashlib.md5()
+        first_bytes = bytearray()
+        self.deferred_download_md5 = None
+        self.download_md5_failed = False
+        while True:
+            if self.canceled:
+                self._send_file_trans_command(PTYPE_FILE_CAN, b"")
+                self.log.info("Transmission canceled by user.")
+                self.canceled = False
+                return -1
+            result = self.recv_packet(timeout)
+            if result:
+                cmd_type = self.packetData[2]
+                if cmd_type < PTYPE_FILE_MD5:
+                    continue
+                if cmd_type == PTYPE_FILE_CAN:
+                    self.log.info("Transmission canceled by Machine.")
+                    self.FileRcvState = FileTransState.WAIT_MD5
+                    return None
+
+                if self.FileRcvState == FileTransState.READ_FILE_DATA:
+                    if self.packetData:
+                        seq = (
+                            (self.packetData[3] << 24)
+                            | (self.packetData[4] << 16)
+                            | (self.packetData[5] << 8)
+                            | self.packetData[6]
+                        )
+                        if cmd_type == PTYPE_FILE_DATA and sequence == seq:
+                            data_len = ((self.packetData[0] << 8) | self.packetData[1]) - 7
+                            income_size += data_len
+                            payload = self.packetData[7 : (data_len + 7)]
+                            stream.write(payload)
+                            received_md5.update(payload)
+                            if len(first_bytes) < 2:
+                                first_bytes.extend(payload[: 2 - len(first_bytes)])
+                            if sequence < total_packet:
+                                sequence += 1
+                                data = sequence.to_bytes(4, byteorder="big", signed=False)
+                                self._send_file_trans_command(PTYPE_FILE_DATA, data)
+                            success_count = success_count + 1
+                            if callable(callback):
+                                callback(seq, total_packet)
+                            error_count = 0
+                            totalerr_count = 0
+                            if seq == total_packet:
+                                self._send_file_trans_command(PTYPE_FILE_END, b"")
+                                self.FileRcvState = FileTransState.WAIT_MD5
+                                if not self._finalize_download_integrity(
+                                    expected_md5, received_md5, income_size, first_bytes
+                                ):
+                                    return None
+                                self.log.info("Transmission complete, %d bytes", income_size)
+                                return income_size
+                        else:
+                            error_count += 1
+                            if error_count >= retry:
+                                data = sequence.to_bytes(4, byteorder="big", signed=False)
+                                self._send_file_trans_command(PTYPE_FILE_DATA, data)
+                                totalerr_count += 1
+
+                if self.FileRcvState == FileTransState.WAIT_FILE_VIEW:
+                    if self.packetData:
+                        if cmd_type == PTYPE_FILE_VIEW:
+                            total_packet = (
+                                (self.packetData[3] << 24)
+                                | (self.packetData[4] << 16)
+                                | (self.packetData[5] << 8)
+                                | self.packetData[6]
+                            )
+                            sequence = 1
+                            data = sequence.to_bytes(4, byteorder="big", signed=False)
+                            self._send_file_trans_command(PTYPE_FILE_DATA, data)
+                            self.FileRcvState = FileTransState.READ_FILE_DATA
+                            error_count = 0
+                            totalerr_count = 0
+                        else:
+                            error_count += 1
+                            if error_count >= retry:
+                                self._send_file_trans_command(PTYPE_FILE_VIEW, b"")
+                                totalerr_count += 1
+
+                if self.FileRcvState == FileTransState.WAIT_MD5:
+                    if self.packetData:
+                        if cmd_type == PTYPE_FILE_MD5:
+                            md5new = self.packetData[3 : len(self.packetData) - 2]
+                            expected_md5 = bytes(md5new).lower()
+                            if md5 and expected_md5 and md5.encode().lower() == expected_md5:
+                                self._send_file_trans_command(PTYPE_FILE_CAN, b"")
+                                return 0
+                            self._send_file_trans_command(PTYPE_FILE_VIEW, b"")
+                            self.FileRcvState = FileTransState.WAIT_FILE_VIEW
+                            error_count = 0
+                            totalerr_count = 0
+                        else:
+                            error_count += 1
+                            if error_count >= retry:
+                                self._send_file_trans_command(PTYPE_FILE_MD5, b"")
+                                totalerr_count += 1
+
+                if self.canceled:
+                    self._send_file_trans_command(PTYPE_FILE_CAN, b"")
+                    self.log.info("Transmission canceled by user.")
+                    self.canceled = False
+                    self.FileRcvState = FileTransState.WAIT_MD5
+                    return None
+
+                self.packetData.clear()
+            else:
+                error_count += 1
+                if error_count >= 1:
+                    totalerr_count += 1
+                    self._send_file_trans_command(PTYPE_FILE_RETRY, b"")
+                    self.packetData.clear()
+
+            if totalerr_count >= retry:
+                self._send_file_trans_command(PTYPE_FILE_CAN, b"")
+                self.log.info("retry_count reached %d, aborting.", retry)
+                self.abort_framed()
+                self.FileRcvState = FileTransState.WAIT_MD5
+                return None
+
     def send(self, stream, md5, retry=16, timeout=5, quiet=False, callback=None):
+        """Send a file using the Makera framed transfer protocol."""
+        packet_size = self._framed_packet_size()
+        data = md5.encode()
+        self._send_file_trans_command(PTYPE_FILE_MD5, data)
+        lastcmd = PTYPE_FILE_MD5
+        lastseq = 0
+        packetno = 0
+        td = time.time()
+        while True:
+            if self.canceled:
+                self._send_file_trans_command(PTYPE_FILE_CAN, b"")
+                self.log.info("Transmission canceled by user.")
+                self.canceled = False
+                return None
+            result = self.recv_packet(timeout * 8)
+            if result:
+                td = time.time()
+                cmd_type = self.packetData[2]
+                if cmd_type < PTYPE_FILE_MD5:
+                    continue
+                if cmd_type == PTYPE_FILE_CAN:
+                    self.log.info("Transmission canceled by Machine.")
+                    self.FileRcvState = FileTransState.WAIT_MD5
+                    return None
+                if cmd_type == PTYPE_FILE_RETRY:
+                    self._send_file_trans_command(lastcmd, data)
+
+                if cmd_type == PTYPE_FILE_MD5:
+                    data = md5.encode()
+                    self._send_file_trans_command(PTYPE_FILE_MD5, data)
+
+                if cmd_type == PTYPE_FILE_VIEW:
+                    stream.seek(0, 2)
+                    file_size = stream.tell()
+                    stream.seek(0)
+                    packetno = math.ceil(file_size / packet_size)
+                    data = struct.pack(">I", packetno) + struct.pack(">H", packet_size)
+                    self._send_file_trans_command(PTYPE_FILE_VIEW, data)
+                    lastcmd = PTYPE_FILE_VIEW
+                    lastseq = 0
+
+                if cmd_type == PTYPE_FILE_DATA:
+                    seq = (
+                        (self.packetData[3] << 24)
+                        | (self.packetData[4] << 16)
+                        | (self.packetData[5] << 8)
+                        | self.packetData[6]
+                    )
+                    if seq == lastseq:
+                        self._send_file_trans_command(PTYPE_FILE_DATA, data)
+                    elif seq == lastseq + 1:
+                        seq_bytes = struct.pack(">I", seq)
+                        file_data = stream.read(packet_size)
+                        data = seq_bytes + file_data
+                        self._send_file_trans_command(PTYPE_FILE_DATA, data)
+                    else:
+                        seq_bytes = struct.pack(">I", seq)
+                        stream.seek((seq - 1) * packet_size, 0)
+                        file_data = stream.read(packet_size)
+                        data = seq_bytes + file_data
+                        self._send_file_trans_command(PTYPE_FILE_DATA, data)
+                    lastcmd = PTYPE_FILE_DATA
+                    lastseq = seq
+                    if callable(callback):
+                        callback(packet_size, seq, 0, 0)
+
+                if cmd_type == PTYPE_FILE_END:
+                    self.log.info("Transmission successful (FILE end flag received).")
+                    return True
+
+            else:
+                t = time.time()
+                if t - td > 9:
+                    self._send_file_trans_command(PTYPE_FILE_CAN, b"")
+                    self.log.info("Info: Controller receive data timeout!")
+                    self.FileRcvState = FileTransState.WAIT_MD5
+                    return None
+
+    def send_legacy(self, stream, md5, retry=16, timeout=5, quiet=False, callback=None):
         """
         Send a stream via the XMODEM protocol.
 
@@ -613,7 +989,7 @@ class XMODEM:
             _bytes.append(crc)
         return bytearray(_bytes)
 
-    def recv(self, stream, md5="", crc_mode=1, retry=16, timeout=1, delay=0.1, quiet=0, callback=None):
+    def recv_legacy(self, stream, md5="", crc_mode=1, retry=16, timeout=1, delay=0.1, quiet=0, callback=None):
         """
         Receive a stream via the XMODEM protocol.
 
@@ -717,6 +1093,11 @@ class XMODEM:
         cancel = 0
         retrans = retry + 1
         md5_received = False
+        expected_md5 = None
+        received_md5 = hashlib.md5()
+        first_bytes = bytearray()
+        self.deferred_download_md5 = None
+        self.download_md5_failed = False
 
         while True:
             if self.canceled:
@@ -732,9 +1113,10 @@ class XMODEM:
                 if char in (SOH, STX):
                     break
                 if char == EOT:
-                    # We received an EOT, so send an ACK and return the
-                    # received data length.
+                    # ACK for wire compatibility, then apply local MD5 policy.
                     self.putc(ACK)
+                    if not self._finalize_download_integrity(expected_md5, received_md5, income_size, first_bytes):
+                        return None
                     self.log.info("Transmission complete, %d bytes", income_size)
                     return income_size
                 if char == CAN:
@@ -813,7 +1195,9 @@ class XMODEM:
                     retrans = retry + 1
                     if sequence == 0 and not md5_received:
                         md5_received = True
-                        if md5.encode() == data[1 + is_stx : 33 + is_stx]:
+                        data_len = data[0] << 8 | data[1] if is_stx else data[0]
+                        expected_md5 = data[1 + is_stx : (data_len + 1 + is_stx)].lower()
+                        if md5 and expected_md5 and md5.encode().lower() == expected_md5:
                             self.putc(CAN)
                             self.putc(CAN)
                             self.putc(CAN)
@@ -823,7 +1207,11 @@ class XMODEM:
                     else:
                         income_size += len(data) - 1 - is_stx
                         data_len = data[0] << 8 | data[1] if is_stx else data[0]
-                        stream.write(data[1 + is_stx : (data_len + 1 + is_stx)])
+                        payload = data[1 + is_stx : (data_len + 1 + is_stx)]
+                        stream.write(payload)
+                        received_md5.update(payload)
+                        if len(first_bytes) < 2:
+                            first_bytes.extend(payload[: 2 - len(first_bytes)])
                         success_count = success_count + 1
                         if callable(callback):
                             callback(packet_size, success_count, error_count)
@@ -931,7 +1319,7 @@ def _send(mode="xmodem", filename=None, timeout=30):
         return size
 
     xmodem = XMODEM(_getc, _putc, mode)
-    return xmodem.send(si)
+    return xmodem.send_legacy(si)
 
 
 def run():
@@ -1025,7 +1413,7 @@ def runx():
         getc, putc = _func(*_pipe("sz", "--xmodem", args[2]))
         stream = open(args[1], "wb")
         xmodem = XMODEM(getc, putc, mode=options.mode)
-        status = xmodem.recv(stream, retry=8)
+        status = xmodem.recv_legacy(stream, retry=8)
         assert status, ("Transfer failed, status is", False)
         stream.close()
 
@@ -1033,7 +1421,7 @@ def runx():
         getc, putc = _func(*_pipe("rz", "--xmodem", args[2]))
         stream = open(args[1], "rb")
         xmodem = XMODEM(getc, putc, mode=options.mode)
-        sent = xmodem.send(stream, retry=8)
+        sent = xmodem.send_legacy(stream, retry=8)
         assert sent is not None, ("Transfer failed, sent is", sent)
         stream.close()
 

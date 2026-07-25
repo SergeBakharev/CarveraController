@@ -12,4 +12,4 @@ class CalibrationOperationType(Enum):
     FourthY = CalibrationOperationFourthY("Calibration - FourthY", False, False, False, "")
     FourthZ = CalibrationOperationFourthZ("Calibration - FourthZ", True, False, False, "")
     Anchor1 = CalibrationOperationAnchor1("Calibration - Anchor1", False, False, False, "")
-    Anchor2 = CalibrationOperationAnchor2("Calibration - Anchor1", False, False, False, "")
+    Anchor2 = CalibrationOperationAnchor2("Calibration - Anchor2", False, False, False, "")
