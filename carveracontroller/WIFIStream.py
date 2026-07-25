@@ -82,12 +82,8 @@ class WIFIStream:
     # ----------------------------------------------------------------------
     def __init__(self, log_sent_receive=False):
         self.modem = XMODEM(self.getc, self.putc, "xmodem8k")
-
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(logging.WARNING)
-        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        handler.setFormatter(formatter)
-        self.modem.log.addHandler(handler)
+        # Rely on the app/Kivy root logger; do not attach extra StreamHandlers to
+        # the shared "xmodem.XMODEM" logger (USB+WiFi would duplicate every line).
         self.log_sent_receive = log_sent_receive
         # Set by Controller when the communication protocol is selected.
         self.uses_framed_transfer = False

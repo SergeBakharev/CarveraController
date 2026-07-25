@@ -1,5 +1,4 @@
 import logging
-import sys
 import time
 
 import serial
@@ -20,11 +19,8 @@ class USBStream:
     # ----------------------------------------------------------------------
     def __init__(self, log_sent_receive=False):
         self.modem = XMODEM(self.getc, self.putc, "xmodem")
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(logging.WARNING)
-        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        handler.setFormatter(formatter)
-        self.modem.log.addHandler(handler)
+        # Rely on the app/Kivy root logger; do not attach extra StreamHandlers to
+        # the shared "xmodem.XMODEM" logger (USB+WiFi would duplicate every line).
         self.log_sent_receive = log_sent_receive
         self._send_log_buffer = b""
         self._recv_log_buffer = b""
