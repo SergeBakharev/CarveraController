@@ -3751,9 +3751,37 @@ class Makera(RelativeLayout):
                 btn.device_path = device["device_path"]
                 btn.bind(on_release=lambda b: self.comports_drop_down.select(b.device_path))
                 self.comports_drop_down.add_widget(btn)
+        if Config.getboolean("carvera", "allow_manual_usb_device", fallback=False):
+            btn = Button(
+                text=tr._("Manually Enter"),
+                size_hint_y=None,
+                height="35dp",
+                color=(225 / 255, 225 / 255, 225 / 255, 1),
+            )
+            btn.bind(on_release=lambda btn: self.manually_input_usb_device())
+            self.comports_drop_down.add_widget(btn)
         self.comports_drop_down.unbind(on_select=self.usb_event)
         self.comports_drop_down.bind(on_select=self.usb_event)
         self.comports_drop_down.open(button)
+
+    def manually_input_usb_device(self):
+        self.input_popup.lb_title.text = tr._("Input USB device path:")
+        saved = Config.get("carvera", "manual_usb_device", fallback="") or ""
+        self.input_popup.txt_content.text = saved
+        self.input_popup.txt_content.password = False
+        self.input_popup.confirm = self.manually_open_usb
+        self.input_popup.open(self)
+        self.comports_drop_down.dismiss()
+        self.status_drop_down.dismiss()
+
+    def manually_open_usb(self):
+        device = self.input_popup.txt_content.text.strip()
+        self.input_popup.dismiss()
+        if not device:
+            return False
+        Config.set("carvera", "manual_usb_device", device)
+        Config.write()
+        self.openUSB(device)
 
     def open_spindle_or_laser_drop_down(self, button):
         if CNC.vars.get("lasermode", False):
@@ -7834,6 +7862,10 @@ def set_config_defaults(default_lang):
         Config.set("carvera", "custom_bkg_img_dir", "")
     if not Config.has_option("carvera", "invert_y_axis_jogging"):
         Config.set("carvera", "invert_y_axis_jogging", "0")
+    if not Config.has_option("carvera", "allow_manual_usb_device"):
+        Config.set("carvera", "allow_manual_usb_device", "0")
+    if not Config.has_option("carvera", "manual_usb_device"):
+        Config.set("carvera", "manual_usb_device", "")
     if not Config.has_option("carvera", "use_higher_baud"):
         Config.set("carvera", "use_higher_baud", "0")
     if not Config.has_option("carvera", "usb_baud_rate"):
