@@ -26,6 +26,7 @@
 - Enhancement: added green question mark help buttons to the UI that link to the relevant documentation page
 - Enhancement: Block sending the `reset` command over USB and show a popup directing the user to use the power switch instead
 - Enhancement: Initial Z1 support
+- Enhancement: Resume-at-line warns when the recovery sequence is missing a tool change, feed rate, or spindle speed
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
 - Fixed: Confirmation dialogs no longer retain expanded layouts from laser and resume warnings
 - Fixed: Repeated firmware checks now happen just once
@@ -55,6 +56,7 @@
 - Fixed: Resume-at-line no longer treats the non-modal G53 command as the active work coordinate system
 - Fixed: Reject downloads whose content does not match the machine-provided MD5. Skip MD5 check when none is available, and defer .lz checks until after decompress
 - Fixed: Ensure complete XMODEM packets are written over Wi-Fi
+- Fixed: Confirm popup content now scrolls and sizes to its text
 - Change: Misleading "Download canceled by Controller!" MDI message is suppressed, in logs a message is recorded that cached version of the config.txt was used
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file

@@ -442,6 +442,9 @@ class BoxStencil(BoxLayout, StencilView):
 
 class ConfirmPopup(ModalView):
     showing = False
+    content_scroll = ObjectProperty(None)
+    lb_title = ObjectProperty(None)
+    lb_content = ObjectProperty(None)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -449,15 +452,29 @@ class ConfirmPopup(ModalView):
         self._default_size_hint = tuple(self.size_hint)
         self._default_pos_hint = dict(self.pos_hint)
         self._default_title_size_hint_y = self.lb_title.size_hint_y
+        self._default_content_halign = self.lb_content.halign
 
-    def on_open(self):
-        self.showing = True
+    def dismiss(self, *largs, **kwargs):
+        # Instant dismiss so layout defaults restore before the next open.
+        kwargs.setdefault("animation", False)
+        return super().dismiss(*largs, **kwargs)
 
-    def on_dismiss(self):
-        self.showing = False
+    def reset_layout_defaults(self):
         self.size_hint = self._default_size_hint
         self.pos_hint = dict(self._default_pos_hint)
         self.lb_title.size_hint_y = self._default_title_size_hint_y
+        self.lb_content.halign = self._default_content_halign
+        if self.content_scroll is not None:
+            self.content_scroll.scroll_y = 1
+
+    def on_open(self):
+        self.showing = True
+        if self.content_scroll is not None:
+            self.content_scroll.scroll_y = 1
+
+    def on_dismiss(self):
+        self.showing = False
+        self.reset_layout_defaults()
 
 
 class UnlockPopup(ModalView):
@@ -7120,6 +7137,22 @@ class Makera(RelativeLayout):
             False,
         )
 
+    def _resume_playback_warning_text(self, warning_keys):
+        """Build translated warning text for missing resume recovery state."""
+        messages = {
+            "tool_change": tr._("- No tool change (M6)"),
+            "feed": tr._("- No feed rate (F)"),
+            "spindle_speed": tr._("- No spindle speed (M3 S...)"),
+        }
+        lines = [messages[key] for key in warning_keys if key in messages]
+        if not lines:
+            return ""
+        return (
+            tr._("WARNING: The resume recovery sequence was unable to find important state prior to the resume line:\n")
+            + "\n".join(lines)
+            + "\n"
+        )
+
     def open_resume_playback_confirm_popup(self, file_name, start_line):
         if self.confirm_popup.showing:
             return
@@ -7136,13 +7169,17 @@ class Makera(RelativeLayout):
             self.show_message_popup(tr._(f"Resume-at-line cannot run:\n\n{e}"), False)
             return
         commands_preview = "\n".join(commands)
+        warning_text = self._resume_playback_warning_text(self.controller.resume_playback_warnings(commands))
 
         self.confirm_popup.size_hint = (0.8, 0.8)
         self.confirm_popup.pos_hint = {"center_x": 0.5, "center_y": 0.5}
-        self.confirm_popup.lb_title.text = tr._("Beta Feature: Resume Playback")
+        self.confirm_popup.lb_title.text = tr._("Resume Playback")
+        self.confirm_popup.lb_title.size_hint_y = None
+        self.confirm_popup.lb_content.halign = "left"
         self.confirm_popup.lb_content.text = (
-            tr._(
-                'The "resume playback at line" functionality is beta. Please be prepared to e-stop your machine if it doesn\'t move correctly.\n\nCommands that will be executed:\n'
+            warning_text
+            + tr._(
+                "The Controller will run the below commands to restart this file. Please be prepared to e-stop your machine if it doesn't move as expected.\n\n"
             )
             + commands_preview
         )
