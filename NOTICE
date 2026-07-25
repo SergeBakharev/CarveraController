@@ -64,5 +64,11 @@ This product includes the following third-party icons:
    - URL: https://pictogrammers.com/library/mdi/icon/axis-arrow/
    - Used in: carveracontroller/data/axis-arrow.png
 
+2. camera.png
+   - Author: Austin Andrews
+   - License: Apache 2.0 License
+   - URL: https://pictogrammers.com/library/mdi/icon/camera/
+   - Used in: carveracontroller/data/camera.png
+
 ===============================================================================
 Please see the respective license files for detailed information.
