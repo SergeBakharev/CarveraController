@@ -447,6 +447,9 @@ class BoxStencil(BoxLayout, StencilView):
 
 class ConfirmPopup(ModalView):
     showing = False
+    content_scroll = ObjectProperty(None)
+    lb_title = ObjectProperty(None)
+    lb_content = ObjectProperty(None)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -454,15 +457,29 @@ class ConfirmPopup(ModalView):
         self._default_size_hint = tuple(self.size_hint)
         self._default_pos_hint = dict(self.pos_hint)
         self._default_title_size_hint_y = self.lb_title.size_hint_y
+        self._default_content_halign = self.lb_content.halign
 
-    def on_open(self):
-        self.showing = True
+    def dismiss(self, *largs, **kwargs):
+        # Instant dismiss so layout defaults restore before the next open.
+        kwargs.setdefault("animation", False)
+        return super().dismiss(*largs, **kwargs)
 
-    def on_dismiss(self):
-        self.showing = False
+    def reset_layout_defaults(self):
         self.size_hint = self._default_size_hint
         self.pos_hint = dict(self._default_pos_hint)
         self.lb_title.size_hint_y = self._default_title_size_hint_y
+        self.lb_content.halign = self._default_content_halign
+        if self.content_scroll is not None:
+            self.content_scroll.scroll_y = 1
+
+    def on_open(self):
+        self.showing = True
+        if self.content_scroll is not None:
+            self.content_scroll.scroll_y = 1
+
+    def on_dismiss(self):
+        self.showing = False
+        self.reset_layout_defaults()
 
 
 class UnlockPopup(ModalView):
@@ -3748,9 +3765,37 @@ class Makera(RelativeLayout):
                 btn.device_path = device["device_path"]
                 btn.bind(on_release=lambda b: self.comports_drop_down.select(b.device_path))
                 self.comports_drop_down.add_widget(btn)
+        if Config.getboolean("carvera", "allow_manual_usb_device", fallback=False):
+            btn = Button(
+                text=tr._("Manually Enter"),
+                size_hint_y=None,
+                height="35dp",
+                color=(225 / 255, 225 / 255, 225 / 255, 1),
+            )
+            btn.bind(on_release=lambda btn: self.manually_input_usb_device())
+            self.comports_drop_down.add_widget(btn)
         self.comports_drop_down.unbind(on_select=self.usb_event)
         self.comports_drop_down.bind(on_select=self.usb_event)
         self.comports_drop_down.open(button)
+
+    def manually_input_usb_device(self):
+        self.input_popup.lb_title.text = tr._("Input USB device path:")
+        saved = Config.get("carvera", "manual_usb_device", fallback="") or ""
+        self.input_popup.txt_content.text = saved
+        self.input_popup.txt_content.password = False
+        self.input_popup.confirm = self.manually_open_usb
+        self.input_popup.open(self)
+        self.comports_drop_down.dismiss()
+        self.status_drop_down.dismiss()
+
+    def manually_open_usb(self):
+        device = self.input_popup.txt_content.text.strip()
+        self.input_popup.dismiss()
+        if not device:
+            return False
+        Config.set("carvera", "manual_usb_device", device)
+        Config.write()
+        self.openUSB(device)
 
     def open_spindle_or_laser_drop_down(self, button):
         if CNC.vars.get("lasermode", False):
@@ -4843,11 +4888,30 @@ class Makera(RelativeLayout):
             if os.path.exists(tmp_filename):
                 os.remove(tmp_filename)
             # show message popup
+            md5_failed = bool(
+                getattr(getattr(getattr(self.controller, "stream", None), "modem", None), "download_md5_failed", False)
+            )
             if was_config_download:
                 Clock.schedule_once(partial(self.finishLoadConfig, False), 0.1)
-                Clock.schedule_once(partial(self.show_message_popup, tr._("Download config file error!"), False), 0.2)
+                error_msg = (
+                    tr._(
+                        "Download config file error! The file MD5 hash doesn't match what is expected. "
+                        "Possibly corruption occured during transfer or on SD card."
+                    )
+                    if md5_failed
+                    else tr._("Download config file error!")
+                )
+                Clock.schedule_once(partial(self.show_message_popup, error_msg, False), 0.2)
             else:
-                Clock.schedule_once(partial(self.show_message_popup, tr._("Download file error!"), False), 0)
+                error_msg = (
+                    tr._(
+                        "Download file error! MD5 hash doesn't match what is expected. "
+                        "Possible corruption during transfer or on SD card."
+                    )
+                    if md5_failed
+                    else tr._("Download file error!")
+                )
+                Clock.schedule_once(partial(self.show_message_popup, error_msg, False), 0)
         elif download_result >= 0:
             if download_result > 0:
                 # download success
@@ -5400,6 +5464,44 @@ class Makera(RelativeLayout):
             if os.path.exists(output_filename):
                 os.remove(output_filename)
             return None
+
+    # -----------------------------------------------------------------------
+    def _verify_deferred_download_md5(self, filepath):
+        """Verify a machine-advertised MD5 after .lz decompress. Returns False on mismatch."""
+        modem = getattr(getattr(self.controller, "stream", None), "modem", None)
+        expected = getattr(modem, "deferred_download_md5", None) if modem is not None else None
+        if modem is not None:
+            modem.deferred_download_md5 = None
+        if not expected:
+            return True
+
+        actual = Utils.md5(filepath)
+        if actual.lower() == expected.lower():
+            logger.info("Download MD5 matched after decompress: %s", actual)
+            return True
+
+        logger.error(
+            "Download error: MD5 mismatch after decompress (expected=%s, actual=%s)",
+            expected,
+            actual,
+        )
+        try:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+        except OSError:
+            pass
+        Clock.schedule_once(
+            partial(
+                self.show_message_popup,
+                tr._(
+                    "Download file error! MD5 hash doesn't match what is expected. "
+                    "Possible corruption during transfer or on SD card."
+                ),
+                False,
+            ),
+            0,
+        )
+        return False
 
     # -----------------------------------------------------------------------
     def decompress_file(self, input_filename, output_filename):
@@ -7090,6 +7192,22 @@ class Makera(RelativeLayout):
             False,
         )
 
+    def _resume_playback_warning_text(self, warning_keys):
+        """Build translated warning text for missing resume recovery state."""
+        messages = {
+            "tool_change": tr._("- No tool change (M6)"),
+            "feed": tr._("- No feed rate (F)"),
+            "spindle_speed": tr._("- No spindle speed (M3 S...)"),
+        }
+        lines = [messages[key] for key in warning_keys if key in messages]
+        if not lines:
+            return ""
+        return (
+            tr._("WARNING: The resume recovery sequence was unable to find important state prior to the resume line:\n")
+            + "\n".join(lines)
+            + "\n"
+        )
+
     def open_resume_playback_confirm_popup(self, file_name, start_line):
         if self.confirm_popup.showing:
             return
@@ -7106,13 +7224,17 @@ class Makera(RelativeLayout):
             self.show_message_popup(tr._(f"Resume-at-line cannot run:\n\n{e}"), False)
             return
         commands_preview = "\n".join(commands)
+        warning_text = self._resume_playback_warning_text(self.controller.resume_playback_warnings(commands))
 
         self.confirm_popup.size_hint = (0.8, 0.8)
         self.confirm_popup.pos_hint = {"center_x": 0.5, "center_y": 0.5}
-        self.confirm_popup.lb_title.text = tr._("Beta Feature: Resume Playback")
+        self.confirm_popup.lb_title.text = tr._("Resume Playback")
+        self.confirm_popup.lb_title.size_hint_y = None
+        self.confirm_popup.lb_content.halign = "left"
         self.confirm_popup.lb_content.text = (
-            tr._(
-                'The "resume playback at line" functionality is beta. Please be prepared to e-stop your machine if it doesn\'t move correctly.\n\nCommands that will be executed:\n'
+            warning_text
+            + tr._(
+                "The Controller will run the below commands to restart this file. Please be prepared to e-stop your machine if it doesn't move as expected.\n\n"
             )
             + commands_preview
         )
@@ -7440,6 +7562,8 @@ class Makera(RelativeLayout):
                 lzpath = lzpath + ".lz"
                 shutil.copyfile(filepath, lzpath)
                 if not self.decompress_file(lzpath, filepath):
+                    return
+                if not self._verify_deferred_download_md5(filepath):
                     return
 
             self.cnc.init()
@@ -7797,6 +7921,10 @@ def set_config_defaults(default_lang):
         Config.set("carvera", "custom_bkg_img_dir", "")
     if not Config.has_option("carvera", "invert_y_axis_jogging"):
         Config.set("carvera", "invert_y_axis_jogging", "0")
+    if not Config.has_option("carvera", "allow_manual_usb_device"):
+        Config.set("carvera", "allow_manual_usb_device", "0")
+    if not Config.has_option("carvera", "manual_usb_device"):
+        Config.set("carvera", "manual_usb_device", "")
     if not Config.has_option("carvera", "use_higher_baud"):
         Config.set("carvera", "use_higher_baud", "0")
     if not Config.has_option("carvera", "usb_baud_rate"):

@@ -92,6 +92,7 @@ __copyright__ = ["Copyright (c) 2010 Wijnand Modderman", "Copyright (c) 1981 Chu
 __license__ = "MIT"
 __version__ = "0.4.5"
 
+import hashlib
 import logging
 import math
 import platform
@@ -449,6 +450,10 @@ class XMODEM:
         self.bytesNeeded = 2
         self.expectedLength = 0
         self.FileRcvState = FileTransState.WAIT_MD5
+        # Hex digest advertised by the machine; set when a .lz payload defers verification
+        # until after decompress. Cleared at the start of each download and after checking.
+        self.deferred_download_md5 = None
+        self.download_md5_failed = False
 
     def clear_mode_set(self):
         self.mode_set = False
@@ -475,6 +480,67 @@ class XMODEM:
 
     def _send_file_trans_command(self, cmd: int, data: bytes) -> None:
         self.putc(build_frame(cmd, data))
+
+    @staticmethod
+    def _normalize_advertised_md5(expected_md5):
+        """Return lowercase hex digest, or None when the machine advertised nothing usable."""
+        if expected_md5 is None:
+            return None
+        if isinstance(expected_md5, (bytes, bytearray)):
+            advertised = bytes(expected_md5).decode("ascii", errors="replace")
+        else:
+            advertised = str(expected_md5)
+        advertised = advertised.strip().lower()
+        return advertised or None
+
+    def _finalize_download_integrity(self, expected_md5, received_md5, income_size, first_bytes=b""):
+        """
+        Apply download MD5 policy.
+
+        - Empty/missing advertised digest: skip check
+        - QuickLZ payload (``\\x00\\x00`` prefix): defer check until after decompress
+        - Otherwise: require the received bytes to match the advertised digest
+
+        Returns True when the transfer may be treated as successful.
+        """
+        self.deferred_download_md5 = None
+        self.download_md5_failed = False
+        actual = received_md5.hexdigest()
+        advertised = self._normalize_advertised_md5(expected_md5)
+
+        if advertised is None:
+            self.log.info(
+                "Download MD5 check skipped (none advertised by machine), actual=%s (%d bytes)",
+                actual,
+                income_size,
+            )
+            return True
+
+        if first_bytes[:2] == b"\x00\x00":
+            self.deferred_download_md5 = advertised
+            self.log.info(
+                "Download MD5 deferred until decompress (advertised=%s, compressed actual=%s, %d bytes)",
+                advertised,
+                actual,
+                income_size,
+            )
+            return True
+
+        if actual != advertised:
+            self.download_md5_failed = True
+            self.log.error(
+                "Download error: MD5 mismatch (expected=%s, actual=%s)",
+                advertised,
+                actual,
+            )
+            return False
+
+        self.log.info(
+            "Download MD5 matched advertised digest: %s (%d bytes)",
+            actual,
+            income_size,
+        )
+        return True
 
     def recv_packet(self, timeout=0.5):
         """Read one Makera frame into ``self.packetData``. Returns 1 on success."""
@@ -537,6 +603,11 @@ class XMODEM:
         total_packet = 0
         sequence = 0
         income_size = 0
+        expected_md5 = None
+        received_md5 = hashlib.md5()
+        first_bytes = bytearray()
+        self.deferred_download_md5 = None
+        self.download_md5_failed = False
         while True:
             if self.canceled:
                 self._send_file_trans_command(PTYPE_FILE_CAN, b"")
@@ -564,7 +635,11 @@ class XMODEM:
                         if cmd_type == PTYPE_FILE_DATA and sequence == seq:
                             data_len = ((self.packetData[0] << 8) | self.packetData[1]) - 7
                             income_size += data_len
-                            stream.write(self.packetData[7 : (data_len + 7)])
+                            payload = self.packetData[7 : (data_len + 7)]
+                            stream.write(payload)
+                            received_md5.update(payload)
+                            if len(first_bytes) < 2:
+                                first_bytes.extend(payload[: 2 - len(first_bytes)])
                             if sequence < total_packet:
                                 sequence += 1
                                 data = sequence.to_bytes(4, byteorder="big", signed=False)
@@ -577,6 +652,10 @@ class XMODEM:
                             if seq == total_packet:
                                 self._send_file_trans_command(PTYPE_FILE_END, b"")
                                 self.FileRcvState = FileTransState.WAIT_MD5
+                                if not self._finalize_download_integrity(
+                                    expected_md5, received_md5, income_size, first_bytes
+                                ):
+                                    return None
                                 self.log.info("Transmission complete, %d bytes", income_size)
                                 return income_size
                         else:
@@ -611,7 +690,8 @@ class XMODEM:
                     if self.packetData:
                         if cmd_type == PTYPE_FILE_MD5:
                             md5new = self.packetData[3 : len(self.packetData) - 2]
-                            if (md5.encode() == md5new) and md5 != "":
+                            expected_md5 = bytes(md5new).lower()
+                            if md5 and expected_md5 and md5.encode().lower() == expected_md5:
                                 self._send_file_trans_command(PTYPE_FILE_CAN, b"")
                                 return 0
                             self._send_file_trans_command(PTYPE_FILE_VIEW, b"")
@@ -1013,6 +1093,11 @@ class XMODEM:
         cancel = 0
         retrans = retry + 1
         md5_received = False
+        expected_md5 = None
+        received_md5 = hashlib.md5()
+        first_bytes = bytearray()
+        self.deferred_download_md5 = None
+        self.download_md5_failed = False
 
         while True:
             if self.canceled:
@@ -1028,9 +1113,10 @@ class XMODEM:
                 if char in (SOH, STX):
                     break
                 if char == EOT:
-                    # We received an EOT, so send an ACK and return the
-                    # received data length.
+                    # ACK for wire compatibility, then apply local MD5 policy.
                     self.putc(ACK)
+                    if not self._finalize_download_integrity(expected_md5, received_md5, income_size, first_bytes):
+                        return None
                     self.log.info("Transmission complete, %d bytes", income_size)
                     return income_size
                 if char == CAN:
@@ -1109,7 +1195,9 @@ class XMODEM:
                     retrans = retry + 1
                     if sequence == 0 and not md5_received:
                         md5_received = True
-                        if md5.encode() == data[1 + is_stx : 33 + is_stx]:
+                        data_len = data[0] << 8 | data[1] if is_stx else data[0]
+                        expected_md5 = data[1 + is_stx : (data_len + 1 + is_stx)].lower()
+                        if md5 and expected_md5 and md5.encode().lower() == expected_md5:
                             self.putc(CAN)
                             self.putc(CAN)
                             self.putc(CAN)
@@ -1119,7 +1207,11 @@ class XMODEM:
                     else:
                         income_size += len(data) - 1 - is_stx
                         data_len = data[0] << 8 | data[1] if is_stx else data[0]
-                        stream.write(data[1 + is_stx : (data_len + 1 + is_stx)])
+                        payload = data[1 + is_stx : (data_len + 1 + is_stx)]
+                        stream.write(payload)
+                        received_md5.update(payload)
+                        if len(first_bytes) < 2:
+                            first_bytes.extend(payload[: 2 - len(first_bytes)])
                         success_count = success_count + 1
                         if callable(callback):
                             callback(packet_size, success_count, error_count)

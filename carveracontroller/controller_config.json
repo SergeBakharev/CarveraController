@@ -276,6 +276,14 @@
     },
     {
         "type": "bool",
+        "title": "Allow manual input of USB devices to use for connection",
+        "desc": "When enabled, the USB connection menu includes a Manually Enter option to connect using a device path such as /dev/ttys020",
+        "section": "carvera",
+        "key": "allow_manual_usb_device",
+        "default": "false"
+    },
+    {
+        "type": "bool",
         "title": "Increase USB connection speed",
         "desc": "Requires Community firmware >= v2.1.0. If enabled the controller will negotiate to a higher usb connection speed",
         "section": "carvera",

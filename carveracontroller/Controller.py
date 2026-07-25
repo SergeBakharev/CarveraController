@@ -1047,6 +1047,29 @@ class Controller:
                 return True
         return False
 
+    def resume_playback_warnings(self, commands):
+        """
+        Inspect resume-at-line command preview and return missing-state warning keys.
+
+        Returns a list that may include:
+          - "tool_change": no M6 tool change in the recovery sequence
+          - "feed": no G1 F feed rate restored
+          - "spindle_speed": no M3 S spindle speed restored (skipped for laser/M321)
+        """
+        if not commands:
+            return ["tool_change", "feed", "spindle_speed"]
+
+        joined = "\n".join(commands).upper()
+        warnings = []
+        if not re.search(r"\bM0*6\b", joined):
+            warnings.append("tool_change")
+        if not re.search(r"\bG0*1\s+F\d", joined):
+            warnings.append("feed")
+        # Laser mode does not use spindle S recovery
+        if not re.search(r"\bM321\b", joined) and not re.search(r"\bM0*3\s+S\d", joined):
+            warnings.append("spindle_speed")
+        return warnings
+
     def playStartLineCommand(self, filename, start_line, preview=False, lines=None, has_ocodes=False):
         # Build the play command with proper formatting
         flag = " -O" if has_ocodes else ""

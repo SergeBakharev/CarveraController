@@ -1465,28 +1465,41 @@
 <ConfirmPopup>:
     lb_title: lb_title
     lb_content: lb_content
+    content_scroll: content_scroll
     size_hint: 0.5, 0.4
     pos_hint: {"right": 0.75, "top": 0.7}
     auto_dismiss: False
     BoxLayout:
         padding: '15dp'
+        spacing: '8dp'
         orientation: 'vertical'
         Label:
-            size_hint_y: 0.4
+            size_hint_y: None
+            height: self.texture_size[1]
             id: lb_title
             text: tr._('Confirm Box')
             bold: True
             halign: 'center'
             valign: 'middle'
-            text_size: self.size
-        Label:
-            id: lb_content
-            text: tr._('Confirm to continue?')
-            halign: 'center'
-            valign: 'middle'
-            text_size: self.size
+            text_size: self.width, None
+        ScrollView:
+            id: content_scroll
+            do_scroll_x: False
+            bar_width: '10dp'
+            scroll_type: ['bars', 'content']
+            bar_inactive_color: 0.5, 0.5, 0.5, 0.5
+            Label:
+                id: lb_content
+                size_hint_y: None
+                # Fill the viewport when short so valign can center; grow and scroll when long.
+                height: max(self.texture_size[1], self.parent.height) if self.parent else self.texture_size[1]
+                text: tr._('Confirm to continue?')
+                halign: 'center'
+                valign: 'middle'
+                text_size: self.width, None
         BoxLayout:
-            size_hint_y: 0.4
+            size_hint_y: None
+            height: '48dp'
             Button:
                 text: tr._('Cancel')
                 on_release:
