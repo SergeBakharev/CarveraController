@@ -5388,6 +5388,37 @@ class Makera(RelativeLayout):
             return None
 
     # -----------------------------------------------------------------------
+    def _verify_deferred_download_md5(self, filepath):
+        """Verify a machine-advertised MD5 after .lz decompress. Returns False on mismatch."""
+        modem = getattr(getattr(self.controller, "stream", None), "modem", None)
+        expected = getattr(modem, "deferred_download_md5", None) if modem is not None else None
+        if modem is not None:
+            modem.deferred_download_md5 = None
+        if not expected:
+            return True
+
+        actual = Utils.md5(filepath)
+        if actual.lower() == expected.lower():
+            logger.info("Download MD5 matched after decompress: %s", actual)
+            return True
+
+        logger.error(
+            "Download error: MD5 mismatch after decompress (expected=%s, actual=%s)",
+            expected,
+            actual,
+        )
+        try:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+        except OSError:
+            pass
+        Clock.schedule_once(
+            partial(self.show_message_popup, tr._("Download file error!"), False),
+            0,
+        )
+        return False
+
+    # -----------------------------------------------------------------------
     def decompress_file(self, input_filename, output_filename):
         try:
             # 打开输入文件和输出文件
@@ -7386,6 +7417,8 @@ class Makera(RelativeLayout):
                 lzpath = lzpath + ".lz"
                 shutil.copyfile(filepath, lzpath)
                 if not self.decompress_file(lzpath, filepath):
+                    return
+                if not self._verify_deferred_download_md5(filepath):
                     return
 
             self.cnc.init()
