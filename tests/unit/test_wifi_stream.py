@@ -1,5 +1,8 @@
 """Tests for WIFIStream socket write semantics."""
 
+import struct
+
+from carveracontroller.protocols.framing import PTYPE_FILE_DATA, build_frame
 from carveracontroller.WIFIStream import WIFIStream
 from carveracontroller.XMODEM import XMODEM
 
@@ -31,11 +34,16 @@ def _xmodem8k_frame():
     return bytes(modem._make_send_header(8192, 1) + framed_payload + modem._make_send_checksum(1, framed_payload))
 
 
-def test_putc_sends_the_complete_xmodem_frame_and_returns_its_length():
+def _makera_file_data_frame():
+    """Full Makera FILE_DATA frame as emitted by XMODEM.send() via putc."""
+    seq = struct.pack(">I", 1)
+    file_data = b"x" * 8192
+    return build_frame(PTYPE_FILE_DATA, seq + file_data)
+
+
+def _assert_putc_writes_complete_frame(frame):
     stream = WIFIStream.__new__(WIFIStream)
     stream.socket = DeterministicShortWriteSocket(short_write_size=2048)
-    frame = _xmodem8k_frame()
-    assert len(frame) == 8199, "fixture must model a complete xmodem8k frame"
 
     result = stream.putc(frame)
 
@@ -44,3 +52,15 @@ def test_putc_sends_the_complete_xmodem_frame_and_returns_its_length():
     assert stream.socket.send_calls == 0
     assert stream.socket.sendall_calls == 1
     assert result == len(frame)
+
+
+def test_putc_sends_the_complete_xmodem_frame_and_returns_its_length():
+    frame = _xmodem8k_frame()
+    assert len(frame) == 8199, "fixture must model a complete xmodem8k frame"
+    _assert_putc_writes_complete_frame(frame)
+
+
+def test_putc_sends_the_complete_makera_file_data_frame_and_returns_its_length():
+    frame = _makera_file_data_frame()
+    assert len(frame) == 8205, "fixture must model a complete Makera FILE_DATA frame"
+    _assert_putc_writes_complete_frame(frame)
