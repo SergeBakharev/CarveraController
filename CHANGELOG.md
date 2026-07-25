@@ -53,6 +53,7 @@
 - Fixed: Ignore unknown WHB04 button values without reconnecting or dropping valid paired inputs
 - Fixed: Resume-at-line restores feed rates from standalone and tightly packed F words before recovery moves
 - Fixed: Resume-at-line no longer treats the non-modal G53 command as the active work coordinate system
+- Fixed: Reject downloads whose content does not match the machine-provided MD5. Skip MD5 check when none is available, and defer .lz checks until after decompress
 - Change: Misleading "Download canceled by Controller!" MDI message is suppressed, in logs a message is recorded that cached version of the config.txt was used
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file
