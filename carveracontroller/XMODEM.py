@@ -453,6 +453,7 @@ class XMODEM:
         # Hex digest advertised by the machine; set when a .lz payload defers verification
         # until after decompress. Cleared at the start of each download and after checking.
         self.deferred_download_md5 = None
+        self.download_md5_failed = False
 
     def clear_mode_set(self):
         self.mode_set = False
@@ -503,6 +504,7 @@ class XMODEM:
         Returns True when the transfer may be treated as successful.
         """
         self.deferred_download_md5 = None
+        self.download_md5_failed = False
         actual = received_md5.hexdigest()
         advertised = self._normalize_advertised_md5(expected_md5)
 
@@ -525,6 +527,7 @@ class XMODEM:
             return True
 
         if actual != advertised:
+            self.download_md5_failed = True
             self.log.error(
                 "Download error: MD5 mismatch (expected=%s, actual=%s)",
                 advertised,
@@ -604,6 +607,7 @@ class XMODEM:
         received_md5 = hashlib.md5()
         first_bytes = bytearray()
         self.deferred_download_md5 = None
+        self.download_md5_failed = False
         while True:
             if self.canceled:
                 self._send_file_trans_command(PTYPE_FILE_CAN, b"")
@@ -1093,6 +1097,7 @@ class XMODEM:
         received_md5 = hashlib.md5()
         first_bytes = bytearray()
         self.deferred_download_md5 = None
+        self.download_md5_failed = False
 
         while True:
             if self.canceled:

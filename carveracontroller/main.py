@@ -4829,11 +4829,30 @@ class Makera(RelativeLayout):
             if os.path.exists(tmp_filename):
                 os.remove(tmp_filename)
             # show message popup
+            md5_failed = bool(
+                getattr(getattr(getattr(self.controller, "stream", None), "modem", None), "download_md5_failed", False)
+            )
             if was_config_download:
                 Clock.schedule_once(partial(self.finishLoadConfig, False), 0.1)
-                Clock.schedule_once(partial(self.show_message_popup, tr._("Download config file error!"), False), 0.2)
+                error_msg = (
+                    tr._(
+                        "Download config file error! The file MD5 hash doesn't match what is expected. "
+                        "Possibly corruption occured during transfer or on SD card."
+                    )
+                    if md5_failed
+                    else tr._("Download config file error!")
+                )
+                Clock.schedule_once(partial(self.show_message_popup, error_msg, False), 0.2)
             else:
-                Clock.schedule_once(partial(self.show_message_popup, tr._("Download file error!"), False), 0)
+                error_msg = (
+                    tr._(
+                        "Download file error! MD5 hash doesn't match what is expected. "
+                        "Possible corruption during transfer or on SD card."
+                    )
+                    if md5_failed
+                    else tr._("Download file error!")
+                )
+                Clock.schedule_once(partial(self.show_message_popup, error_msg, False), 0)
         elif download_result >= 0:
             if download_result > 0:
                 # download success
@@ -5413,7 +5432,14 @@ class Makera(RelativeLayout):
         except OSError:
             pass
         Clock.schedule_once(
-            partial(self.show_message_popup, tr._("Download file error!"), False),
+            partial(
+                self.show_message_popup,
+                tr._(
+                    "Download file error! MD5 hash doesn't match what is expected. "
+                    "Possible corruption during transfer or on SD card."
+                ),
+                False,
+            ),
             0,
         )
         return False
