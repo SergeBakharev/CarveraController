@@ -183,7 +183,14 @@ from kivy.lang import Builder
 from . import Utils, custom_widgets
 from .__version__ import __version__
 from .addons.camera.CameraView import ADJUST_DEFAULT
-from .addons.camera.Z1Camera import Z1Camera, has_camera
+from .addons.camera.Z1Camera import (
+    DEFAULT_RESOLUTION,
+    RESOLUTION_BY_SIZE,
+    RESOLUTION_VALUES,
+    Z1Camera,
+    has_camera,
+    set_resolution,
+)
 from .addons.probing.ProbingControls import ProbeButton
 from .addons.tooltips.Tooltips import Tooltip, ToolTipButton, ToolTipDropDown
 from .CNC import (
@@ -7338,8 +7345,31 @@ class Makera(RelativeLayout):
         App.get_running_app().supports_camera = found
 
     # -----------------------------------------------------------------------
+    def set_camera_resolution(self, label):
+        """Apply a resolution the user picked from the camera panel.
+
+        Also absorbs the echo from _show_camera_frame updating the picker to
+        match what the stream is already sending.
+        """
+        app = App.get_running_app()
+        value = RESOLUTION_VALUES.get(label)
+        if value is None or value == app.camera_resolution:
+            return
+        app.camera_resolution = value
+        host = self.controller.connection_address.split(":")[0]
+        threading.Thread(target=set_resolution, args=(host, value), daemon=True).start()
+
+    # -----------------------------------------------------------------------
     def _show_camera_frame(self, jpeg):
-        self.ids.camera_view.show_frame(jpeg)
+        camera_view = self.ids.camera_view
+        camera_view.show_frame(jpeg)
+        # The machine cannot be asked what resolution it is on, so the frames
+        # themselves are what keeps the picker honest.
+        texture = camera_view.texture
+        if texture is not None:
+            value = RESOLUTION_BY_SIZE.get(tuple(texture.size))
+            if value is not None:
+                App.get_running_app().camera_resolution = value
 
     # -----------------------------------------------------------------------
     def _set_camera_streaming(self, streaming):
@@ -7763,6 +7793,7 @@ class MakeraApp(App):
     camera_brightness = NumericProperty(ADJUST_DEFAULT)
     camera_contrast = NumericProperty(ADJUST_DEFAULT)
     camera_gamma = NumericProperty(ADJUST_DEFAULT)
+    camera_resolution = NumericProperty(DEFAULT_RESOLUTION)
     supports_auto_ext_out = BooleanProperty(False)
     fw_version_digitized = NumericProperty(0)
     show_tooltips = BooleanProperty(True)

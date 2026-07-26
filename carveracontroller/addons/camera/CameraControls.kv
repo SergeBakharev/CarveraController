@@ -2,6 +2,8 @@
 #:import ADJUST_MIN carveracontroller.addons.camera.CameraView.ADJUST_MIN
 #:import ADJUST_MAX carveracontroller.addons.camera.CameraView.ADJUST_MAX
 #:import ADJUST_DEFAULT carveracontroller.addons.camera.CameraView.ADJUST_DEFAULT
+#:import RESOLUTION_LABELS carveracontroller.addons.camera.Z1Camera.RESOLUTION_LABELS
+#:import RESOLUTION_CHOICES carveracontroller.addons.camera.Z1Camera.RESOLUTION_CHOICES
 
 <CameraButtonSlot@AnchorLayout>:
     visible: False
@@ -15,7 +17,7 @@
     visible: False
     orientation: 'vertical'
     size_hint_y: None
-    height: '160dp' if self.visible else 0
+    height: '200dp' if self.visible else 0
     opacity: 1 if self.visible else 0
     padding: '8dp'
     spacing: '4dp'
@@ -67,6 +69,16 @@
                 root.adjust_open = not root.adjust_open
     CameraAdjustPanel:
         visible: root.adjust_open and app.camera_streaming
+        BoxLayout:
+            Label:
+                text: tr._('Resolution')
+                size_hint_x: 0.42
+                font_size: '13sp'
+            Spinner:
+                text: RESOLUTION_LABELS[app.camera_resolution]
+                values: RESOLUTION_CHOICES
+                on_text:
+                    app.root.set_camera_resolution(self.text)
         CameraAdjustRow:
             label_text: tr._('Brightness')
             value: app.camera_brightness

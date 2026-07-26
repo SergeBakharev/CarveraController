@@ -11,9 +11,11 @@ Frames are read on a worker thread; callbacks are dispatched on the Kivy main
 thread.
 """
 
+import json
 import logging
 import socket
 import threading
+import urllib.request
 
 from kivy.clock import Clock
 
@@ -32,10 +34,36 @@ CAMERA_PORT = 82
 CAMERA_PATH = "/ws_video"
 START_MESSAGE = b"start_stream"
 
+# Resolution is the one camera setting the machine exposes, and it lives on the
+# web UI's port rather than the streaming one. Probing every plausible route
+# found no others: exposure, gain and white balance are not reachable, which is
+# why CameraView grades frames on the host.
+CONTROL_PORT = 80
+RESOLUTION_PATH = "/api/camera/resolution"
+
 CONNECT_TIMEOUT = 5.0
 PROBE_TIMEOUT = 1.5
+CONTROL_TIMEOUT = 5.0
 # Reads are sliced so a stop request is not left hanging between frames.
 READ_TIMEOUT = 1.0
+
+# Espressif framesize_t values, each measured against a Z1. Frame rate falls off
+# as they climb -- 640x480 runs at about 20fps and 1600x1200 at about 10 -- so
+# the smallest is the default. Out-of-range values are answered with 200 and
+# then ignored by the firmware, so only offer ones known to work.
+RESOLUTIONS = (
+    (10, (640, 480)),
+    (11, (800, 600)),
+    (12, (1024, 768)),
+    (13, (1280, 720)),
+    (14, (1280, 1024)),
+    (15, (1600, 1200)),
+)
+DEFAULT_RESOLUTION = RESOLUTIONS[0][0]
+RESOLUTION_LABELS = {value: f"{width}x{height}" for value, (width, height) in RESOLUTIONS}
+RESOLUTION_VALUES = {label: value for value, label in RESOLUTION_LABELS.items()}
+RESOLUTION_BY_SIZE = {size: value for value, size in RESOLUTIONS}
+RESOLUTION_CHOICES = tuple(RESOLUTION_LABELS[value] for value, _size in RESOLUTIONS)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +84,29 @@ def has_camera(host, timeout=PROBE_TIMEOUT):
         return False
     client.close()
     return True
+
+
+def set_resolution(host, value):
+    """Switch the camera's resolution, returning whether it was accepted.
+
+    Blocks on the network, so call it off the main thread. A running stream keeps
+    going and starts sending the new size within a frame or two, so there is
+    nothing to reconnect.
+    """
+    request = urllib.request.Request(
+        f"http://{host}:{CONTROL_PORT}{RESOLUTION_PATH}",
+        data=json.dumps({"resolution": value}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=CONTROL_TIMEOUT) as response:
+            accepted = response.status == 200
+    except OSError as exc:
+        logger.error("Camera resolution %s rejected: %s", RESOLUTION_LABELS.get(value, value), exc)
+        return False
+    logger.info("Camera resolution set to %s", RESOLUTION_LABELS.get(value, value))
+    return accepted
 
 
 class Z1Camera:

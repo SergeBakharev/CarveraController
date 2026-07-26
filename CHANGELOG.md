@@ -27,7 +27,7 @@
 - Enhancement: Block sending the `reset` command over USB and show a popup directing the user to use the power switch instead
 - Enhancement: Initial Z1 support
 - Enhancement: Resume-at-line warns when the recovery sequence is missing a tool change, feed rate, or spindle speed
-- Enhancement: Live camera view for the Makera Z1. Brightness, contrast and gamma can be adjusted while viewing
+- Enhancement: Live camera view for the Makera Z1. Resolution can be changed while streaming, and brightness, contrast and gamma adjusted while viewing
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
 - Fixed: Confirmation dialogs no longer retain expanded layouts from laser and resume warnings
 - Fixed: Repeated firmware checks now happen just once
