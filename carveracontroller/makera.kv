@@ -7,6 +7,7 @@
 #:import _ carveracontroller.ui.DropDownSplitter
 #:import play_progress_bar carveracontroller.ui.PlayProgressBar
 #:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
+#:import CameraView carveracontroller.addons.camera.CameraView.CameraView
 #:import LASER_TOOL_NUMBER carveracontroller.CNC.LASER_TOOL_NUMBER
 #:import ZPROBE_TOOL_NUMBER carveracontroller.CNC.ZPROBE_TOOL_NUMBER
 #:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
@@ -20,6 +21,7 @@
 #:include ui/popups/adv_calibrate/adv_calibrate.kv
 #:include addons/probe_scan/ui/ProbeScanPopup.kv
 #:include addons/facing/FacingWizardPopup.kv
+#:include addons/camera/CameraControls.kv
 
 <Label>:
     font_name: 'ARIALUNI'
@@ -4247,6 +4249,7 @@
                         FloatBox:
                             id: float_layout
                             color_scheme_panel: color_scheme_panel
+                            camera_controls: camera_controls
                             tool_bar: tool_bar
                             t1: t1
                             t2: t2
@@ -4263,6 +4266,17 @@
                                 orientation: 'vertical'
                             GcodeColorSchemePanel:
                                 id: color_scheme_panel
+                            CameraView:
+                                id: camera_view
+                                brightness: app.camera_brightness
+                                contrast: app.camera_contrast
+                                gamma: app.camera_gamma
+                                size_hint: None, None
+                                x: float_layout.x
+                                width: float_layout.width
+                                y: gcode_ctl_bar.top
+                                height: (tool_bar.y - gcode_ctl_bar.top) if app.camera_streaming else 0
+                                opacity: 1 if app.camera_streaming else 0
                             BoxLayout:
                                 id: tool_bar
                                 orbit: True
@@ -4498,6 +4512,9 @@
                                     max: 1000
                                     value: 1000
                                     disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                            CameraControls:
+                                id: camera_controls
+                                pos_hint: {'right': 1, 'top': 1}
 
             SettingPage:
                 name: 'Setting'

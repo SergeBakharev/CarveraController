@@ -14,6 +14,9 @@ from carveracontroller.protocols.framing import (
 )
 from carveracontroller.XMODEM import ACK, CAN, CRC, EOT, XMODEM
 
+# What stock Z1 firmware sends instead of a digest: 32 characters, but not hex.
+Z1_PLACEHOLDER_MD5 = b"default_md5_hash_value_32_bytes_"
+
 
 def _packet(modem, sequence, payload):
     packet_size = 8192
@@ -118,6 +121,19 @@ def test_legacy_skips_check_when_advertised_md5_empty(caplog):
     assert any("skipped" in record.getMessage() for record in caplog.records)
 
 
+def test_legacy_skips_check_when_advertised_md5_is_not_hex(caplog):
+    """Stock Z1 firmware answers md5sum with a 32-character placeholder, not a digest."""
+    payload = b"G0 X1 Y2\nM2\n"
+
+    with caplog.at_level(logging.INFO, logger="xmodem.XMODEM"):
+        result, output, writes, modem = _receive_legacy(payload, payload, advertised_md5=Z1_PLACEHOLDER_MD5)
+
+    assert result is not None and result > 0
+    assert output == payload
+    assert modem.download_md5_failed is False
+    assert any("skipped" in record.getMessage() for record in caplog.records)
+
+
 def test_legacy_defers_md5_check_for_lz_payload():
     advertised_for = b"original uncompressed content"
     lz_payload = b"\x00\x00" + b"compressed-bytes"
@@ -161,6 +177,18 @@ def test_framed_skips_check_when_advertised_md5_empty(caplog):
     assert result == len(payload)
     assert output == payload
     assert modem.deferred_download_md5 is None
+    assert any("skipped" in record.getMessage() for record in caplog.records)
+
+
+def test_framed_skips_check_when_advertised_md5_is_not_hex(caplog):
+    payload = b"G0 X1 Y2\nM2\n"
+
+    with caplog.at_level(logging.INFO, logger="xmodem.XMODEM"):
+        result, output, writes, modem = _receive_framed(payload, payload, advertised_md5=Z1_PLACEHOLDER_MD5)
+
+    assert result == len(payload)
+    assert output == payload
+    assert modem.download_md5_failed is False
     assert any("skipped" in record.getMessage() for record in caplog.records)
 
 

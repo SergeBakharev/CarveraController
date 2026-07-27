@@ -125,6 +125,9 @@ NAK = b"\x15"
 CAN = b"\x16"
 CRC = b"C"
 
+MD5_HEX_DIGITS = frozenset("0123456789abcdef")
+MD5_HEX_LENGTH = 32
+
 
 class RevPacketState(Enum):
     WAIT_HEADER = auto()
@@ -483,7 +486,13 @@ class XMODEM:
 
     @staticmethod
     def _normalize_advertised_md5(expected_md5):
-        """Return lowercase hex digest, or None when the machine advertised nothing usable."""
+        """Return lowercase hex digest, or None when the machine advertised nothing usable.
+
+        Anything that is not 32 hex characters counts as nothing advertised. Stock
+        Z1 firmware answers md5sum with the fixed placeholder
+        ``default_md5_hash_value_32_bytes_``, which is exactly 32 characters long
+        but is not a digest, so length alone cannot tell the two apart.
+        """
         if expected_md5 is None:
             return None
         if isinstance(expected_md5, (bytes, bytearray)):
@@ -491,7 +500,9 @@ class XMODEM:
         else:
             advertised = str(expected_md5)
         advertised = advertised.strip().lower()
-        return advertised or None
+        if len(advertised) != MD5_HEX_LENGTH or not MD5_HEX_DIGITS.issuperset(advertised):
+            return None
+        return advertised
 
     def _finalize_download_integrity(self, expected_md5, received_md5, income_size, first_bytes=b""):
         """
@@ -510,7 +521,7 @@ class XMODEM:
 
         if advertised is None:
             self.log.info(
-                "Download MD5 check skipped (none advertised by machine), actual=%s (%d bytes)",
+                "Download MD5 check skipped (machine advertised no usable digest), actual=%s (%d bytes)",
                 actual,
                 income_size,
             )

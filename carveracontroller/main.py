@@ -182,6 +182,15 @@ from kivy.lang import Builder
 
 from . import Utils, custom_widgets
 from .__version__ import __version__
+from .addons.camera.CameraView import ADJUST_DEFAULT
+from .addons.camera.Z1Camera import (
+    DEFAULT_RESOLUTION,
+    RESOLUTION_BY_SIZE,
+    RESOLUTION_VALUES,
+    Z1Camera,
+    has_camera,
+    set_resolution,
+)
 from .addons.probing.ProbingControls import ProbeButton
 from .addons.tooltips.Tooltips import Tooltip, ToolTipButton, ToolTipDropDown
 from .CNC import (
@@ -410,12 +419,15 @@ class GcodePlaySlider(Slider):
 class FloatBox(FloatLayout):
     touch_interval = 0
     color_scheme_panel = ObjectProperty(None)
+    camera_controls = ObjectProperty(None)
 
     def _viewer_chrome_hit(self, touch):
         if self.gcode_ctl_bar.collide_point(*touch.pos):
             return True
-        panel = self.color_scheme_panel
-        return bool(panel is not None and panel.collide_point(*touch.pos))
+        return any(
+            panel is not None and panel.collide_point(*touch.pos)
+            for panel in (self.color_scheme_panel, self.camera_controls)
+        )
 
     def on_touch_down(self, touch):
         if super().on_touch_down(touch):
@@ -3114,6 +3126,15 @@ class Makera(RelativeLayout):
         self.gcode_viewer.set_error_popup_callback(self._on_gcode_cannot_visualise)
         self.gcode_viewer.time_estimate_progress_callback = self._on_time_estimate_progress
         self.float_layout.tool_bar.show_grid = self.gcode_viewer.is_grid_visible()
+
+        # init camera live view
+        self.camera_checked = False
+        self.camera_probe = 0
+        self.camera_stream = Z1Camera(
+            on_frame=self._show_camera_frame,
+            on_streaming=self._set_camera_streaming,
+            on_error=partial(self.show_message_popup, btn_disabled=False),
+        )
 
         # init settings
         self.config = ConfigParser()
@@ -5874,6 +5895,10 @@ class Makera(RelativeLayout):
                     app.fw_version_digitized = 0
                     app.is_community_firmware = False
                     app.supports_auto_ext_out = False
+                    app.supports_camera = False
+                    self.camera_checked = False
+                    self.camera_probe += 1  # discard the result of a probe still in flight
+                    self.camera_stream.stop()
                     self.controller.is_community_firmware = False
                     self.machine_metadata_query_time = 0
 
@@ -5920,6 +5945,15 @@ class Makera(RelativeLayout):
 
                     # Reset manual disconnect flag since we're now connected
                     self.controller._manual_disconnect = False
+
+                    # Look for a camera, only one time per connection
+                    if not self.camera_checked and self.controller.connection_type == CONN_WIFI:
+                        self.camera_checked = True
+                        self.camera_probe += 1
+                        host = self.controller.connection_address.split(":")[0]
+                        threading.Thread(
+                            target=self._detect_camera, args=(host, self.camera_probe), daemon=True
+                        ).start()
 
                 self.status_drop_down.btn_unlock.disabled = app.state != "Alarm" and app.state != "Sleep"
                 if (CNC.vars["halt_reason"] in HALT_REASON and CNC.vars["halt_reason"] > 20) or app.state == "Sleep":
@@ -7292,6 +7326,56 @@ class Makera(RelativeLayout):
             self.gcode_viewer.dynamic_display = True
 
     # -----------------------------------------------------------------------
+    def toggle_camera_stream(self):
+        if self.camera_stream.is_streaming():
+            self.camera_stream.stop()
+        elif App.get_running_app().supports_camera:
+            self.camera_stream.start(self.controller.connection_address.split(":")[0])
+
+    # -----------------------------------------------------------------------
+    def _detect_camera(self, host, probe):
+        found = has_camera(host)
+        Clock.schedule_once(partial(self._on_camera_detected, probe, found), 0)
+
+    # -----------------------------------------------------------------------
+    def _on_camera_detected(self, probe, found, *args):
+        """Ignore a probe that a disconnect or a newer probe has superseded."""
+        if probe != self.camera_probe:
+            return
+        App.get_running_app().supports_camera = found
+
+    # -----------------------------------------------------------------------
+    def set_camera_resolution(self, label):
+        """Apply a resolution the user picked from the camera panel.
+
+        Also absorbs the echo from _show_camera_frame updating the picker to
+        match what the stream is already sending.
+        """
+        app = App.get_running_app()
+        value = RESOLUTION_VALUES.get(label)
+        if value is None or value == app.camera_resolution:
+            return
+        app.camera_resolution = value
+        host = self.controller.connection_address.split(":")[0]
+        threading.Thread(target=set_resolution, args=(host, value), daemon=True).start()
+
+    # -----------------------------------------------------------------------
+    def _show_camera_frame(self, jpeg):
+        camera_view = self.ids.camera_view
+        camera_view.show_frame(jpeg)
+        # The machine cannot be asked what resolution it is on, so the frames
+        # themselves are what keeps the picker honest.
+        texture = camera_view.texture
+        if texture is not None:
+            value = RESOLUTION_BY_SIZE.get(tuple(texture.size))
+            if value is not None:
+                App.get_running_app().camera_resolution = value
+
+    # -----------------------------------------------------------------------
+    def _set_camera_streaming(self, streaming):
+        App.get_running_app().camera_streaming = streaming
+
+    # -----------------------------------------------------------------------
     def clear_selection(self):
         self.gcode_rv.data = []
         self.gcode_rv.data_length = 0
@@ -7704,6 +7788,12 @@ class MakeraApp(App):
     loading_page = BooleanProperty(False)
     model = StringProperty("")
     is_community_firmware = BooleanProperty(False)
+    supports_camera = BooleanProperty(False)
+    camera_streaming = BooleanProperty(False)
+    camera_brightness = NumericProperty(ADJUST_DEFAULT)
+    camera_contrast = NumericProperty(ADJUST_DEFAULT)
+    camera_gamma = NumericProperty(ADJUST_DEFAULT)
+    camera_resolution = NumericProperty(DEFAULT_RESOLUTION)
     supports_auto_ext_out = BooleanProperty(False)
     fw_version_digitized = NumericProperty(0)
     show_tooltips = BooleanProperty(True)
