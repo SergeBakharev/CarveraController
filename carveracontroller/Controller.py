@@ -844,84 +844,46 @@ class Controller:
             if start_line < 1 or start_line > len(lines):
                 return None
 
-            # First, find the most recent M3 command and check if it has S parameter
+            # First, find the most recent M3 command and check if it has S parameter.
+            # Token matching normalizes zero-padded forms such as M03 without
+            # confusing other M-codes such as M30.
             most_recent_m3_line = None
             for i in range(start_line - 2, -1, -1):
-                original_line = lines[i]
-                line = original_line.strip()
-
-                # Remove comments using string methods
-                if ";" in line:
-                    line = line[: line.index(";")]
-                # Remove parentheses comments using string methods
-                while "(" in line and ")" in line:
-                    start_paren = line.index("(")
-                    end_paren = line.index(")", start_paren)
-                    line = line[:start_paren] + line[end_paren + 1 :]
-
-                line = line.strip()
-                if not line:
-                    continue
-
-                # Check if line contains M3 (not M30, M31, etc.)
-                line_upper = line.upper()
-                # Use regex to find M3 that's not part of M30, M31, etc.
-                # Look for M3 that's not followed by a digit (to avoid M30, M31, etc.)
-                # M3 can be preceded by anything (including digits from other commands like S12000).
-                # Yes, really! One of the example files (ACRYLIC-R2D2.nc) has "G0X0.000Y0.000S12000M3" wtf is that!!?
-                m3_match = re.search(r"M3(?![0-9])", line_upper)
-                if m3_match:
+                has_m3, spindle_speed = self._m3_spindle_speed_from_line(lines[i])
+                if has_m3:
                     most_recent_m3_line = i
-                    # Extract S parameter from this line (S can appear before or after M3)
-                    s_match = re.search(r"S(\d+)", line)
-                    if s_match:
-                        try:
-                            spindle_speed = float(s_match.group(1))
-                            return spindle_speed
-                        except (ValueError, TypeError):
-                            pass
+                    if spindle_speed is not None:
+                        return spindle_speed
                     # Found M3 but no S parameter, continue searching backwards
                     break
 
             # If we found M3 but no S parameter, search backwards for previous M3 with S
             if most_recent_m3_line is not None:
                 for i in range(most_recent_m3_line - 1, -1, -1):
-                    original_line = lines[i]
-                    line = original_line.strip()
-
-                    # Remove comments using string methods
-                    if ";" in line:
-                        line = line[: line.index(";")]
-                    # Remove parentheses comments using string methods
-                    while "(" in line and ")" in line:
-                        start_paren = line.index("(")
-                        end_paren = line.index(")", start_paren)
-                        line = line[:start_paren] + line[end_paren + 1 :]
-
-                    line = line.strip()
-                    if not line:
-                        continue
-
-                    # Check if line contains M3 (not M30, M31, etc.)
-                    line_upper = line.upper()
-                    # Use regex to find M3 that's not part of M30, M31, etc.
-                    # Look for M3 that's not followed by a digit (to avoid M30, M31, etc.)
-                    m3_match = re.search(r"M3(?![0-9])", line_upper)
-                    if m3_match:
-                        # Extract S parameter from this line (S can appear before or after M3)
-                        s_match = re.search(r"S(\d+)", line)
-                        if s_match:
-                            try:
-                                spindle_speed = float(s_match.group(1))
-                                return spindle_speed
-                            except (ValueError, TypeError):
-                                continue
+                    has_m3, spindle_speed = self._m3_spindle_speed_from_line(lines[i])
+                    if has_m3 and spindle_speed is not None:
+                        return spindle_speed
 
             return None
 
         except Exception as e:
             logger.warning(f"Error finding M3 spindle speed before line {start_line}: {e}")
             return None
+
+    def _m3_spindle_speed_from_line(self, line):
+        tokens = self._gcode_line_to_cmd_tokens(line)
+        has_m3 = any(self._command_token_matches_base(token, "M3") for token in tokens)
+        if not has_m3:
+            return (False, None)
+
+        for token in reversed(tokens):
+            if token[:1].upper() != "S":
+                continue
+            try:
+                return (True, float(token[1:]))
+            except (ValueError, TypeError):
+                continue
+        return (True, None)
 
     def _find_last_feed_rate(self, lines=None, start_line=None, feed_lookup=None):
         """
@@ -961,52 +923,16 @@ class Controller:
             if start_line < 1 or start_line > len(lines):
                 return None
 
-            # Search backwards for G1/G01/G2/G02/G3/G03 commands
+            # F is modal independently of a motion command, so the most recent
+            # feed word may be on a standalone or tightly packed G-code line.
             for i in range(start_line - 2, -1, -1):
-                original_line = lines[i]
-                line = original_line.strip()
-
-                # Remove comments using string methods
-                if ";" in line:
-                    line = line[: line.index(";")]
-                # Remove parentheses comments using string methods
-                while "(" in line and ")" in line:
-                    start_paren = line.index("(")
-                    end_paren = line.index(")", start_paren)
-                    line = line[:start_paren] + line[end_paren + 1 :]
-
-                line = line.strip()
-                if not line:
-                    continue
-
-                # Check if line contains G1/G01/G2/G02/G3/G03
-                line_upper = line.upper()
-                # Check for G1/G01/G2/G02/G3/G03 commands
-                # These can appear at start of line or anywhere in the line
-                g_commands = ["G1", "G01", "G2", "G02", "G3", "G03"]
-                found_g_command = False
-                for cmd in g_commands:
-                    # Check if command appears at start
-                    if line_upper.startswith(cmd):
-                        found_g_command = True
-                        break
-                    # Check if command appears in the middle of line (preceded by non-alphanumeric)
-                    cmd_pos = line_upper.find(cmd)
-                    if cmd_pos > 0 and not line_upper[cmd_pos - 1].isalnum():
-                        # Make sure it's not followed by a digit (to avoid matching G10, G20, etc.)
-                        if cmd_pos + len(cmd) >= len(line_upper) or not line_upper[cmd_pos + len(cmd)].isdigit():
-                            found_g_command = True
-                            break
-
-                if found_g_command:
-                    # Extract F parameter using regex
-                    f_match = re.search(r"F(\d+\.?\d*)", line)
-                    if f_match:
-                        try:
-                            feed_rate = float(f_match.group(1))
-                            return feed_rate
-                        except (ValueError, TypeError):
-                            continue
+                for token in reversed(self._gcode_line_to_cmd_tokens(lines[i])):
+                    if token[:1].upper() != "F":
+                        continue
+                    try:
+                        return float(token[1:])
+                    except (ValueError, TypeError):
+                        continue
 
             return None
 
@@ -1121,6 +1047,29 @@ class Controller:
                 return True
         return False
 
+    def resume_playback_warnings(self, commands):
+        """
+        Inspect resume-at-line command preview and return missing-state warning keys.
+
+        Returns a list that may include:
+          - "tool_change": no M6 tool change in the recovery sequence
+          - "feed": no G1 F feed rate restored
+          - "spindle_speed": no M3 S spindle speed restored (skipped for laser/M321)
+        """
+        if not commands:
+            return ["tool_change", "feed", "spindle_speed"]
+
+        joined = "\n".join(commands).upper()
+        warnings = []
+        if not re.search(r"\bM0*6\b", joined):
+            warnings.append("tool_change")
+        if not re.search(r"\bG0*1\s+F\d", joined):
+            warnings.append("feed")
+        # Laser mode does not use spindle S recovery
+        if not re.search(r"\bM321\b", joined) and not re.search(r"\bM0*3\s+S\d", joined):
+            warnings.append("spindle_speed")
+        return warnings
+
     def playStartLineCommand(self, filename, start_line, preview=False, lines=None, has_ocodes=False):
         # Build the play command with proper formatting
         flag = " -O" if has_ocodes else ""
@@ -1200,7 +1149,6 @@ class Controller:
 
             # Search for WCS coordinate space - find the last one used
             wcs_commands = [
-                ("G53", self._find_command_line_number(lines, start_line, "G53")),
                 ("G54", self._find_command_line_number(lines, start_line, "G54")),
                 ("G55", self._find_command_line_number(lines, start_line, "G55")),
                 ("G56", self._find_command_line_number(lines, start_line, "G56")),

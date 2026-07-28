@@ -189,6 +189,15 @@ from kivy.lang import Builder
 
 from . import Utils, custom_widgets
 from .__version__ import __version__
+from .addons.camera.CameraView import ADJUST_DEFAULT
+from .addons.camera.Z1Camera import (
+    DEFAULT_RESOLUTION,
+    RESOLUTION_BY_SIZE,
+    RESOLUTION_VALUES,
+    Z1Camera,
+    has_camera,
+    set_resolution,
+)
 from .addons.probing.ProbingControls import ProbeButton
 from .addons.tool_visualization import (
     extract_tool_table,
@@ -423,12 +432,15 @@ class GcodePlaySlider(Slider):
 class FloatBox(FloatLayout):
     touch_interval = 0
     color_scheme_panel = ObjectProperty(None)
+    camera_controls = ObjectProperty(None)
 
     def _viewer_chrome_hit(self, touch):
         if self.gcode_ctl_bar.collide_point(*touch.pos):
             return True
-        panel = self.color_scheme_panel
-        return bool(panel is not None and panel.collide_point(*touch.pos))
+        return any(
+            panel is not None and panel.collide_point(*touch.pos)
+            for panel in (self.color_scheme_panel, self.camera_controls)
+        )
 
     def on_touch_down(self, touch):
         if super().on_touch_down(touch):
@@ -455,15 +467,39 @@ class BoxStencil(BoxLayout, StencilView):
 
 class ConfirmPopup(ModalView):
     showing = False
+    content_scroll = ObjectProperty(None)
+    lb_title = ObjectProperty(None)
+    lb_content = ObjectProperty(None)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        # Capture KV (or constructor) defaults so expanded workflows can restore them.
+        self._default_size_hint = tuple(self.size_hint)
+        self._default_pos_hint = dict(self.pos_hint)
+        self._default_title_size_hint_y = self.lb_title.size_hint_y
+        self._default_content_halign = self.lb_content.halign
+
+    def dismiss(self, *largs, **kwargs):
+        # Instant dismiss so layout defaults restore before the next open.
+        kwargs.setdefault("animation", False)
+        return super().dismiss(*largs, **kwargs)
+
+    def reset_layout_defaults(self):
+        self.size_hint = self._default_size_hint
+        self.pos_hint = dict(self._default_pos_hint)
+        self.lb_title.size_hint_y = self._default_title_size_hint_y
+        self.lb_content.halign = self._default_content_halign
+        if self.content_scroll is not None:
+            self.content_scroll.scroll_y = 1
 
     def on_open(self):
         self.showing = True
+        if self.content_scroll is not None:
+            self.content_scroll.scroll_y = 1
 
     def on_dismiss(self):
         self.showing = False
+        self.reset_layout_defaults()
 
 
 class UnlockPopup(ModalView):
@@ -3113,6 +3149,15 @@ class Makera(RelativeLayout):
         Window.bind(on_resize=self._update_tool_button_icon_visibility)
         Clock.schedule_once(lambda _dt: self._refresh_tool_filter_buttons(), 0)
 
+        # init camera live view
+        self.camera_checked = False
+        self.camera_probe = 0
+        self.camera_stream = Z1Camera(
+            on_frame=self._show_camera_frame,
+            on_streaming=self._set_camera_streaming,
+            on_error=partial(self.show_message_popup, btn_disabled=False),
+        )
+
         # init settings
         self.config = ConfigParser()
         self.config_popup = ConfigPopup()
@@ -3749,9 +3794,37 @@ class Makera(RelativeLayout):
                 btn.device_path = device["device_path"]
                 btn.bind(on_release=lambda b: self.comports_drop_down.select(b.device_path))
                 self.comports_drop_down.add_widget(btn)
+        if Config.getboolean("carvera", "allow_manual_usb_device", fallback=False):
+            btn = Button(
+                text=tr._("Manually Enter"),
+                size_hint_y=None,
+                height="35dp",
+                color=(225 / 255, 225 / 255, 225 / 255, 1),
+            )
+            btn.bind(on_release=lambda btn: self.manually_input_usb_device())
+            self.comports_drop_down.add_widget(btn)
         self.comports_drop_down.unbind(on_select=self.usb_event)
         self.comports_drop_down.bind(on_select=self.usb_event)
         self.comports_drop_down.open(button)
+
+    def manually_input_usb_device(self):
+        self.input_popup.lb_title.text = tr._("Input USB device path:")
+        saved = Config.get("carvera", "manual_usb_device", fallback="") or ""
+        self.input_popup.txt_content.text = saved
+        self.input_popup.txt_content.password = False
+        self.input_popup.confirm = self.manually_open_usb
+        self.input_popup.open(self)
+        self.comports_drop_down.dismiss()
+        self.status_drop_down.dismiss()
+
+    def manually_open_usb(self):
+        device = self.input_popup.txt_content.text.strip()
+        self.input_popup.dismiss()
+        if not device:
+            return False
+        Config.set("carvera", "manual_usb_device", device)
+        Config.write()
+        self.openUSB(device)
 
     def open_spindle_or_laser_drop_down(self, button):
         if CNC.vars.get("lasermode", False):
@@ -4853,11 +4926,30 @@ class Makera(RelativeLayout):
             if os.path.exists(tmp_filename):
                 os.remove(tmp_filename)
             # show message popup
+            md5_failed = bool(
+                getattr(getattr(getattr(self.controller, "stream", None), "modem", None), "download_md5_failed", False)
+            )
             if was_config_download:
                 Clock.schedule_once(partial(self.finishLoadConfig, False), 0.1)
-                Clock.schedule_once(partial(self.show_message_popup, tr._("Download config file error!"), False), 0.2)
+                error_msg = (
+                    tr._(
+                        "Download config file error! The file MD5 hash doesn't match what is expected. "
+                        "Possibly corruption occured during transfer or on SD card."
+                    )
+                    if md5_failed
+                    else tr._("Download config file error!")
+                )
+                Clock.schedule_once(partial(self.show_message_popup, error_msg, False), 0.2)
             else:
-                Clock.schedule_once(partial(self.show_message_popup, tr._("Download file error!"), False), 0)
+                error_msg = (
+                    tr._(
+                        "Download file error! MD5 hash doesn't match what is expected. "
+                        "Possible corruption during transfer or on SD card."
+                    )
+                    if md5_failed
+                    else tr._("Download file error!")
+                )
+                Clock.schedule_once(partial(self.show_message_popup, error_msg, False), 0)
         elif download_result >= 0:
             if download_result > 0:
                 # download success
@@ -5018,6 +5110,9 @@ class Makera(RelativeLayout):
         if app.model == "CA1":
             CNC.vars["rotation_base_width"] = 300
             CNC.vars["rotation_head_width"] = 56.5
+        elif app.model == "Z1":
+            CNC.vars["rotation_base_width"] = 263
+            CNC.vars["rotation_head_width"] = 50
         elif app.model == "C1":
             if CNC.vars["FuncSetting"] & 1:
                 CNC.vars["rotation_base_width"] = 330
@@ -5409,6 +5504,44 @@ class Makera(RelativeLayout):
             return None
 
     # -----------------------------------------------------------------------
+    def _verify_deferred_download_md5(self, filepath):
+        """Verify a machine-advertised MD5 after .lz decompress. Returns False on mismatch."""
+        modem = getattr(getattr(self.controller, "stream", None), "modem", None)
+        expected = getattr(modem, "deferred_download_md5", None) if modem is not None else None
+        if modem is not None:
+            modem.deferred_download_md5 = None
+        if not expected:
+            return True
+
+        actual = Utils.md5(filepath)
+        if actual.lower() == expected.lower():
+            logger.info("Download MD5 matched after decompress: %s", actual)
+            return True
+
+        logger.error(
+            "Download error: MD5 mismatch after decompress (expected=%s, actual=%s)",
+            expected,
+            actual,
+        )
+        try:
+            if os.path.exists(filepath):
+                os.remove(filepath)
+        except OSError:
+            pass
+        Clock.schedule_once(
+            partial(
+                self.show_message_popup,
+                tr._(
+                    "Download file error! MD5 hash doesn't match what is expected. "
+                    "Possible corruption during transfer or on SD card."
+                ),
+                False,
+            ),
+            0,
+        )
+        return False
+
+    # -----------------------------------------------------------------------
     def decompress_file(self, input_filename, output_filename):
         try:
             # 打开输入文件和输出文件
@@ -5793,6 +5926,10 @@ class Makera(RelativeLayout):
                     app.fw_version_digitized = 0
                     app.is_community_firmware = False
                     app.supports_auto_ext_out = False
+                    app.supports_camera = False
+                    self.camera_checked = False
+                    self.camera_probe += 1  # discard the result of a probe still in flight
+                    self.camera_stream.stop()
                     self.controller.is_community_firmware = False
                     self.machine_metadata_query_time = 0
 
@@ -5839,6 +5976,15 @@ class Makera(RelativeLayout):
 
                     # Reset manual disconnect flag since we're now connected
                     self.controller._manual_disconnect = False
+
+                    # Look for a camera, only one time per connection
+                    if not self.camera_checked and self.controller.connection_type == CONN_WIFI:
+                        self.camera_checked = True
+                        self.camera_probe += 1
+                        host = self.controller.connection_address.split(":")[0]
+                        threading.Thread(
+                            target=self._detect_camera, args=(host, self.camera_probe), daemon=True
+                        ).start()
 
                 self.status_drop_down.btn_unlock.disabled = app.state != "Alarm" and app.state != "Sleep"
                 if (CNC.vars["halt_reason"] in HALT_REASON and CNC.vars["halt_reason"] > 20) or app.state == "Sleep":
@@ -7084,6 +7230,22 @@ class Makera(RelativeLayout):
             False,
         )
 
+    def _resume_playback_warning_text(self, warning_keys):
+        """Build translated warning text for missing resume recovery state."""
+        messages = {
+            "tool_change": tr._("- No tool change (M6)"),
+            "feed": tr._("- No feed rate (F)"),
+            "spindle_speed": tr._("- No spindle speed (M3 S...)"),
+        }
+        lines = [messages[key] for key in warning_keys if key in messages]
+        if not lines:
+            return ""
+        return (
+            tr._("WARNING: The resume recovery sequence was unable to find important state prior to the resume line:\n")
+            + "\n".join(lines)
+            + "\n"
+        )
+
     def open_resume_playback_confirm_popup(self, file_name, start_line):
         if self.confirm_popup.showing:
             return
@@ -7100,13 +7262,17 @@ class Makera(RelativeLayout):
             self.show_message_popup(tr._(f"Resume-at-line cannot run:\n\n{e}"), False)
             return
         commands_preview = "\n".join(commands)
+        warning_text = self._resume_playback_warning_text(self.controller.resume_playback_warnings(commands))
 
         self.confirm_popup.size_hint = (0.8, 0.8)
         self.confirm_popup.pos_hint = {"center_x": 0.5, "center_y": 0.5}
-        self.confirm_popup.lb_title.text = tr._("Beta Feature: Resume Playback")
+        self.confirm_popup.lb_title.text = tr._("Resume Playback")
+        self.confirm_popup.lb_title.size_hint_y = None
+        self.confirm_popup.lb_content.halign = "left"
         self.confirm_popup.lb_content.text = (
-            tr._(
-                'The "resume playback at line" functionality is beta. Please be prepared to e-stop your machine if it doesn\'t move correctly.\n\nCommands that will be executed:\n'
+            warning_text
+            + tr._(
+                "The Controller will run the below commands to restart this file. Please be prepared to e-stop your machine if it doesn't move as expected.\n\n"
             )
             + commands_preview
         )
@@ -7189,6 +7355,56 @@ class Makera(RelativeLayout):
                 self.gcode_play_to_start()
             self.gcode_playing = True
             self.gcode_viewer.dynamic_display = True
+
+    # -----------------------------------------------------------------------
+    def toggle_camera_stream(self):
+        if self.camera_stream.is_streaming():
+            self.camera_stream.stop()
+        elif App.get_running_app().supports_camera:
+            self.camera_stream.start(self.controller.connection_address.split(":")[0])
+
+    # -----------------------------------------------------------------------
+    def _detect_camera(self, host, probe):
+        found = has_camera(host)
+        Clock.schedule_once(partial(self._on_camera_detected, probe, found), 0)
+
+    # -----------------------------------------------------------------------
+    def _on_camera_detected(self, probe, found, *args):
+        """Ignore a probe that a disconnect or a newer probe has superseded."""
+        if probe != self.camera_probe:
+            return
+        App.get_running_app().supports_camera = found
+
+    # -----------------------------------------------------------------------
+    def set_camera_resolution(self, label):
+        """Apply a resolution the user picked from the camera panel.
+
+        Also absorbs the echo from _show_camera_frame updating the picker to
+        match what the stream is already sending.
+        """
+        app = App.get_running_app()
+        value = RESOLUTION_VALUES.get(label)
+        if value is None or value == app.camera_resolution:
+            return
+        app.camera_resolution = value
+        host = self.controller.connection_address.split(":")[0]
+        threading.Thread(target=set_resolution, args=(host, value), daemon=True).start()
+
+    # -----------------------------------------------------------------------
+    def _show_camera_frame(self, jpeg):
+        camera_view = self.ids.camera_view
+        camera_view.show_frame(jpeg)
+        # The machine cannot be asked what resolution it is on, so the frames
+        # themselves are what keeps the picker honest.
+        texture = camera_view.texture
+        if texture is not None:
+            value = RESOLUTION_BY_SIZE.get(tuple(texture.size))
+            if value is not None:
+                App.get_running_app().camera_resolution = value
+
+    # -----------------------------------------------------------------------
+    def _set_camera_streaming(self, streaming):
+        App.get_running_app().camera_streaming = streaming
 
     # -----------------------------------------------------------------------
     def clear_selection(self):
@@ -7412,6 +7628,8 @@ class Makera(RelativeLayout):
                 lzpath = lzpath + ".lz"
                 shutil.copyfile(filepath, lzpath)
                 if not self.decompress_file(lzpath, filepath):
+                    return
+                if not self._verify_deferred_download_md5(filepath):
                     return
 
             self.cnc.init()
@@ -7653,6 +7871,12 @@ class MakeraApp(App):
     loading_page = BooleanProperty(False)
     model = StringProperty("")
     is_community_firmware = BooleanProperty(False)
+    supports_camera = BooleanProperty(False)
+    camera_streaming = BooleanProperty(False)
+    camera_brightness = NumericProperty(ADJUST_DEFAULT)
+    camera_contrast = NumericProperty(ADJUST_DEFAULT)
+    camera_gamma = NumericProperty(ADJUST_DEFAULT)
+    camera_resolution = NumericProperty(DEFAULT_RESOLUTION)
     supports_auto_ext_out = BooleanProperty(False)
     fw_version_digitized = NumericProperty(0)
     show_tooltips = BooleanProperty(True)
@@ -7811,6 +8035,10 @@ def set_config_defaults(default_lang):
         Config.set("carvera", "custom_bkg_img_dir", "")
     if not Config.has_option("carvera", "invert_y_axis_jogging"):
         Config.set("carvera", "invert_y_axis_jogging", "0")
+    if not Config.has_option("carvera", "allow_manual_usb_device"):
+        Config.set("carvera", "allow_manual_usb_device", "0")
+    if not Config.has_option("carvera", "manual_usb_device"):
+        Config.set("carvera", "manual_usb_device", "")
     if not Config.has_option("carvera", "use_higher_baud"):
         Config.set("carvera", "use_higher_baud", "0")
     if not Config.has_option("carvera", "usb_baud_rate"):

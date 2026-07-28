@@ -25,7 +25,11 @@
 - Enhancement: Reconnect supports USB as well as WiFi. Configure preferred method for app-launch auto-connect
 - Enhancement: added green question mark help buttons to the UI that link to the relevant documentation page
 - Enhancement: Block sending the `reset` command over USB and show a popup directing the user to use the power switch instead
+- Enhancement: Initial Z1 support
+- Enhancement: Resume-at-line warns when the recovery sequence is missing a tool change, feed rate, or spindle speed
+- Enhancement: Live camera view for the Makera Z1. Resolution can be changed while streaming, and brightness, contrast and gamma adjusted while viewing
 - Fixed: Restore Keyboard Jogging state after Probing Popup is closed
+- Fixed: Confirmation dialogs no longer retain expanded layouts from laser and resume warnings
 - Fixed: Repeated firmware checks now happen just once
 - Fixed: UI widget updates from the SerialMonitor() now dispatched via the main thread. This should reduce the number of RecycleView related crashes
 - Fixed: Spindle temp reporting when running Analog type spindle without rpm reporting
@@ -45,6 +49,17 @@
 - Fixed: Status and diagnose parsers mishandled trailing newlines in Makera payloads (e.g. RSSI parse warnings)
 - Fixed: Fresh USB-only connects could immediately show "Connection to machine lost" while the machine was still booting after DTR reset; "Connection to machine lost" is now also logged
 - Fixed: Elapsed and remaining job timers now pause while playback is paused
+- Fixed: Sanitize missing or malformed spindle values before updating the WHB04 display
+- Fixed: Treat blank conditionally required X/Y probing inputs as missing
+- Fixed: Resume-at-line restores spindle speed from zero-padded M03 commands
+- Fixed: Ignore unknown WHB04 button values without reconnecting or dropping valid paired inputs
+- Fixed: Resume-at-line restores feed rates from standalone and tightly packed F words before recovery moves
+- Fixed: Resume-at-line no longer treats the non-modal G53 command as the active work coordinate system
+- Fixed: Reject downloads whose content does not match the machine-provided MD5. Skip MD5 check when none is available, and defer .lz checks until after decompress
+- Fixed: Ensure complete XMODEM packets are written over Wi-Fi
+- Fixed: Confirm popup content now scrolls and sizes to its text
+- Fixed: Dragging a slider that floats over the gcode viewer also orbited or panned the view behind it
+- Fixed: On the Makera Z1 firmware every download returns same placeholder MD5 hash instead of a digest failing the MD5 check
 - Change: Misleading "Download canceled by Controller!" MDI message is suppressed, in logs a message is recorded that cached version of the config.txt was used
 - Change: Remove remaining "Can not load config, Key:" messages from the MDI
 - Change: Resume playback will now use gcode loaded in the controller instead of cached local file

@@ -408,10 +408,16 @@ class Daemon:
             return
 
         pressed_buttons = set()
-        if button1 != 0:
-            pressed_buttons.add(Button(button1))
-        if button2 != 0:
-            pressed_buttons.add(Button(button2))
+        for raw_button in (button1, button2):
+            if raw_button == 0:
+                continue
+            try:
+                pressed_buttons.add(Button(raw_button))
+            except ValueError:
+                # Fast or noisy inputs can produce transient button values,
+                # just as they do for the rotary controls below. Preserve any
+                # valid button from the same packet instead of reconnecting.
+                pass
         newly_pressed = pressed_buttons - self._pressed_buttons
         newly_released = self._pressed_buttons - pressed_buttons
         self._pressed_buttons = pressed_buttons

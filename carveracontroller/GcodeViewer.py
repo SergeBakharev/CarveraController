@@ -204,6 +204,10 @@ TOOL_PALETTE = (
 DEFAULT_FEED_MM_MIN = 3000.0
 VERTEX_FLOAT_NUM = 11
 
+# Marks a touch this widget took on touch_down, so drags belonging to the
+# controls floating over it are not also treated as orbit or pan.
+TOUCH_CLAIMED = "gcode_viewer_claimed"
+
 COLOR_SCHEME_BY_TYPE = 0
 COLOR_SCHEME_BY_TOOL = 1
 COLOR_SCHEME_BY_SPEED = 2
@@ -1630,6 +1634,7 @@ class GCodeViewer(Widget):
                 if self._handle_view_cube_touch(touch):
                     return True
 
+                touch.ud[TOUCH_CLAIMED] = True
                 touchpos = [touch.pos[0], self.size[1] - touch.pos[1]]
                 self.m_lastPos = touchpos.copy()
                 self.m_xLastRot = self.m_xRot
@@ -1655,7 +1660,7 @@ class GCodeViewer(Widget):
                 print(sys.exc_info()[1])
 
     def on_touch_move(self, touch):
-        if self.collide_point(*touch.pos):
+        if touch.ud.get(TOUCH_CLAIMED) and self.collide_point(*touch.pos):
             try:
                 touchpos = [touch.pos[0], self.size[1] - touch.pos[1]]
 
@@ -1688,7 +1693,7 @@ class GCodeViewer(Widget):
                 print(sys.exc_info()[1])
 
     def on_touch_up(self, touch):
-        if self.collide_point(*touch.pos):
+        if touch.ud.get(TOUCH_CLAIMED) and self.collide_point(*touch.pos):
             try:
                 self.g_old_curosr = self.g_cursor = [touch.pos[0], touch.pos[1]]
             except:

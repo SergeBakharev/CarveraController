@@ -29,11 +29,11 @@ class BossOperation(OperationsBase):
     def get_missing_config(self, config: dict[str, float]):
         if self.requires_x:
             definition = BossParameterDefinitions.XAxisDistance
-            if not definition.code in config:
+            if definition.code not in config or not config[definition.code].strip():
                 return definition
         if self.requires_y:
             definition = BossParameterDefinitions.YAxisDistance
-            if not definition.code in config:
+            if definition.code not in config or not config[definition.code].strip():
                 return definition
         required_definitions = {
             name: value
