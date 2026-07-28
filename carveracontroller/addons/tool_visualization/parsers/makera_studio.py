@@ -84,12 +84,17 @@ def _parse_mkr_fields(line):
 
 
 def _taper_angle_from_fields(fields):
-    angle = _to_float(fields.get("angle"))
-    if angle is not None and angle > 0:
-        return angle
+    """Return Fusion-style taper: angle from the tool axis (per side), in degrees.
+
+    Prefer `halfAngle` when set. Makera's `angle` is the included tip angle, so
+    convert it to per-side when that is the only source.
+    """
     half_angle = _to_float(fields.get("halfAngle"))
     if half_angle is not None and half_angle > 0:
-        return 2.0 * half_angle
+        return half_angle
+    angle = _to_float(fields.get("angle"))
+    if angle is not None and angle > 0:
+        return angle / 2.0
     return None
 
 

@@ -48,7 +48,7 @@ class ToolDefinition:
     shank_diameter: float | None = None
     tip_diameter: float | None = None
     corner_radius: float | None = None
-    taper_angle_deg: float | None = None
+    taper_angle_deg: float | None = None  # Angle from the tool axis (per side), matching Fusion's "Taper angle".
     length: float | None = None
     flute_length: float | None = None
     shoulder_length: float | None = None

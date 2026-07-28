@@ -282,20 +282,23 @@ def _profile_length(tool_def, scale, diameter, shared_length=None):
 
 
 def _chamfer_cone_height(diameter, taper_angle_deg=DEFAULT_TAPER_ANGLE_DEG, tip_diameter=0.0):
-    """Axial height of the conical cutting tip for chamfer / engraving tools."""
+    """Axial height of the conical cutting tip for chamfer / engraving tools.
+    Note that taper_angle_deg is the Fusion-style angle from the tool axis (per side),
+    """
     radius = diameter / 2.0
     tip_radius = max(tip_diameter or 0.0, 0.0) / 2.0
     tip_radius = min(tip_radius, radius)
 
-    half_angle_rad = math.radians(taper_angle_deg) / 2.0
-    half_angle_rad = min(max(half_angle_rad, math.radians(5.0)), math.radians(85.0))
+    # Angle from the tool axis
+    alpha = math.radians(taper_angle_deg)
+    alpha = min(max(alpha, math.radians(5.0)), math.radians(85.0))
 
     if tip_radius <= 1e-9:
-        return radius / math.tan(half_angle_rad)
+        return radius / math.tan(alpha)
     radial_rise = radius - tip_radius
     if radial_rise <= 1e-9:
         return 0.0
-    return radial_rise / math.tan(half_angle_rad)
+    return radial_rise / math.tan(alpha)
 
 
 def _lollipop_neck_radius(diameter):
@@ -579,7 +582,10 @@ def _radius_mill_profile(diameter, length, corner_radius=0.0, **_kwargs):
 
 
 def _chamfer_or_tapered_profile(diameter, length, taper_angle_deg=DEFAULT_TAPER_ANGLE_DEG, tip_diameter=0.0, **_kwargs):
-    """Flat-tip (or pointed) conical profile for chamfer mills and engraving bits."""
+    """Flat-tip (or pointed) conical profile for chamfer mills and engraving bits.
+
+    `taper_angle_deg` is the angle from the tool axis (as defined in, for instance, Fusion).
+    """
     radius = diameter / 2.0
     tip_radius = max(tip_diameter or 0.0, 0.0) / 2.0
     tip_radius = min(tip_radius, radius)

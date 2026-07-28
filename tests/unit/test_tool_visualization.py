@@ -261,7 +261,7 @@ class TestMakeraStudioParser:
         assert tool.shoulder_length == 12.0
         assert tool.length == 12.0
 
-    def test_parses_engraving_half_angle_as_included_taper(self, parser):
+    def test_parses_engraving_half_angle_as_per_side_taper(self, parser):
         lines = [
             ";@MKR|TOOL|number=2|id=abc|name=V-bit|type=Engraving|handlediameter=3.175|"
             "sticklength=20|shoulderlength=0|flutelength=12|diameter=3.175|tipdiameter=0.1|"
@@ -271,12 +271,21 @@ class TestMakeraStudioParser:
 
         tool = table[2]
         assert tool.tool_type == ToolType.ENGRAVING
-        assert tool.taper_angle_deg == 30.0
+        assert tool.taper_angle_deg == 15.0
         assert tool.tip_diameter == 0.1
         assert tool.length == 20.0
         assert tool.flute_length == 12.0
         assert tool.shoulder_length is None
         assert tool.shank_diameter == 3.175
+
+    def test_parses_engraving_included_angle_as_per_side_taper(self, parser):
+        lines = [
+            ";@MKR|TOOL|number=3|id=abc|name=V-bit|type=Engraving|handlediameter=3.175|"
+            "sticklength=20|shoulderlength=0|flutelength=12|diameter=3.175|tipdiameter=0.1|"
+            "cornerradius=0|angle=60|halfAngle=0\n"
+        ]
+        tool = parser.parse(lines)[3]
+        assert tool.taper_angle_deg == 30.0
 
     def test_unknown_type_falls_back_to_unknown(self, parser):
         lines = [";@MKR|TOOL|number=3|id=x|name=Mystery|type=Mystery Cutter|diameter=6|cornerradius=0\n"]
@@ -698,6 +707,24 @@ class TestMeshBuilder:
             assert z0 == pytest.approx(z1)
             assert r0 == pytest.approx(r1)
 
+    def test_fusion_chamfer_taper_is_per_side_from_axis(self):
+        """Fusion TAPER=45deg is 45° from the axis → 90° included tip."""
+        diameter = 6.0
+        profile = tool_profile(
+            ToolDefinition(
+                number=1,
+                tool_type=ToolType.CHAMFER_MILL,
+                diameter=diameter,
+                tip_diameter=0.0,
+                taper_angle_deg=45.0,
+                flute_length=10.0,
+                length=18.0,
+            ),
+            length=18.0,
+        )
+        assert profile[0] == (0.0, 0.0)
+        assert profile[1] == (pytest.approx(diameter / 2.0), pytest.approx(diameter / 2.0))
+
     def test_radius_mill_interprets_diameter_as_flat_bottom(self):
         profile = tool_profile(
             ToolDefinition(number=2, tool_type=ToolType.RADIUS_MILL, diameter=2.0, corner_radius=2.0),
@@ -898,9 +925,9 @@ class TestMeshBuilder:
             number=1,
             tool_type=ToolType.CHAMFER_MILL,
             diameter=6.0,
-            taper_angle_deg=90.0,
+            # Fusion TAPER=45deg → 45° from axis → 90° included tip; cone height == radius.
+            taper_angle_deg=45.0,
         )
-        # 90° included → 45° half-angle → cone height == radius.
         vertices, _indices, _fmt = build_tool_mesh(tool_def, length=18.0)
         vertex_count = len(vertices) // FLOATS_PER_VERTEX
 
@@ -923,7 +950,7 @@ class TestMeshBuilder:
                 tool_type=ToolType.CHAMFER_MILL,
                 diameter=6.0,
                 shank_diameter=8.0,
-                taper_angle_deg=90.0,
+                taper_angle_deg=45.0,
                 length=18.0,
             )
         )
@@ -967,7 +994,7 @@ class TestMeshBuilder:
             number=1,
             tool_type=ToolType.CHAMFER_MILL,
             diameter=6.0,
-            taper_angle_deg=90.0,
+            taper_angle_deg=45.0,
             length=20.0,
             flute_length=12.0,
         )
