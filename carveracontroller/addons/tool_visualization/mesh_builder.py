@@ -20,6 +20,7 @@ FLOATS_PER_VERTEX = 12
 RADIAL_SEGMENTS = 20
 ROUND_SEGMENTS = 10
 DEFAULT_TAPER_ANGLE_DEG = 30.0
+DEFAULT_DRILL_TAPER_ANGLE_DEG = 59.0
 
 # Factor used to compute overall stick-out when length metadata is missing.
 LENGTH_DIAMETER_FACTOR = 6.0
@@ -317,7 +318,7 @@ def _lollipop_ball_join_z(diameter):
 
 def _infer_flute_length(tool_def):
     """Guess flute length from tip geometry when CAM metadata omits it:
-    - Chamfer / engraving: Cone height from diameter + taper (+ tip Ø)
+    - Chamfer / engraving / drill: Cone height from diameter + taper (+ tip Ø)
     - Lollipop: Sphere -> neck join
     - Ball end: One diameter (hemisphere + short cylinder)
     - Thread mill: One tooth ≈ pitch
@@ -336,7 +337,7 @@ def _infer_flute_length(tool_def):
     if tool_type is ToolType.LOLLIPOP_MILL:
         return _lollipop_ball_join_z(diameter)
 
-    if tool_type in (ToolType.CHAMFER_MILL, ToolType.ENGRAVING):
+    if tool_type in (ToolType.CHAMFER_MILL, ToolType.ENGRAVING, ToolType.DRILL):
         taper = _safe_taper_angle_deg(tool_def)
         tip_diameter = _safe_tip_diameter(tool_def, diameter)
         height = _chamfer_cone_height(diameter, taper, tip_diameter)
@@ -429,7 +430,11 @@ def _safe_tip_diameter(tool_def, diameter):
     tip_diameter = getattr(tool_def, "tip_diameter", None) if tool_def else None
     if tip_diameter is None or tip_diameter < 0:
         return 0.0
-    return min(tip_diameter, diameter)
+    tip = min(tip_diameter, diameter)
+    # Drills are pointed; tip Ø matching cutting Ø is treated as unset.
+    if getattr(tool_def, "tool_type", None) is ToolType.DRILL and tip >= diameter - 1e-9:
+        return 0.0
+    return tip
 
 
 def _append_shank_geometry(points, shoulder_z, overall_z, shank_radius):
@@ -480,6 +485,9 @@ def _safe_corner_radius(tool_def, diameter, tool_type=None):
 def _safe_taper_angle_deg(tool_def):
     angle = getattr(tool_def, "taper_angle_deg", None) if tool_def else None
     if angle is None or angle < 0 or angle >= 180:
+        tool_type = getattr(tool_def, "tool_type", None) if tool_def else None
+        if tool_type is ToolType.DRILL:
+            return DEFAULT_DRILL_TAPER_ANGLE_DEG
         return DEFAULT_TAPER_ANGLE_DEG
     return angle
 
@@ -685,6 +693,7 @@ PROFILE_BUILDERS = {
     ToolType.ENGRAVING: _chamfer_or_tapered_profile,
     ToolType.TAPERED_MILL: _tapered_mill_profile,
     ToolType.LOLLIPOP_MILL: _lollipop_profile,
+    ToolType.DRILL: _chamfer_or_tapered_profile,
 }
 
 

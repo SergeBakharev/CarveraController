@@ -203,6 +203,25 @@ class TestFusion360MakeraParser:
         assert table[1].corner_radius == 0.0
         assert table[1].tool_type == ToolType.FLAT_END_MILL
 
+    def test_parses_drill_with_included_tip_angle(self, parser):
+        lines = [
+            "(T5  3*12mm Drill  Makera    D=3. SD=3. TD=0. FL=12. SL=12. BL=26. TAPER=118deg - ZMIN=-25.67 - drill)\n"
+        ]
+        table = parser.parse(lines)
+
+        tool = table[5]
+        assert tool.tool_type == ToolType.DRILL
+        assert tool.diameter == 3.0
+        assert tool.shank_diameter == 3.0
+        assert tool.tip_diameter == 0.0
+        assert tool.flute_length == 12.0
+        assert tool.shoulder_length == 12.0
+        assert tool.length == 26.0
+        assert tool.taper_angle_deg == 59.0  # included 118° → per-side 59°
+        assert tool.description == "3*12mm Drill"
+        assert tool.vendor == "Makera"
+        assert tool.type_name == "drill"
+
 
 class TestMakeraStudioParser:
     @pytest.fixture
@@ -287,6 +306,86 @@ class TestMakeraStudioParser:
         tool = parser.parse(lines)[3]
         assert tool.taper_angle_deg == 30.0
 
+    def test_parses_complex_makera_studio_tool_header(self, parser):
+        lines = [
+            ";@MKR|TOOL|number=1|id=112111203808|name=3.175*2*8mm Flat End(Metal)|type=Flat End|"
+            "handlediameter=3.175|sticklength=0|shoulderlength=8|flutelength=8|diameter=2|"
+            "tipdiameter=2|cornerradius=0|angle=0|halfAngle=0\n",
+            ";@MKR|TOOL|number=2|id=142212313812|name=3.175*12mm Drill|type=Drill|"
+            "handlediameter=3.175|sticklength=0|shoulderlength=12|flutelength=12|diameter=3.175|"
+            "tipdiameter=3.175|cornerradius=0|angle=0|halfAngle=0\n",
+            ";@MKR|TOOL|number=3|id=152111243809|name=3.175*M3*9mm Thread|type=Thread|"
+            "handlediameter=3.175|sticklength=0|shoulderlength=9|flutelength=10|diameter=2.42|"
+            "tipdiameter=0|cornerradius=0|angle=0|halfAngle=0\n",
+            ";@MKR|TOOL|number=4|id=122111013890|name=3.175mm*90º Chamfer|type=V-Bit|"
+            "handlediameter=3.175|sticklength=0|shoulderlength=0|flutelength=1.6|diameter=3.175|"
+            "tipdiameter=0.1|cornerradius=0|angle=90|halfAngle=0\n",
+            ";@MKR|TOOL|number=5|id=112131605017|name=6*17mm Flat End(Metal)|type=Flat End|"
+            "handlediameter=6|sticklength=0|shoulderlength=17|flutelength=17|diameter=6|"
+            "tipdiameter=6|cornerradius=0|angle=0|halfAngle=0\n",
+        ]
+        table = parser.parse(lines)
+
+        assert set(table) == {1, 2, 3, 4, 5}
+
+        flat = table[1]
+        assert flat.tool_type == ToolType.FLAT_END_MILL
+        assert flat.diameter == 2.0
+        assert flat.shank_diameter == 3.175
+        assert flat.length == 8.0
+        assert flat.product_id == "112111203808"
+
+        drill = table[2]
+        assert drill.tool_type == ToolType.DRILL
+        assert drill.diameter == 3.175
+        assert drill.shank_diameter == 3.175
+        assert drill.length == 12.0
+        assert drill.type_name == "Drill"
+
+        thread = table[3]
+        assert thread.tool_type == ToolType.THREAD_MILL
+        assert thread.diameter == 2.42
+        assert thread.flute_length == 10.0
+        assert thread.shoulder_length == 9.0
+        assert thread.length == 9.0
+        assert thread.tip_diameter == 0.0
+
+        vbit = table[4]
+        assert vbit.tool_type == ToolType.CHAMFER_MILL
+        assert vbit.type_name == "V-Bit"
+        assert vbit.tip_diameter == 0.1
+        assert vbit.taper_angle_deg == 45.0  # included 90° → per-side 45°
+        assert vbit.flute_length == 1.6
+        assert vbit.shoulder_length is None
+        assert vbit.length is None
+
+        flat6 = table[5]
+        assert flat6.tool_type == ToolType.FLAT_END_MILL
+        assert flat6.diameter == 6.0
+        assert flat6.shank_diameter == 6.0
+        assert flat6.length == 17.0
+
+    def test_maps_ball_nose_and_tapered_ball_nose(self, parser):
+        lines = [
+            ";@MKR|TOOL|number=1|id=a|name=Ball|type=Ball Nose|handlediameter=3.175|"
+            "sticklength=0|shoulderlength=12|flutelength=12|diameter=2|tipdiameter=2|"
+            "cornerradius=0|angle=0|halfAngle=0\n",
+            ";@MKR|TOOL|number=2|id=b|name=Tapered|type=Tapered Ball Nose|handlediameter=6|"
+            "sticklength=0|shoulderlength=20|flutelength=15|diameter=2|tipdiameter=2|"
+            "cornerradius=0|angle=10|halfAngle=0\n",
+            ";@MKR|TOOL|number=3|id=c|name=Bull|type=Bull Nose|handlediameter=6|"
+            "sticklength=0|shoulderlength=20|flutelength=15|diameter=6|tipdiameter=6|"
+            "cornerradius=1|angle=0|halfAngle=0\n",
+        ]
+        table = parser.parse(lines)
+
+        assert table[1].tool_type == ToolType.BALL_END_MILL
+        assert table[2].tool_type == ToolType.TAPERED_MILL
+        assert table[2].corner_radius == 1.0  # inferred D/2 for ball tip
+        assert table[2].taper_angle_deg == 5.0  # included 10° → per-side 5°
+        assert table[3].tool_type == ToolType.BULL_NOSE_END_MILL
+        assert table[3].corner_radius == 1.0
+
     def test_unknown_type_falls_back_to_unknown(self, parser):
         lines = [";@MKR|TOOL|number=3|id=x|name=Mystery|type=Mystery Cutter|diameter=6|cornerradius=0\n"]
         table = parser.parse(lines)
@@ -303,8 +402,15 @@ class TestToolDefinitionHelpers:
     def test_resolve_tool_type_normalises_names(self):
         assert resolve_tool_type("  Flat   End   Mill ", TOOL_TYPE_NAME_MAP) == ToolType.FLAT_END_MILL
         assert resolve_tool_type("", TOOL_TYPE_NAME_MAP) == ToolType.UNKNOWN
+        assert resolve_tool_type("drill", TOOL_TYPE_NAME_MAP) == ToolType.DRILL
         assert resolve_tool_type("Flat End", MAKERA_STUDIO_TOOL_TYPE_NAME_MAP) == ToolType.FLAT_END_MILL
         assert resolve_tool_type("Engraving", MAKERA_STUDIO_TOOL_TYPE_NAME_MAP) == ToolType.ENGRAVING
+        assert resolve_tool_type("Ball Nose", MAKERA_STUDIO_TOOL_TYPE_NAME_MAP) == ToolType.BALL_END_MILL
+        assert resolve_tool_type("V-Bit", MAKERA_STUDIO_TOOL_TYPE_NAME_MAP) == ToolType.CHAMFER_MILL
+        assert resolve_tool_type("Drill", MAKERA_STUDIO_TOOL_TYPE_NAME_MAP) == ToolType.DRILL
+        assert resolve_tool_type("Tapered Ball Nose", MAKERA_STUDIO_TOOL_TYPE_NAME_MAP) == ToolType.TAPERED_MILL
+        assert resolve_tool_type("Thread", MAKERA_STUDIO_TOOL_TYPE_NAME_MAP) == ToolType.THREAD_MILL
+        assert resolve_tool_type("Bull Nose", MAKERA_STUDIO_TOOL_TYPE_NAME_MAP) == ToolType.BULL_NOSE_END_MILL
 
     def test_infer_shank_diameter(self):
         assert _infer_shank_diameter(ToolType.FLAT_END_MILL, 6.0) == 6.0
@@ -328,6 +434,10 @@ class TestIconBuilder:
 
     def test_maps_engraving_to_default_pointed_icon(self):
         tool_def = ToolDefinition(number=1, tool_type=ToolType.ENGRAVING)
+        assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/pointed_mill_thumb.png"
+
+    def test_maps_drill_to_default_pointed_icon(self):
+        tool_def = ToolDefinition(number=1, tool_type=ToolType.DRILL)
         assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/pointed_mill_thumb.png"
 
     def test_tooltip_icons_use_full_body_assets(self):
@@ -573,6 +683,24 @@ class TestMeshBuilder:
 
         assert len(_apex_vertex_indices(vertices)) == 1
 
+    def test_drill_uses_pointed_tip_with_default_taper_when_metadata_missing(self):
+        # tip Ø == cutting Ø is treated as unset for drills (pointed tip).
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.DRILL,
+            diameter=3.175,
+            tip_diameter=3.175,
+            length=12.0,
+            flute_length=12.0,
+        )
+        profile = tool_profile(tool_def)
+
+        assert profile[0] == pytest.approx((0.0, 0.0))
+        # Default 118° point → 59° per side; cone height = r / tan(59°).
+        expected_cone = (3.175 / 2.0) / math.tan(math.radians(59.0))
+        assert profile[1][0] == pytest.approx(expected_cone)
+        assert profile[1][1] == pytest.approx(3.175 / 2.0)
+
     @pytest.mark.parametrize(
         "tool_type",
         [
@@ -582,6 +710,7 @@ class TestMeshBuilder:
             ToolType.TAPERED_MILL,
             ToolType.LOLLIPOP_MILL,
             ToolType.THREAD_MILL,
+            ToolType.DRILL,
         ],
     )
     def test_tool_profiles_have_expected_shape(self, tool_type):

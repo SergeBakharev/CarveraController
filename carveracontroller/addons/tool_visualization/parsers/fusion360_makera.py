@@ -7,6 +7,9 @@ T<number>  <description>  <vendor>  <productId>  D=<diameter>
   [CR=<cornerRadius>] [SD=<shaftDiameter>] [TD=<tipDiameter>] [FL=<fluteLength>]
   [SL=<shoulderLength>] [BL=<bodyLength>] [TP=<threadPitch>] [TAPER=<angle>deg]
   [- ZMIN=<zmin>] - <toolTypeName>
+
+TAPER is Fusion's taperAngle in degrees: per-side from the tool axis for mills,
+or the included tip/point angle for drills (converted to per-side on parse).
 """
 
 import logging
@@ -27,6 +30,7 @@ TOOL_TYPE_NAME_MAP = {
     "tapered mill": ToolType.TAPERED_MILL,
     "lollipop mill": ToolType.LOLLIPOP_MILL,
     "thread mill": ToolType.THREAD_MILL,
+    "drill": ToolType.DRILL,
 }
 
 _NUMBER = r"[-+]?\d+\.?\d*"
@@ -62,6 +66,19 @@ def _positive_or_none(value):
     if value is None or value <= 0:
         return None
     return value
+
+
+def _taper_angle_from_fusion(tool_type, taper_deg):
+    """Return Fusion TAPER as angle from the tool axis (per side), in degrees.
+
+    For mills, Fusion's taperAngle is already per-side. For drills, TAPER is the
+    included tip/point angle, so convert to per-side.
+    """
+    if taper_deg is None:
+        return None
+    if tool_type is ToolType.DRILL:
+        return taper_deg / 2.0
+    return taper_deg
 
 
 def _infer_shank_diameter(tool_type, diameter, corner_radius=None):
@@ -156,7 +173,7 @@ class Fusion360MakeraParser(ToolTableParser):
             else _infer_shank_diameter(tool_type, diameter, corner_radius),
             tip_diameter=tip_diameter,
             corner_radius=corner_radius,
-            taper_angle_deg=_to_float(match.group("taper")),
+            taper_angle_deg=_taper_angle_from_fusion(tool_type, _to_float(match.group("taper"))),
             length=body_length if body_length is not None else shoulder_length,
             flute_length=flute_length,
             shoulder_length=shoulder_length,

@@ -18,6 +18,7 @@ class ToolType(Enum):
     TAPERED_MILL = "tapered_mill"
     LOLLIPOP_MILL = "lollipop_mill"
     THREAD_MILL = "thread_mill"
+    DRILL = "drill"
     UNKNOWN = "unknown"
 
 

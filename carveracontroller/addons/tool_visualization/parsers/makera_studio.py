@@ -9,28 +9,25 @@ file. Each tool is one line:
 import logging
 
 from carveracontroller.addons.tool_visualization.parsers.base import ToolTableParser
-from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition, ToolType, resolve_tool_type
+from carveracontroller.addons.tool_visualization.tool_definition import (
+    ToolDefinition,
+    ToolType,
+    normalize_tool_type_name,
+    resolve_tool_type,
+)
 
 logger = logging.getLogger(__name__)
 
-# Tool type names as exported by Makera Studio
-# TODO Update with confirmed IDs from Makera Studio.
+# Tool type names as exported by Makera Studio (`type=` field).
 TOOL_TYPE_NAME_MAP = {
     "flat end": ToolType.FLAT_END_MILL,
-    "ball end": ToolType.BALL_END_MILL,
-    "bull nose": ToolType.BULL_NOSE_END_MILL,
-    "bullnose": ToolType.BULL_NOSE_END_MILL,
-    "radius": ToolType.RADIUS_MILL,
-    "radius mill": ToolType.RADIUS_MILL,
+    "ball nose": ToolType.BALL_END_MILL,
+    "v-bit": ToolType.CHAMFER_MILL,
     "engraving": ToolType.ENGRAVING,
-    "chamfer": ToolType.CHAMFER_MILL,
-    "chamfer mill": ToolType.CHAMFER_MILL,
-    "tapered": ToolType.TAPERED_MILL,
-    "tapered mill": ToolType.TAPERED_MILL,
-    "lollipop": ToolType.LOLLIPOP_MILL,
-    "lollipop mill": ToolType.LOLLIPOP_MILL,
+    "bull nose": ToolType.BULL_NOSE_END_MILL,
+    "drill": ToolType.DRILL,
     "thread": ToolType.THREAD_MILL,
-    "thread mill": ToolType.THREAD_MILL,
+    "tapered ball nose": ToolType.TAPERED_MILL,
 }
 
 _MKR_PREFIX = ";@MKR|"
@@ -146,15 +143,24 @@ class MakeraStudioParser(ToolTableParser):
     @staticmethod
     def _build_tool_definition(number, fields):
         type_name = fields.get("type", "") or ""
+        tool_type = resolve_tool_type(type_name, TOOL_TYPE_NAME_MAP)
         handle_diameter = _positive_or_none(_to_float(fields.get("handlediameter")))
+        diameter = _to_float(fields.get("diameter"))
+        tip_diameter = _to_float(fields.get("tipdiameter"))
+        corner_radius = _to_float(fields.get("cornerradius"))
+
+        # Tapered Ball Nose is a ball tip (CR = D/2) with a conical taper above.
+        if normalize_tool_type_name(type_name) == "tapered ball nose" and diameter is not None and diameter > 0:
+            if corner_radius is None or corner_radius <= 0:
+                corner_radius = diameter / 2.0
 
         return ToolDefinition(
             number=number,
-            tool_type=resolve_tool_type(type_name, TOOL_TYPE_NAME_MAP),
-            diameter=_to_float(fields.get("diameter")),
+            tool_type=tool_type,
+            diameter=diameter,
             shank_diameter=handle_diameter,
-            tip_diameter=_to_float(fields.get("tipdiameter")),
-            corner_radius=_to_float(fields.get("cornerradius")),
+            tip_diameter=tip_diameter,
+            corner_radius=corner_radius,
             taper_angle_deg=_taper_angle_from_fields(fields),
             length=_stick_length_from_fields(fields),
             flute_length=_positive_or_none(_to_float(fields.get("flutelength"))),

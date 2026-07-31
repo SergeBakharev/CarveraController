@@ -17,6 +17,7 @@ TOOL_TYPE_ICONS = {
     ToolType.TAPERED_MILL: f"{TOOLS_ICON_DIR}/tapered_mill.png",
     ToolType.LOLLIPOP_MILL: f"{TOOLS_ICON_DIR}/lollipop_mill.png",
     ToolType.THREAD_MILL: f"{TOOLS_ICON_DIR}/thread_mill.png",
+    ToolType.DRILL: DEFAULT_ICON,
     ToolType.UNKNOWN: DEFAULT_ICON,
 }
 
@@ -31,6 +32,7 @@ TOOL_TYPE_THUMB_ICONS = {
     ToolType.TAPERED_MILL: f"{TOOLS_ICON_DIR}/tapered_mill_thumb.png",
     ToolType.LOLLIPOP_MILL: f"{TOOLS_ICON_DIR}/lollipop_mill_thumb.png",
     ToolType.THREAD_MILL: f"{TOOLS_ICON_DIR}/thread_mill_thumb.png",
+    ToolType.DRILL: DEFAULT_THUMB_ICON,
     ToolType.UNKNOWN: DEFAULT_THUMB_ICON,
 }
 

@@ -14,6 +14,7 @@ TOOL_TYPE_MSGIDS = {
     ToolType.TAPERED_MILL: "Tapered Mill",
     ToolType.LOLLIPOP_MILL: "Lollipop Mill",
     ToolType.THREAD_MILL: "Thread Mill",
+    ToolType.DRILL: "Drill",
 }
 
 # Title size in px
@@ -47,6 +48,10 @@ def _format_dimension_lines(tool_def):
 
     if _is_meaningful(tool_def.corner_radius):
         lines.append(tr._("Corner radius: {value:g}").format(value=tool_def.corner_radius))
+
+    # Tip Ø is noise when it matches the cutting diameter (flat/ball/drill exports).
+    if _is_meaningful(tool_def.tip_diameter) and tool_def.tip_diameter != tool_def.diameter:
+        lines.append(tr._("Tip diameter: {value:g}").format(value=tool_def.tip_diameter))
 
     if _is_meaningful(tool_def.taper_angle_deg):
         lines.append(tr._("Taper: {value:g}°").format(value=tool_def.taper_angle_deg))
