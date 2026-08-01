@@ -40,13 +40,21 @@ SHANK_TRANSITION_MAX_FRACTION = 0.5
 INFERRED_SHOULDER_DIAMETER_FACTOR = 1.0
 INFERRED_SHOULDER_MAX_FRACTION = 0.5
 
+# Undercut neck diameter of a lollipop mill as a fraction of the ball diameter.
+# Parsers cannot infer a shaft size for this type, so this is always what draws
+# the neck; real undercutting end mills sit around 0.55-0.6 of the cutter Ø.
+LOLLIPOP_NECK_DIAMETER_FACTOR = 0.55
+
 # Minimum radius and length for tools to be visible on screen.
 MIN_VISIBLE_RADIUS = 0.02
 MIN_SHANK_LENGTH = 0.05
 
-# Fixed on-screen size for tools with no CAM metadata (scaled viewer coordinates).
+# Fixed on-screen size for tools with no CAM metadata (scaled viewer coordinates,
+# where the toolpath bbox spans 2.0 on its largest side). Height follows the same
+# stick-out ratio as a tool that only declares a diameter, so the no-metadata
+# pointer stays in the same ballpark as a real one instead of towering over the job.
 FALLBACK_TOOL_DISPLAY_RADIUS = 0.04
-FALLBACK_TOOL_DISPLAY_HEIGHT = 1.3
+FALLBACK_TOOL_DISPLAY_HEIGHT = FALLBACK_TOOL_DISPLAY_RADIUS * 2.0 * LENGTH_DIAMETER_FACTOR
 
 
 def _segment_tangent(profile, start, end):
@@ -303,9 +311,7 @@ def _chamfer_cone_height(diameter, taper_angle_deg=DEFAULT_TAPER_ANGLE_DEG, tip_
 
 
 def _lollipop_neck_radius(diameter):
-    radius = diameter / 2.0
-    neck_radius = max(radius * 0.35, diameter * 0.15)
-    return min(neck_radius, radius * 0.95)
+    return diameter / 2.0 * LOLLIPOP_NECK_DIAMETER_FACTOR
 
 
 def _lollipop_ball_join_z(diameter):
