@@ -213,9 +213,11 @@ from .CNC import (
     OCODE_PATTERN,
     PROBE_3D_TOOL_NUMBER,
     ZPROBE_TOOL_NUMBER,
+    detect_document_unit,
     escape_gcode_markup,
     highlight_gcode_line,
     is_probe_tools_range,
+    unit_scale_to_mm,
 )
 from .Controller import (
     CONN_USB,
@@ -2965,6 +2967,7 @@ class Makera(RelativeLayout):
     tool_change_markers = []
     tool_table = {}
     tool_icons = DictProperty({})
+    document_unit = "mm"
     show_tool_button_icons = BooleanProperty(False)
 
     # Custom property to monitor CNC light state
@@ -4446,7 +4449,7 @@ class Makera(RelativeLayout):
             return "Custom Probe"
 
         tool_def = self.tool_table.get(tool_number)
-        tooltip = format_tool_tooltip(tool_def, markup=False) if tool_def else ""
+        tooltip = format_tool_tooltip(tool_def, markup=False, unit=self.document_unit) if tool_def else ""
         return tooltip if tooltip else str(tool_number)
 
     # -----------------------------------------------------------------------
@@ -7415,7 +7418,9 @@ class Makera(RelativeLayout):
         self.used_tools = []
         self.upcoming_tool = 0
         self.tool_table = {}
+        self.document_unit = "mm"
         self.gcode_viewer.tool_table = {}
+        self.gcode_viewer.tool_unit_scale = 1.0
         self._refresh_tool_filter_buttons()
         self._clear_tool_change_markers()
         app = App.get_running_app()
@@ -7610,7 +7615,9 @@ class Makera(RelativeLayout):
         self.used_tools = []
         self.tool_change_markers = []
         self.tool_table = {}
+        self.document_unit = "mm"
         self.gcode_viewer.tool_table = {}
+        self.gcode_viewer.tool_unit_scale = 1.0
         Clock.schedule_once(self.load_start)
         f = None
         try:
@@ -7637,8 +7644,11 @@ class Makera(RelativeLayout):
             self.lines = f.readlines()
             self.selected_file_line_count = len(self.lines)
             f.close()
+
+            self.document_unit = detect_document_unit(self.lines)
             self.tool_table = extract_tool_table(self.lines)
             self.gcode_viewer.tool_table = self.tool_table
+            self.gcode_viewer.tool_unit_scale = unit_scale_to_mm(self.document_unit)
             self._refresh_tool_filter_buttons()
             app = App.get_running_app()
             app.total_pages = int(self.selected_file_line_count / MAX_LOAD_LINES) + (
@@ -7743,7 +7753,7 @@ class Makera(RelativeLayout):
                 tool_button.tooltip_horizontal = True
                 tool_button.tooltip_image_size = (64, 64)
                 tool_button.tooltip_image = get_tool_tooltip_icon_path(tool_def)
-                tool_button.tooltip_txt = format_tool_tooltip(tool_def)
+                tool_button.tooltip_txt = format_tool_tooltip(tool_def, unit=self.document_unit)
             else:
                 tool_button.tooltip_txt = ""
                 tool_button.tooltip_image = ""

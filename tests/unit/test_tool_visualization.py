@@ -44,6 +44,7 @@ from carveracontroller.addons.tool_visualization.parsers.makera_studio import (
     MakeraStudioParser,
 )
 from carveracontroller.addons.tool_visualization.tool_definition import resolve_tool_type
+from carveracontroller.CNC import unit_scale_to_mm
 
 
 def _max_xy_radius(vertices):
@@ -599,18 +600,22 @@ class TestTooltipBuilder:
         tooltip = format_tool_tooltip(tool_def)
 
         assert tooltip == (
-            "[size=17]T2 · Bull Nose End Mill[/size]\n"
-            "Roughing endmill\n"
-            "Makera\n"
+            "[size=17sp]T2 · Bull Nose End Mill[/size]\n"
+            "[size=13sp]Roughing endmill[/size]\n"
+            "[size=12sp][color=#8a8a8a]Makera[/color][/size]\n"
             "\n"
-            "Diameter: 6\n"
-            "Corner radius: 0.5\n"
-            "Taper: 5°"
+            "[color=#8a8a8a]Ø[/color] 6 mm"
+            " [color=#8a8a8a]·[/color] "
+            "[color=#8a8a8a]Corner radius[/color] 0.5 mm"
+            " [color=#8a8a8a]·[/color] "
+            "[color=#8a8a8a]Taper[/color] 5°"
         )
 
     def test_uses_enum_label_when_type_name_missing(self):
         tool_def = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=3.0)
-        assert format_tool_tooltip(tool_def) == "[size=17]T1 · Flat End Mill[/size]\n\nDiameter: 3"
+        assert format_tool_tooltip(tool_def) == (
+            "[size=17sp]T1 · Flat End Mill[/size]\n\n[color=#8a8a8a]Ø[/color] 3 mm"
+        )
 
     def test_prefers_enum_label_over_raw_type_name(self):
         tool_def = ToolDefinition(
@@ -619,7 +624,7 @@ class TestTooltipBuilder:
             diameter=6.0,
             type_name="flat end mill",
         )
-        assert format_tool_tooltip(tool_def).startswith("[size=17]T1 · Flat End Mill[/size]")
+        assert format_tool_tooltip(tool_def).startswith("[size=17sp]T1 · Flat End Mill[/size]")
 
     def test_falls_back_to_raw_type_name_for_unknown_type(self):
         tool_def = ToolDefinition(
@@ -628,7 +633,7 @@ class TestTooltipBuilder:
             diameter=4.0,
             type_name="CNC HSS Slot Drill",
         )
-        assert format_tool_tooltip(tool_def).startswith("[size=17]T9 · CNC HSS Slot Drill[/size]")
+        assert format_tool_tooltip(tool_def).startswith("[size=17sp]T9 · CNC HSS Slot Drill[/size]")
 
     def test_plain_text_without_markup(self):
         tool_def = ToolDefinition(
@@ -640,8 +645,12 @@ class TestTooltipBuilder:
             type_name="Bull nose end mill",
         )
         assert format_tool_tooltip(tool_def, markup=False) == (
-            "T2 · Bull Nose End Mill\nRoughing endmill\nMakera\n\nDiameter: 6"
+            "T2 · Bull Nose End Mill\nRoughing endmill\nMakera\n\nØ 6 mm"
         )
+
+    def test_appends_inch_unit_when_requested(self):
+        tool_def = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=0.25)
+        assert "Ø 0.25 in" in format_tool_tooltip(tool_def, markup=False, unit="in")
 
     def test_escapes_markup_in_user_fields(self):
         tool_def = ToolDefinition(
@@ -669,12 +678,12 @@ class TestTooltipBuilder:
         )
         tooltip = format_tool_tooltip(tool_def)
 
-        assert "Diameter: 3.175" in tooltip
-        assert "Length: 20" in tooltip
-        assert "Flute length: 12" in tooltip
+        assert "Ø[/color] 3.175 mm" in tooltip
+        assert "Length[/color] 20 mm" in tooltip
+        assert "Flute[/color] 12 mm" in tooltip
         assert "Engraving" in tooltip
         # Redundant shank matching diameter is omitted.
-        assert "Shank:" not in tooltip
+        assert "Shank" not in tooltip
 
     def test_hides_zero_corner_radius_and_shows_distinct_shank(self):
         tool_def = ToolDefinition(
@@ -687,9 +696,33 @@ class TestTooltipBuilder:
         )
         tooltip = format_tool_tooltip(tool_def)
 
-        assert "Corner radius:" not in tooltip
-        assert "Shank: 6" in tooltip
-        assert tooltip.startswith("[size=17]T5 · Radius Mill[/size]")
+        assert "Corner radius" not in tooltip
+        assert "Shank[/color] 6 mm" in tooltip
+        assert tooltip.startswith("[size=17sp]T5 · Radius Mill[/size]")
+
+    def test_groups_thread_mill_dimensions(self):
+        tool_def = ToolDefinition(
+            number=4,
+            tool_type=ToolType.THREAD_MILL,
+            diameter=4.8,
+            shank_diameter=6.0,
+            length=50.0,
+            flute_length=2.0,
+            shoulder_length=20.0,
+            thread_pitch=1.0,
+            description="Makera_Carvera M6 Threadmill_Aluminum",
+            type_name="thread mill",
+        )
+        tooltip = format_tool_tooltip(tool_def, markup=False)
+
+        assert tooltip == (
+            "T4 · Thread Mill\n"
+            "Makera_Carvera M6 Threadmill_Aluminum\n"
+            "\n"
+            "Ø 4.8 mm · Shank 6 mm\n"
+            "Length 50 mm · Flute 2 mm · Shoulder 20 mm\n"
+            "Pitch 1 mm"
+        )
 
 
 class TestMeshBuilder:
@@ -787,6 +820,16 @@ class TestMeshBuilder:
         mesh_b, _ = build_tool_meshes({1: tool_def}, scale=2.0)
 
         assert _mesh_height(mesh_b[1][0]) == pytest.approx(_mesh_height(mesh_a[1][0]) * 2.0)
+
+    def test_inch_tool_unit_scale_matches_mm_geometry(self):
+        """Inch tool dims scaled by 25.4 should match equivalent mm dims at scale 1."""
+        inch_tool = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=0.25, length=2.0)
+        mm_tool = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=6.35, length=50.8)
+        mesh_inch, _ = build_tool_meshes({1: inch_tool}, scale=unit_scale_to_mm("in"))
+        mesh_mm, _ = build_tool_meshes({1: mm_tool}, scale=1.0)
+
+        assert _mesh_height(mesh_inch[1][0]) == pytest.approx(_mesh_height(mesh_mm[1][0]))
+        assert _max_xy_radius(mesh_inch[1][0]) == pytest.approx(_max_xy_radius(mesh_mm[1][0]))
 
     def test_flat_end_mill_side_normals_are_radial(self):
         tool_def = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=6.0)

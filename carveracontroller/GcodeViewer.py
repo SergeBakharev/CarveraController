@@ -595,6 +595,9 @@ class GCodeViewer(Widget):
     # Tool number -> ToolDefinition extracted from the loaded file's CAM comments.
     # Set from outside (see main.py) before/at the final load_array() call.
     tool_table = {}
+    # Multiplier converting tool-comment dimensions (file units) into the same
+    # millimetre space as parsed coordinates (1.0 for mm files, 25.4 for inch).
+    tool_unit_scale = 1.0
     time_estimate_progress_callback = None
     log_callback = None
     error_popup_callback = None
@@ -950,9 +953,14 @@ class GCodeViewer(Widget):
         used_tool_numbers = sorted({int(t) for t in self.raw_tools}) if self.raw_tools else []
         known = [t for t in used_tool_numbers if t in self._tool_meshes]
         unknown = [t for t in used_tool_numbers if t not in self._tool_meshes]
+        unit_note = (
+            f"; tool dimensions converted from inches (x{self.tool_unit_scale:g})"
+            if self.tool_unit_scale != 1.0
+            else ""
+        )
         logger.info(
             f"Tool meshes ready: {len(known)}/{len(used_tool_numbers)} used tools have geometry "
-            f"from the tool table ({known}); using default (pointed) mesh for {unknown}"
+            f"from the tool table ({known}); using default (pointed) mesh for {unknown}{unit_note}"
         )
 
     def _setup_pointer_gl_back(self, *args):
@@ -1047,8 +1055,9 @@ class GCodeViewer(Widget):
 
             # Build a basic 3D mesh per known tool (from CAM comments), plus a
             # default (basic pointed) mesh used for tools with no metadata.
+            # tool_unit_scale converts inch tool dims into the mm coordinate space.
             self._tool_meshes, self._default_tool_mesh = build_tool_meshes(
-                self.tool_table or {}, scale=self.move_scale_by_positon
+                self.tool_table or {}, scale=self.move_scale_by_positon * self.tool_unit_scale
             )
             self._active_tool_number = self._tool_number_at_index(0)
             self._log_tool_mesh_summary()
