@@ -202,9 +202,9 @@ from .addons.probing.ProbingControls import ProbeButton
 from .addons.tool_visualization import (
     extract_tool_table,
     format_tool_tooltip,
-    get_tool_icon_path,
-    get_tool_tooltip_icon_path,
 )
+from .addons.tool_visualization.icon_builder import build_tool_tooltip_icon
+from .addons.tool_visualization.icon_geometry import build_icon_geometry
 from .addons.tooltips.Tooltips import Tooltip, ToolTipButton, ToolTipDropDown
 from .CNC import (
     CNC,
@@ -2966,7 +2966,6 @@ class Makera(RelativeLayout):
     file_has_ocodes = False
     tool_change_markers = []
     tool_table = {}
-    tool_icons = DictProperty({})
     document_unit = "mm"
     show_tool_button_icons = BooleanProperty(False)
 
@@ -7720,7 +7719,8 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def _update_tool_button_icon_visibility(self, *_args):
         tool_bar = self.float_layout.tool_bar
-        tool_bar_icons_required_width = dp(438 + 6 * 66)
+        # Keep in sync with the '74dp' width on the six T buttons in makera.kv.
+        tool_bar_icons_required_width = dp(438 + 6 * 74)
         if tool_bar.width <= 0:
             return
         has_parsed_tools = bool(self.tool_table)
@@ -7731,9 +7731,6 @@ class Makera(RelativeLayout):
     @mainthread
     def _refresh_tool_filter_buttons(self, *_args):
         """Update T1..T6 toolbar icons and tooltips from the current tool table."""
-        self.tool_icons = {number: get_tool_icon_path(tool_def) for number, tool_def in self.tool_table.items()}
-        self._update_tool_button_icon_visibility()
-        default_icon = get_tool_icon_path(None)
         tool_buttons = [
             self.float_layout.t1,
             self.float_layout.t2,
@@ -7742,21 +7739,27 @@ class Makera(RelativeLayout):
             self.float_layout.t5,
             self.float_layout.t6,
         ]
+        self._update_tool_button_icon_visibility()
         for number, tool_button in enumerate(tool_buttons, start=1):
-            if self.show_tool_button_icons:
-                tool_button.icon = self.tool_icons.get(number, default_icon)
-            else:
-                tool_button.icon = ""
             tool_def = self.tool_table.get(number)
+            if self.show_tool_button_icons:
+                tool_button.tool_icon_geometry = build_icon_geometry(tool_def)
+            else:
+                tool_button.tool_icon_geometry = None
+
             if tool_def:
                 tool_button.tooltip_markup = True
                 tool_button.tooltip_horizontal = True
-                tool_button.tooltip_image_size = (64, 64)
-                tool_button.tooltip_image = get_tool_tooltip_icon_path(tool_def)
+                tool_button.tooltip_image = ""
+                tool_button.tooltip_texture = None
+                tool_button.tooltip_image_size = None
+                tool_button.tooltip_texture_provider = partial(build_tool_tooltip_icon, tool_def)
                 tool_button.tooltip_txt = format_tool_tooltip(tool_def, unit=self.document_unit)
             else:
                 tool_button.tooltip_txt = ""
                 tool_button.tooltip_image = ""
+                tool_button.tooltip_texture = None
+                tool_button.tooltip_texture_provider = None
                 tool_button.tooltip_image_size = None
                 tool_button.tooltip_horizontal = False
                 tool_button.tooltip_markup = False

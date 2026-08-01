@@ -9,7 +9,19 @@ from carveracontroller.addons.tool_visualization import (
     ToolType,
     extract_tool_table,
     format_tool_tooltip,
-    get_tool_icon_path,
+)
+from carveracontroller.addons.tool_visualization.icon_geometry import (
+    FRAMING_BODY,
+    FRAMING_THUMB,
+    _crop_profile,
+    _crop_z,
+    _normalize_points,
+    _segment_triangles,
+    _tip_end_z,
+    _triangulate,
+    build_icon_geometry,
+    geometry_cache_key,
+    geometry_to_mesh,
 )
 from carveracontroller.addons.tool_visualization.mesh_builder import (
     FALLBACK_FLUTE_DIAMETER_FACTOR,
@@ -553,32 +565,321 @@ class TestToolDefinitionHelpers:
         assert _infer_shank_diameter(ToolType.CHAMFER_MILL, None) is None
 
 
-class TestIconBuilder:
-    def test_default_icon_for_missing_tool(self):
-        assert get_tool_icon_path(None) == "data/GcodeViewer/tools/pointed_mill_thumb.png"
+class TestIconGeometry:
+    def test_fallback_geometry_for_missing_tool(self):
+        geom = build_icon_geometry(None)
+        assert geom["flute_triangles"] or geom["shank_triangles"]
+        assert len(geom["outline"]) >= 3
 
-    def test_maps_known_tool_types(self):
-        tool_def = ToolDefinition(number=1, tool_type=ToolType.BALL_END_MILL)
-        assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/ball_end_mill_thumb.png"
+    def test_unit_square_bounds(self):
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.FLAT_END_MILL,
+            diameter=6.0,
+            length=30.0,
+            flute_length=12.0,
+        )
+        geom = build_icon_geometry(tool_def)
+        points = []
+        for tri in geom["flute_triangles"] + geom["shank_triangles"]:
+            points.extend(tri)
+        points.extend(geom["outline"])
+        assert points
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        assert min(xs) >= -1e-9
+        assert max(xs) <= 1.0 + 1e-9
+        assert min(ys) >= -1e-9
+        assert max(ys) <= 1.0 + 1e-9
 
-    def test_maps_tapered_mill_icon(self):
-        tool_def = ToolDefinition(number=12, tool_type=ToolType.TAPERED_MILL)
-        assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/tapered_mill_thumb.png"
+    def test_crop_keeps_tip_and_clamps_to_profile(self):
+        profile = [(0.0, 3.0), (12.0, 3.0), (30.0, 3.0)]
+        shank_start = 2
+        z_crop = _crop_z(profile, shank_start)
+        assert 6.0 <= z_crop <= 18.0  # between 1x and 3x diameter
+        cropped, cropped_shank = _crop_profile(profile, shank_start, z_crop)
+        assert cropped[0][0] == pytest.approx(0.0)
+        assert cropped[-1][0] == pytest.approx(z_crop)
+        assert cropped_shank == len(cropped)  # crop is still within flute
 
-    def test_maps_engraving_to_default_pointed_icon(self):
-        tool_def = ToolDefinition(number=1, tool_type=ToolType.ENGRAVING)
-        assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/pointed_mill_thumb.png"
+    def test_body_crop_shows_more_than_thumb(self):
+        profile = [(0.0, 3.0), (12.0, 3.0), (12.0, 3.0), (40.0, 3.0)]
+        shank_start = 2
+        thumb_z = _crop_z(profile, shank_start, framing=FRAMING_THUMB)
+        body_z = _crop_z(profile, shank_start, framing=FRAMING_BODY)
+        assert body_z > thumb_z
+        assert body_z >= 12.0  # reaches past the flute into the shank
 
-    def test_maps_drill_to_default_pointed_icon(self):
-        tool_def = ToolDefinition(number=1, tool_type=ToolType.DRILL)
-        assert get_tool_icon_path(tool_def) == "data/GcodeViewer/tools/pointed_mill_thumb.png"
+    def test_crop_into_shank_preserves_color_boundary(self):
+        profile = [(0.0, 3.0), (5.0, 3.0), (5.0, 3.0), (20.0, 3.0)]
+        shank_start = 2
+        cropped, cropped_shank = _crop_profile(profile, shank_start, 10.0)
+        assert cropped_shank == 2
+        flute, shank = _triangulate(cropped, cropped_shank)
+        assert flute
+        assert shank
 
-    def test_tooltip_icons_use_full_body_assets(self):
-        from carveracontroller.addons.tool_visualization.icon_builder import get_tool_tooltip_icon_path
+    def test_pointed_tip_triangulates(self):
+        tris = _segment_triangles(0.0, 0.0, 5.0, 3.0)
+        assert len(tris) == 1
+        assert tris[0][0] == (0.0, 0.0)
 
-        assert get_tool_tooltip_icon_path(None) == "data/GcodeViewer/tools/pointed_mill.png"
-        tool_def = ToolDefinition(number=1, tool_type=ToolType.BALL_END_MILL)
-        assert get_tool_tooltip_icon_path(tool_def) == "data/GcodeViewer/tools/ball_end_mill.png"
+    def test_normalize_preserves_aspect_and_pads(self):
+        # Tall thin silhouette: width 2, height 6.
+        points = [(-1.0, 0.0), (1.0, 0.0), (1.0, 6.0), (-1.0, 6.0)]
+        normalized = _normalize_points(points, padding=0.08)
+        xs = [p[0] for p in normalized]
+        ys = [p[1] for p in normalized]
+        assert min(ys) == pytest.approx(0.08, abs=1e-6)
+        assert max(ys) == pytest.approx(0.92, abs=1e-6)
+        # Letterboxed horizontally.
+        assert min(xs) > 0.08
+        assert max(xs) < 0.92
+
+    def test_short_flute_tool_has_shank_triangles(self):
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.CHAMFER_MILL,
+            diameter=6.0,
+            tip_diameter=0.0,
+            taper_angle_deg=45.0,
+            length=25.0,
+            flute_length=3.0,
+            shank_diameter=6.0,
+        )
+        geom = build_icon_geometry(tool_def)
+        # Chamfer tip is short, so the tip-focused crop should reach into shank.
+        assert geom["flute_triangles"]
+        assert geom["shank_triangles"]
+
+    def test_ball_end_mill_geometry(self):
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.BALL_END_MILL,
+            diameter=6.0,
+            length=30.0,
+            flute_length=15.0,
+        )
+        geom = build_icon_geometry(tool_def)
+        assert geom["flute_triangles"]
+        assert geom["outline"][0] == geom["outline"][-1]
+
+    def test_tip_end_z_finds_full_radius(self):
+        profile = [(0.0, 0.0), (1.0, 2.0), (3.0, 3.0), (10.0, 3.0)]
+        assert _tip_end_z(profile, shank_start=4) == pytest.approx(3.0)
+
+    def test_geometry_cache_key_stable(self):
+        a = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=3.0)
+        b = ToolDefinition(number=2, tool_type=ToolType.FLAT_END_MILL, diameter=3.0)
+        assert geometry_cache_key(a) == geometry_cache_key(b)
+        assert geometry_cache_key(None)[1] == "__default__"
+        c = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=4.0)
+        assert geometry_cache_key(a) != geometry_cache_key(c)
+        assert geometry_cache_key(a, framing=FRAMING_THUMB) != geometry_cache_key(a, framing=FRAMING_BODY)
+
+    def test_rasterizer_writes_opaque_pixels(self, monkeypatch):
+        from carveracontroller.addons.tool_visualization import icon_builder as ib
+
+        # Pin the factor so the assertion is independent of display density
+        # (on HiDPI / Retina, Metrics.density >= 2 and supersampling is skipped).
+        monkeypatch.setattr(ib, "_supersample_factor", lambda: 2)
+
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.FLAT_END_MILL,
+            diameter=6.0,
+            length=30.0,
+            flute_length=12.0,
+        )
+        buf, width, height = ib._rasterize_icon(build_icon_geometry(tool_def), 32, 32)
+        assert width == 64
+        assert height == 64
+        opaque = sum(1 for i in range(3, len(buf), 4) if buf[i] > 0)
+        assert opaque > 100
+
+    def test_outline_stroke_scales_with_density_and_supersampling(self, monkeypatch):
+        """The stroke must follow the render scale or it becomes a hairline on HiDPI."""
+        from carveracontroller.addons.tool_visualization import icon_builder as ib
+
+        tool_def = ToolDefinition(number=1, tool_type=ToolType.FLAT_END_MILL, diameter=6.0, length=30.0)
+        geometry = build_icon_geometry(tool_def)
+
+        captured = []
+        monkeypatch.setattr(ib, "_draw_outline", lambda *args: captured.append(args[-1]))
+
+        monkeypatch.setattr(ib, "dp", lambda value: value)
+        monkeypatch.setattr(ib, "_supersample_factor", lambda: 2)
+        ib._rasterize_icon(geometry, 32, 32)
+
+        monkeypatch.setattr(ib, "dp", lambda value: value * 3)
+        monkeypatch.setattr(ib, "_supersample_factor", lambda: 1)
+        ib._rasterize_icon(geometry, 96, 96)
+
+        # Same relative thickness at both render scales: 2.5/64 == 3.75/96.
+        assert captured == [pytest.approx(2.5), pytest.approx(3.75)]
+
+    def test_supersample_factor_branches_on_density(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from carveracontroller.addons.tool_visualization import icon_builder as ib
+
+        monkeypatch.setattr(ib, "Metrics", SimpleNamespace(density=1.0))
+        assert ib._supersample_factor() == ib._SUPERSAMPLE_1X
+
+        monkeypatch.setattr(ib, "Metrics", SimpleNamespace(density=2.0))
+        assert ib._supersample_factor() == ib._SUPERSAMPLE_HIDPI
+
+        monkeypatch.setattr(ib, "Metrics", SimpleNamespace(density=3.0))
+        assert ib._supersample_factor() == ib._SUPERSAMPLE_HIDPI
+
+    def test_geometry_to_mesh_maps_into_rect(self):
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.FLAT_END_MILL,
+            diameter=6.0,
+            length=30.0,
+            flute_length=12.0,
+        )
+        geom = build_icon_geometry(tool_def)
+        x, y, w, h = 10.0, 20.0, 40.0, 40.0
+        flute_v, flute_i, shank_v, shank_i, outline = geometry_to_mesh(geom, x, y, w, h)
+
+        n_flute = len(geom["flute_triangles"]) * 3
+        n_shank = len(geom["shank_triangles"]) * 3
+        assert len(flute_v) == n_flute * 4  # x, y, u, v per vertex
+        assert flute_i == list(range(n_flute))
+        assert len(shank_v) == n_shank * 4
+        assert shank_i == list(range(n_shank))
+        assert len(outline) == len(geom["outline"]) * 2
+
+        xs = flute_v[0::4] + shank_v[0::4] + outline[0::2]
+        ys = flute_v[1::4] + shank_v[1::4] + outline[1::2]
+        assert xs
+        assert min(xs) >= x - 1e-6
+        assert max(xs) <= x + w + 1e-6
+        assert min(ys) >= y - 1e-6
+        assert max(ys) <= y + h + 1e-6
+
+    def test_tooltip_texture_cache_lru_and_clear(self, monkeypatch):
+        from carveracontroller.addons.tool_visualization import icon_builder as ib
+
+        class FakeTexture:
+            def __init__(self, size, colorfmt="rgba"):
+                self.size = size
+                self.colorfmt = colorfmt
+                self.mag_filter = None
+                self.min_filter = None
+                self.reload_observers = []
+
+            @staticmethod
+            def create(size=(0, 0), colorfmt="rgba"):
+                return FakeTexture(size=size, colorfmt=colorfmt)
+
+            def blit_buffer(self, *_args, **_kwargs):
+                return None
+
+            def add_reload_observer(self, callback):
+                self.reload_observers.append(callback)
+
+        monkeypatch.setattr(ib, "Texture", FakeTexture)
+
+        ib.clear_tool_icon_cache()
+        assert len(ib._texture_cache) == 0
+
+        tools = [
+            ToolDefinition(number=i, tool_type=ToolType.FLAT_END_MILL, diameter=float(i), length=30.0)
+            for i in range(1, ib._CACHE_MAX + 3)
+        ]
+        first = ib.build_tool_tooltip_icon_texture(tools[0], size=(16, 32))
+        for tool in tools[1:]:
+            ib.build_tool_tooltip_icon_texture(tool, size=(16, 32))
+
+        assert len(ib._texture_cache) == ib._CACHE_MAX
+        # Oldest entry (tools[0]) should have been evicted.
+        assert (geometry_cache_key(tools[0], framing=FRAMING_BODY), 16, 32) not in ib._texture_cache
+        # Re-inserting should bump the entry and keep the cache capped.
+        again = ib.build_tool_tooltip_icon_texture(tools[0], size=(16, 32))
+        assert again is not first
+        assert len(ib._texture_cache) == ib._CACHE_MAX
+        assert again.reload_observers  # GL reload observer registered
+
+        ib.clear_tool_icon_cache()
+        assert len(ib._texture_cache) == 0
+
+    def test_build_tool_tooltip_icon_returns_display_size(self, monkeypatch):
+        from carveracontroller.addons.tool_visualization import icon_builder as ib
+
+        class FakeTexture:
+            def __init__(self, size, colorfmt="rgba"):
+                self.size = size
+                self.colorfmt = colorfmt
+                self.mag_filter = None
+                self.min_filter = None
+                self.reload_observers = []
+
+            @staticmethod
+            def create(size=(0, 0), colorfmt="rgba"):
+                return FakeTexture(size=size, colorfmt=colorfmt)
+
+            def blit_buffer(self, *_args, **_kwargs):
+                return None
+
+            def add_reload_observer(self, callback):
+                self.reload_observers.append(callback)
+
+        monkeypatch.setattr(ib, "Texture", FakeTexture)
+        monkeypatch.setattr(ib, "_supersample_factor", lambda: 2)
+
+        ib.clear_tool_icon_cache()
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.FLAT_END_MILL,
+            diameter=6.0,
+            length=30.0,
+            flute_length=12.0,
+        )
+        texture, display_size = ib.build_tool_tooltip_icon(tool_def, size=(16, 32))
+        assert display_size == (16, 32)
+        # Texture is supersampled; display size stays at the requested pixels.
+        assert texture.size == (32, 64)
+        ib.clear_tool_icon_cache()
+
+    def test_outline_dedupes_coincident_flute_shank_ring(self):
+        # Radius mills (and most tools) insert a coincident profile ring at the
+        # flute/shank color boundary; the 2D outline must not keep that zero-
+        # length segment or Kivy Line can skip the stroke entirely.
+        tool_def = ToolDefinition(
+            number=2,
+            tool_type=ToolType.RADIUS_MILL,
+            diameter=2.0,
+            corner_radius=2.0,
+            length=50.0,
+            flute_length=6.0,
+            shank_diameter=6.0,
+        )
+        geom = build_icon_geometry(tool_def)
+        assert len(geom["outline"]) >= 3
+        for i in range(len(geom["outline"]) - 1):
+            a, b = geom["outline"][i], geom["outline"][i + 1]
+            dist = ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+            assert dist > 1e-9
+
+    def test_body_framing_geometry_includes_shank(self):
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.FLAT_END_MILL,
+            diameter=6.0,
+            length=40.0,
+            flute_length=12.0,
+            shank_diameter=6.0,
+        )
+        thumb = build_icon_geometry(tool_def, framing=FRAMING_THUMB)
+        body = build_icon_geometry(tool_def, framing=FRAMING_BODY, box_aspect=0.5)
+        assert body["shank_triangles"]
+        # Body framing is taller in profile space, so after fitting into a tall
+        # box the silhouette should still produce visible content.
+        assert body["flute_triangles"] or body["shank_triangles"]
+        assert thumb["flute_triangles"] or thumb["shank_triangles"]
 
 
 class TestTooltipBuilder:
