@@ -2,6 +2,7 @@
 
 import logging
 
+from carveracontroller.addons.tool_visualization.parsers.freecad_makera import FreeCADMakeraParser
 from carveracontroller.addons.tool_visualization.parsers.fusion360_makera import Fusion360MakeraParser
 from carveracontroller.addons.tool_visualization.parsers.makera_studio import MakeraStudioParser
 
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 # G-code file. Add new CAM/post-processor parsers here.
 TOOL_TABLE_PARSERS = [
     MakeraStudioParser(),
+    FreeCADMakeraParser(),
     Fusion360MakeraParser(),
 ]
 

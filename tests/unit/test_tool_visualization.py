@@ -26,6 +26,12 @@ from carveracontroller.addons.tool_visualization.mesh_builder import (
     build_tool_meshes,
     tool_profile,
 )
+from carveracontroller.addons.tool_visualization.parsers.freecad_makera import (
+    TOOL_TYPE_NAME_MAP as FREECAD_MAKERA_TOOL_TYPE_NAME_MAP,
+)
+from carveracontroller.addons.tool_visualization.parsers.freecad_makera import (
+    FreeCADMakeraParser,
+)
 from carveracontroller.addons.tool_visualization.parsers.fusion360_makera import (
     TOOL_TYPE_NAME_MAP,
     Fusion360MakeraParser,
@@ -398,6 +404,126 @@ class TestMakeraStudioParser:
         assert parser.parse(lines) == {}
 
 
+class TestFreeCADMakeraParser:
+    @pytest.fixture
+    def parser(self):
+        return FreeCADMakeraParser()
+
+    def test_parses_sample_flat_end_header(self, parser):
+        lines = [
+            "(Exported by FreeCAD)\n",
+            "(@FC|TOOL|number=1|name=Spiral O 1.5*8mm|vendor=Makera|type=Endmill|"
+            "diameter=1.5|shankdiameter=3.175|flutelength=8|length=38)\n",
+            "G0 X0\n",
+        ]
+        table = parser.parse(lines)
+
+        tool = table[1]
+        assert tool.tool_type == ToolType.FLAT_END_MILL
+        assert tool.diameter == 1.5
+        assert tool.shank_diameter == 3.175
+        assert tool.flute_length == 8.0
+        assert tool.length == 38.0
+        assert tool.description == "Spiral O 1.5*8mm"
+        assert tool.vendor == "Makera"
+        assert tool.type_name == "Endmill"
+        assert tool.taper_angle_deg is None
+
+    def test_parses_drill_tip_angle_as_per_side(self, parser):
+        lines = [
+            "(@FC|TOOL|number=2|name=2.3*12mm Drill|vendor=Makera|type=Drill|"
+            "diameter=2.3|shankdiameter=3.175|flutelength=12|length=38|tipangle=118)\n"
+        ]
+        tool = parser.parse(lines)[2]
+
+        assert tool.tool_type == ToolType.DRILL
+        assert tool.diameter == 2.3
+        assert tool.taper_angle_deg == 59.0
+        assert tool.flute_length == 12.0
+
+    def test_ignores_invalid_cutting_edge_angle_over_180(self, parser):
+        lines = ["(@FC|TOOL|number=2|name=Drill|type=Drill|diameter=2.3|cuttingedgeangle=236)\n"]
+        tool = parser.parse(lines)[2]
+        assert tool.taper_angle_deg is None
+
+    def test_parses_chamfer_included_cutting_edge_angle(self, parser):
+        lines = [
+            "(@FC|TOOL|number=4|name=Chamfering Bit|vendor=Makera|type=Chamfer|"
+            "diameter=3.175|shankdiameter=3.175|tipdiameter=0.1|flutelength=3|length=38|"
+            "cuttingedgeangle=90)\n"
+        ]
+        tool = parser.parse(lines)[4]
+
+        assert tool.tool_type == ToolType.CHAMFER_MILL
+        assert tool.tip_diameter == 0.1
+        assert tool.taper_angle_deg == 45.0
+
+    def test_parses_vbit_as_chamfer(self, parser):
+        lines = ["(@FC|TOOL|number=5|name=Engraving|type=VBit|diameter=3.175|tipdiameter=0.1|cuttingedgeangle=30)\n"]
+        tool = parser.parse(lines)[5]
+        assert tool.tool_type == ToolType.CHAMFER_MILL
+        assert tool.taper_angle_deg == 15.0
+
+    def test_parses_thread_mill_pitch(self, parser):
+        lines = [
+            "(@FC|TOOL|number=3|name=M3 Threadmill|type=ThreadMill|diameter=2.42|"
+            "shankdiameter=3.175|flutelength=9|length=38|pitch=0.5)\n"
+        ]
+        tool = parser.parse(lines)[3]
+
+        assert tool.tool_type == ToolType.THREAD_MILL
+        assert tool.thread_pitch == 0.5
+        assert tool.diameter == 2.42
+
+    def test_parses_ball_end_and_tapered_ball_nose(self, parser):
+        lines = [
+            "(@FC|TOOL|number=1|name=Ball|type=Ballend|diameter=4|shankdiameter=4|flutelength=22|length=50)\n",
+            "(@FC|TOOL|number=2|name=Tapered|type=TaperedBallNose|diameter=2|shankdiameter=6|"
+            "flutelength=15|length=50|taperangle=10)\n",
+            "(@FC|TOOL|number=3|name=Bull|type=Bullnose|diameter=6|"
+            "shankdiameter=6|cornerradius=1|flutelength=20|length=50)\n",
+        ]
+        table = parser.parse(lines)
+
+        assert table[1].tool_type == ToolType.BALL_END_MILL
+        assert table[2].tool_type == ToolType.TAPERED_MILL
+        assert table[2].corner_radius == 1.0
+        assert table[2].taper_angle_deg == 5.0
+        assert table[3].tool_type == ToolType.BULL_NOSE_END_MILL
+        assert table[3].corner_radius == 1.0
+
+    def test_maps_shape_filename_stems(self, parser):
+        lines = ["(@FC|TOOL|number=1|name=Thread|type=thread-mill|diameter=2)\n"]
+        assert parser.parse(lines)[1].tool_type == ToolType.THREAD_MILL
+
+    def test_unknown_type_falls_back_to_unknown(self, parser):
+        lines = ["(@FC|TOOL|number=9|name=Mystery|type=Mystery Cutter|diameter=6)\n"]
+        table = parser.parse(lines)
+
+        assert table[9].tool_type == ToolType.UNKNOWN
+        assert table[9].type_name == "Mystery Cutter"
+
+    def test_ignores_duplicate_tool_entries(self, parser):
+        lines = [
+            "(@FC|TOOL|number=1|name=First|type=Endmill|diameter=6)\n",
+            "(@FC|TOOL|number=1|name=Second|type=Ballend|diameter=8)\n",
+        ]
+        table = parser.parse(lines)
+
+        assert table[1].diameter == 6.0
+        assert table[1].tool_type == ToolType.FLAT_END_MILL
+
+    def test_returns_empty_for_non_fc_header(self, parser):
+        lines = ["(T1  Flat end mill  D=6 CR=0 - flat end mill)\n", "G0 X0\n"]
+        assert parser.parse(lines) == {}
+
+    def test_parses_semicolon_fc_comments(self, parser):
+        lines = [";@FC|TOOL|number=5|name=Drill|type=Drill|diameter=3|tipangle=118\n"]
+        tool = parser.parse(lines)[5]
+        assert tool.tool_type == ToolType.DRILL
+        assert tool.taper_angle_deg == 59.0
+
+
 class TestToolDefinitionHelpers:
     def test_resolve_tool_type_normalises_names(self):
         assert resolve_tool_type("  Flat   End   Mill ", TOOL_TYPE_NAME_MAP) == ToolType.FLAT_END_MILL
@@ -411,6 +537,12 @@ class TestToolDefinitionHelpers:
         assert resolve_tool_type("Tapered Ball Nose", MAKERA_STUDIO_TOOL_TYPE_NAME_MAP) == ToolType.TAPERED_MILL
         assert resolve_tool_type("Thread", MAKERA_STUDIO_TOOL_TYPE_NAME_MAP) == ToolType.THREAD_MILL
         assert resolve_tool_type("Bull Nose", MAKERA_STUDIO_TOOL_TYPE_NAME_MAP) == ToolType.BULL_NOSE_END_MILL
+        assert resolve_tool_type("Endmill", FREECAD_MAKERA_TOOL_TYPE_NAME_MAP) == ToolType.FLAT_END_MILL
+        assert resolve_tool_type("Ballend", FREECAD_MAKERA_TOOL_TYPE_NAME_MAP) == ToolType.BALL_END_MILL
+        assert resolve_tool_type("VBit", FREECAD_MAKERA_TOOL_TYPE_NAME_MAP) == ToolType.CHAMFER_MILL
+        assert resolve_tool_type("ThreadMill", FREECAD_MAKERA_TOOL_TYPE_NAME_MAP) == ToolType.THREAD_MILL
+        assert resolve_tool_type("TaperedBallNose", FREECAD_MAKERA_TOOL_TYPE_NAME_MAP) == ToolType.TAPERED_MILL
+        assert resolve_tool_type("thread-mill", FREECAD_MAKERA_TOOL_TYPE_NAME_MAP) == ToolType.THREAD_MILL
 
     def test_infer_shank_diameter(self):
         assert _infer_shank_diameter(ToolType.FLAT_END_MILL, 6.0) == 6.0
@@ -1219,3 +1351,17 @@ class TestExtractor:
         assert table[1].diameter == 2.0
         assert table[1].shank_diameter == 3.175
         assert table[1].product_id == "1"
+
+    def test_extract_prefers_freecad_when_fc_header_present(self):
+        lines = [
+            "(Exported by FreeCAD)\n",
+            "(@FC|TOOL|number=1|name=FreeCAD flat|type=Endmill|diameter=1.5|"
+            "shankdiameter=3.175|flutelength=8|length=38)\n",
+            "(T1  Should be ignored  D=99 CR=0 - flat end mill)\n",
+            "G0 X0\n",
+        ]
+        table = extract_tool_table(lines)
+
+        assert table[1].diameter == 1.5
+        assert table[1].shank_diameter == 3.175
+        assert table[1].description == "FreeCAD flat"
