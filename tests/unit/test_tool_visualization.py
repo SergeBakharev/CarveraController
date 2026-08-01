@@ -25,6 +25,7 @@ from carveracontroller.addons.tool_visualization.icon_geometry import (
 )
 from carveracontroller.addons.tool_visualization.mesh_builder import (
     FALLBACK_FLUTE_DIAMETER_FACTOR,
+    FALLBACK_STICKOUT_DIAMETER_FACTOR,
     FALLBACK_TOOL_DISPLAY_HEIGHT,
     FALLBACK_TOOL_DISPLAY_RADIUS,
     FLOATS_PER_VERTEX,
@@ -651,6 +652,22 @@ class TestIconGeometry:
         # Chamfer tip is short, so the tip-focused crop should reach into shank.
         assert geom["flute_triangles"]
         assert geom["shank_triangles"]
+
+    def test_v_bit_without_stickout_still_shows_a_shank(self):
+        """Without a shank fallback this tool would be drawn as a plain triangle."""
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.CHAMFER_MILL,
+            diameter=3.175,
+            shank_diameter=3.175,
+            tip_diameter=0.1,
+            taper_angle_deg=45.0,
+            flute_length=1.6,
+        )
+        for framing in (FRAMING_THUMB, FRAMING_BODY):
+            geom = build_icon_geometry(tool_def, framing=framing)
+            assert geom["flute_triangles"]
+            assert geom["shank_triangles"]
 
     def test_ball_end_mill_geometry(self):
         tool_def = ToolDefinition(
@@ -1623,6 +1640,48 @@ class TestMeshBuilder:
         flute_z = 6.0 * FALLBACK_FLUTE_DIAMETER_FACTOR
         assert profile[-1][0] == pytest.approx(overall)
         assert any(math.isclose(z, flute_z) for z, _r in profile)
+
+    def test_missing_stickout_keeps_a_shank_above_the_flutes(self):
+        """`sticklength=0` must not draw the tool as a bare cutting body."""
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.CHAMFER_MILL,
+            diameter=3.175,
+            shank_diameter=3.175,
+            tip_diameter=0.1,
+            taper_angle_deg=45.0,
+            flute_length=1.6,
+        )
+        profile = tool_profile(tool_def)
+        expected = 1.6 + 3.175 * FALLBACK_STICKOUT_DIAMETER_FACTOR
+
+        assert profile[-1][0] == pytest.approx(expected)
+        assert profile[-1][1] == pytest.approx(3.175 / 2.0)
+
+    def test_missing_stickout_shank_follows_the_larger_diameter(self):
+        tool_def = ToolDefinition(
+            number=1,
+            tool_type=ToolType.FLAT_END_MILL,
+            diameter=1.0,
+            shank_diameter=3.175,
+            shoulder_length=5.0,
+        )
+        profile = tool_profile(tool_def)
+        expected = 5.0 + 3.175 * FALLBACK_STICKOUT_DIAMETER_FACTOR
+
+        assert profile[-1][0] == pytest.approx(expected)
+
+    def test_explicit_stickout_is_not_extended(self):
+        profile = tool_profile(
+            ToolDefinition(
+                number=1,
+                tool_type=ToolType.FLAT_END_MILL,
+                diameter=6.0,
+                length=30.0,
+                flute_length=12.0,
+            )
+        )
+        assert profile[-1][0] == pytest.approx(30.0)
 
     def test_engraving_tip_diameter_zero_is_pointed(self):
         profile = tool_profile(

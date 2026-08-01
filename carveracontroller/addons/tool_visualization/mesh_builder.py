@@ -40,6 +40,13 @@ SHANK_TRANSITION_MAX_FRACTION = 0.5
 INFERRED_SHOULDER_DIAMETER_FACTOR = 1.0
 INFERRED_SHOULDER_MAX_FRACTION = 0.5
 
+# Shank kept above the cutting body when stick-out metadata is missing and only
+# shoulder/flute lengths are known. Those describe the cutting end alone, so
+# without this the tool would stop right where its flutes end (e.g. a V-bit
+# drawn as a bare cone). Expressed as a multiple of the larger of the cutting
+# and shank diameters.
+FALLBACK_STICKOUT_DIAMETER_FACTOR = 1.0
+
 # Undercut neck diameter of a lollipop mill as a fraction of the ball diameter.
 # Parsers cannot infer a shaft size for this type, so this is always what draws
 # the neck; real undercutting end mills sit around 0.55-0.6 of the cutter Ø.
@@ -272,17 +279,29 @@ def _effective_tool_diameter(tool_def, scale):
     return diameter
 
 
+def _fallback_stickout_extra(tool_def, diameter):
+    """Shank height to add above a cutting-end length used as overall stick-out."""
+    shank_diameter = 2.0 * _shank_radius(tool_def, diameter / 2.0)
+    return max(diameter, shank_diameter) * FALLBACK_STICKOUT_DIAMETER_FACTOR
+
+
 def _profile_length(tool_def, scale, diameter, shared_length=None):
+    """Return the overall stick-out to draw, in file units.
+
+    Shoulder and flute lengths only describe the cutting end, so when the file
+    has no stick-out they are extended by a short shank instead of being used
+    as-is (post-processors commonly export `sticklength=0`).
+    """
     if tool_def:
         length = getattr(tool_def, "length", None)
         if length is not None and length > 0:
             return length
         shoulder_length = getattr(tool_def, "shoulder_length", None)
         if shoulder_length is not None and shoulder_length > 0:
-            return shoulder_length
+            return shoulder_length + _fallback_stickout_extra(tool_def, diameter)
         flute_length = getattr(tool_def, "flute_length", None)
         if flute_length is not None and flute_length > 0:
-            return flute_length
+            return flute_length + _fallback_stickout_extra(tool_def, diameter)
     if shared_length is not None and shared_length > 0:
         return shared_length
     if tool_def and getattr(tool_def, "diameter", None) and tool_def.diameter > 0:
@@ -386,8 +405,8 @@ def _resolve_section_lengths(tool_def, fallback_overall):
     capped to FALLBACK_FLUTE_DIAMETER_FACTOR × diameter. When shoulder is also
     missing after a tip inference, a short cutting-diameter shoulder is added so
     the shank does not start at the tip. Explicit flute with no shoulder still
-    steps at the flute length. Missing stick-out uses
-    LENGTH_DIAMETER_FACTOR × diameter via `fallback_overall`.
+    steps at the flute length. Missing stick-out comes from `fallback_overall`
+    (see `_profile_length`).
     """
     if not tool_def:
         return fallback_overall, fallback_overall, fallback_overall
