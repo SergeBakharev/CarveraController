@@ -13,7 +13,7 @@ class FourthAxisSettings(BoxLayout):
     def __init__(self, **kwargs):
         self.config = ConfigUtils.load_config(self.config_filename)
         self.config = self.order_config(self.config)
-        super(FourthAxisSettings, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
     def setting_changed(self, key: str, value: str):
         param = getattr(FourthAxisParameterDefinitions, key, None)

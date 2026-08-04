@@ -1,7 +1,7 @@
 from kivy.uix.boxlayout import BoxLayout
 
-from carveracontroller.addons.probing.operations.ConfigUtils import ConfigUtils
 from carveracontroller.addons.probing.operations.Bore.BoreParameterDefinitions import BoreParameterDefinitions
+from carveracontroller.addons.probing.operations.ConfigUtils import ConfigUtils
 
 
 class BoreSettings(BoxLayout):
@@ -11,7 +11,7 @@ class BoreSettings(BoxLayout):
     def __init__(self, **kwargs):
         self.config = ConfigUtils.load_config(self.config_filename)
         self.config = self.order_config(self.config)
-        super(BoreSettings, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
     def setting_changed(self, key: str, value: float):
         param = getattr(BoreParameterDefinitions, key, None)
@@ -38,4 +38,4 @@ class BoreSettings(BoxLayout):
         return param.default
 
     def get_config(self):
-        return self.config;
+        return self.config

@@ -1,16 +1,17 @@
 import re
 
+
 def get_unreleased_section(changelog_text):
-    pattern = r'\[unreleased\]\s*((?:- .*?\n)+)'
+    pattern = r"\[unreleased\]\s*((?:- .*?\n)+)"
     match = re.search(pattern, changelog_text, re.IGNORECASE)
     if match:
         # Clean up and return the lines
         return match.group(1).strip()
-    else:
-        return "No unreleased notes currently."
+    return "No unreleased notes currently."
+
 
 def main():
-    with open('CHANGELOG.md', 'r', encoding='utf-8') as f:
+    with open("CHANGELOG.md", encoding="utf-8") as f:
         changelog = f.read()
 
     unrelease_notes = get_unreleased_section(changelog)
@@ -38,7 +39,7 @@ The follow changes are present in the dev build:
 """
     with open("dev-CHANGELOG.md", "w") as file:
         file.write(dev_release_text)
-    
+
 
 if __name__ == "__main__":
     main()

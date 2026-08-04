@@ -4,14 +4,17 @@ from kivy.uix.textinput import TextInput
 
 from carveracontroller.addons.probing.operations.ConfigUtils import ConfigUtils
 from carveracontroller.addons.probing.operations.OperationsBase import ProbeSettingDefinition
-from carveracontroller.addons.probing.operations.OutsideCorner.OutsideCornerParameterDefinitions import OutsideCornerParameterDefinitions
+from carveracontroller.addons.probing.operations.OutsideCorner.OutsideCornerParameterDefinitions import (
+    OutsideCornerParameterDefinitions,
+)
+
 
 class OutsideCornerSettings(BoxLayout):
     config_filename = "outside-corner-settings.json"
     config = {}
 
     def __init__(self, **kwargs):
-        super(OutsideCornerSettings, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.config = ConfigUtils.load_config(self.config_filename)
         self.config = self.order_config(self.config)
 

@@ -1,5 +1,7 @@
 from enum import Enum
+
 from carveracontroller.addons.probing.operations.OutsideCorner.OutsideCornerOperation import OutsideCornerOperation
+
 
 class OutsideCornerOperationType(Enum):
     TopLeft = OutsideCornerOperation("Outside Corner - Top Left", False, True, "")

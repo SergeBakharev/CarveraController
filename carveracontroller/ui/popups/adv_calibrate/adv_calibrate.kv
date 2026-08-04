@@ -1,0 +1,113 @@
+#:import tr carveracontroller.__main__.tr
+
+<AdvCalibratePopup>:
+    size_hint: 0.55, 0.45
+    pos_hint: {"right": 0.75, "top": 0.7}
+    auto_dismiss: False
+    BoxLayout:
+        padding: '15dp'
+        orientation: 'vertical'
+        Label:
+            canvas.before:
+                Color:
+                    rgba: 45/255, 45/255, 45/255, 1
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+            size_hint_y: None
+            height: '30dp'
+            text: tr._('Advanced TLO Calibrate')
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
+        AnchorLayout:
+            anchor_x: 'center'
+            anchor_y: 'top'
+            BoxLayout:
+                orientation: 'vertical'
+                size_hint: None, None
+                width: dp(320)
+                height: self.minimum_height
+                spacing: dp(6)
+                padding: dp(1)
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(28)
+                    Widget:
+                    ProbeSettingLabel:
+                        size_hint_x: None
+                        width: dp(130)
+                        label_text: tr._('Repeats (R):')
+                    ToolTipTextInput:
+                        id: txt_repeat
+                        size_hint_x: None
+                        width: dp(90)
+                        font_size: '14dp'
+                        hint_text: tr._("1")
+                        hint_text_color: (0.2, 0.5, 0.5, 0.5)
+                        tooltip_txt: tr._('Number of TLO measurement repeats. For facemills: probe once per cycle, rotate the face mill between cycles; the TLO uses the lowest cutting edge')
+                        tooltip_image: ''
+                        multiline: False
+                        halign: 'right'
+                        input_type: 'number'
+                        input_filter: 'int'
+                    Widget:
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(28)
+                    Widget:
+                    ProbeSettingLabel:
+                        size_hint_x: None
+                        width: dp(130)
+                        label_text: tr._('X Offset:')
+                    ToolTipTextInput:
+                        id: txt_x_offset
+                        size_hint_x: None
+                        width: dp(90)
+                        font_size: '14dp'
+                        hint_text: tr._("0")
+                        hint_text_color: (0.2, 0.5, 0.5, 0.5)
+                        tooltip_txt: tr._('Offset the tool setter location by this amount (positive or negative) in X')
+                        tooltip_image: ''
+                        multiline: False
+                        halign: 'right'
+                        input_type: 'number'
+                        input_filter: 'float'
+                    Widget:
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(28)
+                    Widget:
+                    ProbeSettingLabel:
+                        size_hint_x: None
+                        width: dp(130)
+                        label_text: tr._('Y Offset:')
+                    ToolTipTextInput:
+                        id: txt_y_offset
+                        size_hint_x: None
+                        width: dp(90)
+                        font_size: '14dp'
+                        hint_text: tr._("0")
+                        hint_text_color: (0.2, 0.5, 0.5, 0.5)
+                        tooltip_txt: tr._('Offset the tool setter location by this amount (positive or negative) in Y')
+                        tooltip_image: ''
+                        multiline: False
+                        halign: 'right'
+                        input_type: 'number'
+                        input_filter: 'float'
+                    Widget:
+
+        Widget:
+        BoxLayout:
+            spacing: '5dp'
+            size_hint_y: None
+            height: '40dp'
+            Button:
+                text: tr._('Cancel')
+                on_release: root.dismiss()
+            Button:
+                text: tr._('Run Calibration')
+                on_release: root.on_run_pressed()

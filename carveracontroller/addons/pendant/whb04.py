@@ -1,19 +1,29 @@
 from __future__ import annotations
 
-from enum import Enum
+import logging
+import os
+import platform
 import struct
 import threading
 import time
-from typing import Callable, List, Optional
-import platform
+from collections.abc import Callable
+from enum import Enum
 
 import hid
+
+logger = logging.getLogger(__name__)
+
+
+class _PendantPermissionError(Exception):
+    """Raised when the pendant device is found but cannot be opened due to permissions."""
+
 
 # On Windows, the pendant is represented by two devices, meanwhile on Linux
 # the pendant is a single device. Let's abstract this away into the PendantHid class:
 if platform.system() == "Windows":
+
     class PendantHid:
-        def __init__(self, devices: List[hid.DeviceInfo]) -> None:
+        def __init__(self, devices: list[hid.DeviceInfo]) -> None:
             assert len(devices) == 2, "Two devices are expected"
 
             read_path, write_path = None, None
@@ -49,8 +59,9 @@ if platform.system() == "Windows":
             self.read_dev.__exit__(exc_type, exc_val, exc_tb)
             self.write_dev.__exit__(exc_type, exc_val, exc_tb)
 else:
+
     class PendantHid(hid.Device):
-        def __init__(self, devices: List[hid.DeviceInfo]) -> None:
+        def __init__(self, devices: list[hid.DeviceInfo]) -> None:
             unique_paths = {dev["path"] for dev in devices}
             assert len(unique_paths) == 1, "Only one device is expected"
             super().__init__(path=devices[0]["path"])
@@ -66,13 +77,14 @@ class Button(Enum):
     SPINDLE_MINUS = 0x07
     M_HOME = 0x08
     SAFE_Z = 0x09
-    W_HOME = 0x0a
-    S_ON_OFF = 0x0b
-    FN = 0x0c
-    PROBE_Z = 0x0d
+    W_HOME = 0x0A
+    S_ON_OFF = 0x0B
+    FN = 0x0C
+    PROBE_Z = 0x0D
     MACRO_10 = 0x10
-    MODE_CONTINUOUS = 0x0e
-    MODE_STEP = 0x0f
+    MODE_CONTINUOUS = 0x0E
+    MODE_STEP = 0x0F
+
 
 class Axis(Enum):
     OFF = 0x06
@@ -83,14 +95,16 @@ class Axis(Enum):
     B = 0x15
     C = 0x16
 
+
 class StepSize(Enum):
-    STEP_0_001 = 0x0d
-    STEP_0_01 = 0x0e
-    STEP_0_1 = 0x0f
+    STEP_0_001 = 0x0D
+    STEP_0_01 = 0x0E
+    STEP_0_1 = 0x0F
     STEP_1 = 0x10
-    PERCENT_60 = 0x1a
-    PERCENT_100 = 0x1b
-    LEAD = 0x9b
+    PERCENT_60 = 0x1A
+    PERCENT_100 = 0x1B
+    LEAD = 0x9B
+
 
 class StepIndicator(Enum):
     CONTINUOUS = 0x00
@@ -98,15 +112,14 @@ class StepIndicator(Enum):
     MPG = 0x02
     PERCENT = 0x03
 
+
 class Daemon:
     """
     A class that establishes a connection to the WHB04 pedant, receives messages
     and invokes callbacks.
     """
 
-    DEVICE_IDS = [
-        (0x10ce, 0xeb93)
-    ]
+    DEVICE_IDS = [(0x10CE, 0xEB93)]
 
     def __init__(self, callback_executor: Callable[[Callable[[], None]], None] = lambda f: f()) -> None:
         """
@@ -128,14 +141,7 @@ class Daemon:
         self._wheel_inactivity_timeout = 0.1  # Timeout in seconds before considering wheel inactive
         self._wheel_has_been_active = False  # Track if wheel has been active since last stop event
 
-        self._display_position = {
-            Axis.X: 0.0,
-            Axis.Y: 0.0,
-            Axis.Z: 0.0,
-            Axis.A: 0.0,
-            Axis.B: 0.0,
-            Axis.C: 0.0
-        }
+        self._display_position = {Axis.X: 0.0, Axis.Y: 0.0, Axis.Z: 0.0, Axis.A: 0.0, Axis.B: 0.0, Axis.C: 0.0}
         self._display_feedrate = 0
         self._display_spindle_speed = 0
         self._display_step_indicator = StepIndicator.CONTINUOUS
@@ -144,15 +150,16 @@ class Daemon:
 
         self.callback_executor = callback_executor
 
-        self.on_connect: Optional[Callable[[Daemon], None]] = None
-        self.on_disconnect: Optional[Callable[[Daemon], None]] = None
-        self.on_button_press: Optional[Callable[[Daemon, Button], None]] = None
-        self.on_button_release: Optional[Callable[[Daemon, Button], None]] = None
-        self.on_jog: Optional[Callable[[Daemon, int], None]] = None
-        self.on_axis_change: Optional[Callable[[Daemon, Axis], None]] = None
-        self.on_step_size_change: Optional[Callable[[Daemon, StepSize], None]] = None
-        self.on_update: Optional[Callable[[Daemon], None]] = None
-        self.on_stop_jog: Optional[Callable[[Daemon], None]] = None
+        self.on_connect: Callable[[Daemon], None] | None = None
+        self.on_disconnect: Callable[[Daemon], None] | None = None
+        self.on_button_press: Callable[[Daemon, Button], None] | None = None
+        self.on_button_release: Callable[[Daemon, Button], None] | None = None
+        self.on_jog: Callable[[Daemon, int], None] | None = None
+        self.on_axis_change: Callable[[Daemon, Axis], None] | None = None
+        self.on_step_size_change: Callable[[Daemon, StepSize], None] | None = None
+        self.on_update: Callable[[Daemon], None] | None = None
+        self.on_stop_jog: Callable[[Daemon], None] | None = None
+        self.on_permission_error: Callable[[Daemon], None] | None = None
 
     def start(self) -> None:
         self._daemon_thread = threading.Thread(target=self._thread_loop, daemon=True)
@@ -185,15 +192,9 @@ class Daemon:
         Returns the name of the currently active axis.
         This is a convenience method to get the axis name.
         """
-        return {
-            Axis.OFF: "OFF",
-            Axis.X: "X",
-            Axis.Y: "Y",
-            Axis.Z: "Z",
-            Axis.A: "A",
-            Axis.B: "B",
-            Axis.C: "C"
-        }[self.active_axis]
+        return {Axis.OFF: "OFF", Axis.X: "X", Axis.Y: "Y", Axis.Z: "Z", Axis.A: "A", Axis.B: "B", Axis.C: "C"}[
+            self.active_axis
+        ]
 
     @property
     def step_size(self) -> StepSize:
@@ -211,25 +212,25 @@ class Daemon:
         if self._display_step_indicator == StepIndicator.STEP:
             if self._step_size == StepSize.STEP_0_001:
                 return 0.001
-            elif self._step_size == StepSize.STEP_0_01:
+            if self._step_size == StepSize.STEP_0_01:
                 return 0.01
-            elif self._step_size == StepSize.STEP_0_1:
+            if self._step_size == StepSize.STEP_0_1:
                 return 0.1
-            elif self._step_size == StepSize.STEP_1:
+            if self._step_size == StepSize.STEP_1:
                 return 1.0
             return 0
-        elif self._display_step_indicator == StepIndicator.CONTINUOUS:
+        if self._display_step_indicator == StepIndicator.CONTINUOUS:
             if self._step_size == StepSize.STEP_0_001:
                 return 0.02
-            elif self._step_size == StepSize.STEP_0_01:
+            if self._step_size == StepSize.STEP_0_01:
                 return 0.05
-            elif self._step_size == StepSize.STEP_0_1:
+            if self._step_size == StepSize.STEP_0_1:
                 return 0.1
-            elif self._step_size == StepSize.STEP_1:
+            if self._step_size == StepSize.STEP_1:
                 return 0.3
-            elif self._step_size == StepSize.PERCENT_60:
+            if self._step_size == StepSize.PERCENT_60:
                 return 0.6
-            elif self._step_size == StepSize.PERCENT_100:
+            if self._step_size == StepSize.PERCENT_100:
                 return 1.0
             return 0
 
@@ -252,9 +253,8 @@ class Daemon:
             # In step mode, we don't use speed-based detection
             # This property is not really applicable for step mode
             return True
-        else:
-            # In continuous mode, use speed-based detection
-            return self._wheel_steps_per_second >= self._wheel_active_threshold
+        # In continuous mode, use speed-based detection
+        return self._wheel_steps_per_second >= self._wheel_active_threshold
 
     @property
     def wheel_has_been_active(self) -> bool:
@@ -329,28 +329,41 @@ class Daemon:
 
     def _thread_loop(self) -> None:
         while self._is_running:
+            connected = False
             try:
                 device = self._connect()
                 if device is None:
                     continue
 
                 with device as guarded_device:
+                    connected = True
                     if self.on_connect is not None:
                         self.callback_executor(lambda: self.on_connect(self))
                     self._device_loop(guarded_device)
-            except Exception:
-                # Exception means the device was disconnected or an error occurred.
-                # Let's just try again
-                pass
+            except _PendantPermissionError as e:
+                logger.error("Pendant found but cannot be opened: permission denied on %s", e)
+                self._is_running = False
+                if self.on_permission_error is not None:
+                    self.callback_executor(lambda: self.on_permission_error(self))
+            except Exception as e:
+                logger.warning("Pendant error (will retry): %s", e)
             finally:
-                if self.on_disconnect is not None:
-                        self.callback_executor(lambda: self.on_disconnect(self))
+                if connected and self.on_disconnect is not None:
+                    self.callback_executor(lambda: self.on_disconnect(self))
 
-    def _connect(self, poll_interval: float = 0.1) -> Optional[PendantHid]:
+    def _connect(self, poll_interval: float = 0.1) -> PendantHid | None:
         while self._is_running:
             devices = [d for d in hid.enumerate() if (d["vendor_id"], d["product_id"]) in self.DEVICE_IDS]
-            if len(devices) > 0:
-                return PendantHid(devices)
+            if devices:
+                try:
+                    return PendantHid(devices)
+                except Exception as e:
+                    path = devices[0].get("path", b"")
+                    if isinstance(path, bytes):
+                        path = path.decode("utf-8", errors="replace")
+                    if path and not os.access(path, os.R_OK | os.W_OK):
+                        raise _PendantPermissionError(path) from e
+                    raise
             time.sleep(poll_interval)
 
         return None
@@ -360,14 +373,14 @@ class Daemon:
             data = device.read(8, timeout=100)
             if len(data) > 0:
                 self._process_input_packet(data)
-            
+
             # Check for wheel inactivity and apply decay (runs continuously)
             current_time = time.time()
             time_since_last_activity = current_time - self._last_wheel_activity_time
             if time_since_last_activity > self._wheel_inactivity_timeout:
                 # Apply decay factor when wheel has been inactive
                 self._wheel_steps_per_second = 0
-            
+
             if self._wheel_steps_per_second == 0 and self._wheel_has_been_active:
                 if self.on_stop_jog is not None:
                     self.callback_executor(lambda: self.on_stop_jog(self))
@@ -385,8 +398,9 @@ class Daemon:
         if len(data) != 8:
             return
 
-        header, random_byte, button1, button2, step_rotary, \
-             axis_rotary, jog_delta, crc = struct.unpack('BBBBBBbB', data)
+        header, random_byte, button1, button2, step_rotary, axis_rotary, jog_delta, crc = struct.unpack(
+            "BBBBBBbB", data
+        )
 
         # As the checksum has not been reverse engineered yet, we will ignore it
         # for now and just check the header.
@@ -394,10 +408,16 @@ class Daemon:
             return
 
         pressed_buttons = set()
-        if button1 != 0:
-            pressed_buttons.add(Button(button1))
-        if button2 != 0:
-            pressed_buttons.add(Button(button2))
+        for raw_button in (button1, button2):
+            if raw_button == 0:
+                continue
+            try:
+                pressed_buttons.add(Button(raw_button))
+            except ValueError:
+                # Fast or noisy inputs can produce transient button values,
+                # just as they do for the rotary controls below. Preserve any
+                # valid button from the same packet instead of reconnecting.
+                pass
         newly_pressed = pressed_buttons - self._pressed_buttons
         newly_released = self._pressed_buttons - pressed_buttons
         self._pressed_buttons = pressed_buttons
@@ -442,15 +462,15 @@ class Daemon:
                 self.callback_executor(lambda: self.on_stop_jog(self))
             self._wheel_has_been_active = False  # Reset wheel activity tracking
             self.callback_executor(lambda s=self._step_size: self.on_step_size_change(self, s))
-        
+
         # Track wheel movement for improved stopping detection (only in continuous mode)
         current_time = time.time()
-        
+
         if jog_delta != 0:
             # Update last activity time when we see actual movement
             self._last_wheel_activity_time = current_time
             self._wheel_has_been_active = True  # Mark that wheel has been active
-            
+
             # Store current step info for next calculation
             if self._last_step_time > 0:
                 # Calculate rate based on time between this step and last step
@@ -463,7 +483,7 @@ class Daemon:
             else:
                 # First step, can't calculate rate yet
                 self._wheel_steps_per_second = 0.0
-            
+
             # Update for next iteration
             self._last_step_time = current_time
 
@@ -477,7 +497,7 @@ class Daemon:
             else:
                 # Continuous mode: trigger only if wheel is active
                 should_trigger_jog = self.wheel_is_active
-            
+
             if should_trigger_jog:
                 if self.on_jog is not None:
                     self.callback_executor(lambda d=jog_delta: self.on_jog(self, d))
@@ -494,7 +514,7 @@ class Daemon:
         if self._display_workpiece_coords:
             display_flags |= 0x80
 
-        data = struct.pack('<HBB', 0xfdfe, 0xfe, display_flags)
+        data = struct.pack("<HBB", 0xFDFE, 0xFE, display_flags)
 
         LIN_AXES = [Axis.X, Axis.Y, Axis.Z]
         ROT_AXES = [Axis.A, Axis.B, Axis.C]
@@ -506,13 +526,9 @@ class Daemon:
             integer_part = scaled_coord // 10000
             fraction_part = scaled_coord % 10000
 
-            data += struct.pack('<HH',
-                              integer_part & 0xFFFF,
-                              (fraction_part & 0x7FFF) | (coord_sign << 15))
+            data += struct.pack("<HH", integer_part & 0xFFFF, (fraction_part & 0x7FFF) | (coord_sign << 15))
 
-        data += struct.pack('<HH',
-                            self._display_feedrate & 0xFFFF,
-                            self._display_spindle_speed & 0xFFFF)
+        data += struct.pack("<HH", self._display_feedrate & 0xFFFF, self._display_spindle_speed & 0xFFFF)
 
         # Add padding
         while len(data) < 21:
@@ -526,12 +542,11 @@ class Daemon:
 
             # Pad to 7 bytes if needed
             while len(packet_data) < 7:
-                packet_data += b'\x00'
+                packet_data += b"\x00"
 
             # Add report ID (0x06) at the beginning
-            packet = b'\x06' + packet_data
+            packet = b"\x06" + packet_data
             device.send_feature_report(packet)
-
 
 
 if __name__ == "__main__":
@@ -540,18 +555,12 @@ if __name__ == "__main__":
     daemon.set_display_step_indicator(StepIndicator.STEP)
     daemon.set_display_machine_coords()
 
-    positions = {
-        Axis.X: 0,
-        Axis.Y: 0,
-        Axis.Z: 0,
-        Axis.A: 0
-    }
+    positions = {Axis.X: 0, Axis.Y: 0, Axis.Z: 0, Axis.A: 0}
 
     def update_jog(daemon: Daemon, jog_steps: int):
         distance = jog_steps * daemon.step_size_value
         positions[daemon.active_axis] += distance
         daemon.set_display_position(daemon.active_axis, positions[daemon.active_axis])
-
 
     daemon.on_connect = lambda _: print("Device connected")
     daemon.on_disconnect = lambda _: print("Device disconnected")
@@ -559,8 +568,9 @@ if __name__ == "__main__":
     daemon.on_button_release = lambda _, button: print(f"Button {button.name} released")
     daemon.on_jog = update_jog
     daemon.on_axis_change = lambda _, axis: print(f"Active axis changed to {axis.name}")
-    daemon.on_step_size_change = lambda d, step_size: print(f"Step size changed to {step_size.name}/ {d.step_size_value}")
-
+    daemon.on_step_size_change = lambda d, step_size: print(
+        f"Step size changed to {step_size.name}/ {d.step_size_value}"
+    )
 
     daemon.start()
     while True:

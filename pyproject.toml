@@ -25,6 +25,7 @@ certifi = ">=2017.4.17"
 pyserial = "^3.5"
 pyquicklz = "^1.4.1"
 hid = "^1.0.7"
+ezdxf = "^1.3.0"
 
 [tool.poetry.group.dev.dependencies]
 pyinstaller = "^6.11.0"
@@ -32,9 +33,107 @@ pyinstaller-versionfile = ">=2.1.1,<4.0.0"
 ruamel-yaml = ">=0.18.6,<0.20.0"
 cython = "^3.1.2"
 toml = "^0.10.2"
-virtualenv = "^20.31.2"
+virtualenv = ">=20.31.2,<22.0.0"
 buildozer = "^1.5.0"
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.0"
+pytest-timeout = "^2.3"
+Pillow = "^11.0"
+
+[tool.poetry.group.lint.dependencies]
+ruff = ">=0.8,<0.17"
+mypy = "^1.13"
+import-linter = "^2.1"
+pre-commit = "^4.0"
 
 [tool.poetry.group.ios-dev.dependencies.kivy-ios]
 git = "https://github.com/Carvera-Community/kivy-ios.git"
 branch = "pr-643-fix-custom-recipes"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 60
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+extend-exclude = [
+    ".buildozer",
+    "build",
+    "dist",
+    # Platform packaging assets are generated or consumed by external build
+    # tools rather than imported by the Python application.
+    "assets/packaging/**",
+]
+
+[tool.ruff.lint]
+select = [
+    "E9",    # syntax and indentation errors
+    "W292",  # final newline
+    "I",     # import ordering
+    "B",     # flake8-bugbear correctness checks
+    "C4",    # comprehension simplifications
+    "SIM",   # non-controversial simplifications
+    "RET",   # return consistency
+    "UP",    # Python-version-aware modernization
+    "FA100", # future annotations needed by typing aliases
+    "FA102", # future annotations needed by PEP 604 syntax
+    "F821",  # undefined names
+    "F822",  # undefined names in __all__
+    "F823",  # local variable referenced before assignment
+    "F811",  # duplicate definitions
+    "F541",  # f-strings without placeholders
+]
+ignore = [
+    "B007",   # Kivy callbacks and parser loops often carry descriptive unused names
+    "B904",   # exception chaining is useful but noisy across hardware/protocol paths
+    "RET503", # many Kivy callbacks intentionally return None implicitly
+    "RET504", # assignment-before-return is left to local readability
+    "SIM102", # nested UI-state conditionals are often clearer in the Kivy shell
+    "SIM105", # broad exception suppression appears in hardware/UI integration paths
+    "SIM108", # if/else assignments are often clearer for command-building code
+    "SIM115", # explicit file handles are used in long-running UI and transfer flows
+    "UP031",  # percent formatting is used heavily in command strings
+]
+
+[tool.mypy]
+python_version = "3.9"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+# The application contains dynamic Kivy widgets and runtime-bound ids, so the
+# package baseline checks imports, name resolution, and typed call sites without
+# requiring annotations everywhere.
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_subclassing_any = false
+disallow_any_generics = false
+disable_error_code = [
+    "var-annotated",
+]
+# Addon packages expose Kivy plugin surfaces with runtime-bound ids and
+# controller objects. They are linted and tested, while package-level mypy
+# focuses on the controller application and shared modules.
+exclude = [
+    '^carveracontroller/addons/',
+]
+
+[tool.importlinter]
+root_packages = ["carveracontroller"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture: ui depends on machine, never reversed"
+type = "layers"
+layers = [
+    "carveracontroller.ui",
+    "carveracontroller.machine",
+]
+
+[[tool.importlinter.contracts]]
+name = "Machine layer is Kivy-free"
+type = "forbidden"
+source_modules = ["carveracontroller.machine"]
+forbidden_modules = ["kivy"]

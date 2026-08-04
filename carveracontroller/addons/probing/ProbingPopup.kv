@@ -405,10 +405,10 @@
 
                             ProbeButton:
                                 
-                                tooltip_txt: 'Calibrate 4th Axis Center'
-                                tooltip_image: 'addons/probing/data/icons_1024x768/calibration/Calibrate_4th_Axis_Y_TT.png'
+                                tooltip_txt: 'Calibrate 4th Axis Center (M469.6)'
+                                tooltip_image: 'addons/probing/data/icons_1024x768/calibration/Calibrate_4th_Axis_M469.6_Front.png'
                                 on_press: root.on_callibration_probing_pressed("FourthY")
-                                image: 'addons/probing/data/icons_1024x768/calibration/Calibrate_4th_Axis_Y.png'
+                                image: 'addons/probing/data/icons_1024x768/calibration/Calibrate_4th_Axis_M469.6_Top.png'
                             ProbeButton:
                                 
                                 tooltip_txt: 'Calibrate 4th Axis Z offset'
@@ -664,17 +664,14 @@
             Label:
                 size_hint_min_x: dp(90)
                 padding: '5dp'
-                halign: 'center'
+                halign: 'right'
                 valign: 'middle'
                 text_size: self.size
                 multiline: False
                 text: tr._('Note: Most of these operations require a true 3 axis probe, not the manual probe supplied with the Carvera. See the documentation for more info')
 
-            Button:
-                text: "More Info"
-                size_hint_x: None
-                width: dp(100)
-                on_release: root.open_probe_info_url()
+            HelpButton:
+                helpPath: "https://carvera-community.gitbook.io/docs/firmware/features/3d-probe-support"
         
         BoxLayout:
             spacing: '5dp'

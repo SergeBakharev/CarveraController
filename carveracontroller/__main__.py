@@ -1,6 +1,7 @@
-import certifi
 import os
 import sys
+
+import certifi
 
 if getattr(sys, "frozen", False):
     os.environ["SSL_CERT_FILE"] = certifi.where()
