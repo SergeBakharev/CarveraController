@@ -42,7 +42,7 @@ pytest-timeout = "^2.3"
 Pillow = "^11.0"
 
 [tool.poetry.group.lint.dependencies]
-ruff = ">=0.8,<0.16"
+ruff = ">=0.8,<0.17"
 mypy = "^1.13"
 import-linter = "^2.1"
 pre-commit = "^4.0"
