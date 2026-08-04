@@ -23,7 +23,7 @@ from .geometry import (
     tangent_point_to_circle_2d,
     tangent_point_to_ellipse_2d,
 )
-from .session import FeatureKind, ProbeScanFeature
+from .session import CMMWorkbenchFeature, FeatureKind
 
 _ERROR_INCOMPLETE_DATA = "Probe returned incomplete data."
 _ERROR_INVALID_MISSING_DIAMETER = "Invalid or missing diameter in probe result."
@@ -53,7 +53,7 @@ def mcs_xyz_to_wcs_xyz(mx: float, my: float, mz: float) -> tuple[float, float, f
     return wx, wy, wz
 
 
-def index_by_id(features: Iterable[ProbeScanFeature]) -> dict[str, ProbeScanFeature]:
+def index_by_id(features: Iterable[CMMWorkbenchFeature]) -> dict[str, CMMWorkbenchFeature]:
     return {f.id: f for f in features}
 
 
@@ -82,11 +82,11 @@ def payload_referenced_feature_ids(payload: dict[str, Any]) -> list[str]:
     return ids
 
 
-def referenced_feature_ids(feature: ProbeScanFeature) -> list[str]:
+def referenced_feature_ids(feature: CMMWorkbenchFeature) -> list[str]:
     return payload_referenced_feature_ids(feature.payload)
 
 
-def features_referencing_id(features: Iterable[ProbeScanFeature], target_id: str) -> list[str]:
+def features_referencing_id(features: Iterable[CMMWorkbenchFeature], target_id: str) -> list[str]:
     holders: list[str] = []
     for i, f in enumerate(features):
         if target_id in referenced_feature_ids(f):
@@ -94,7 +94,7 @@ def features_referencing_id(features: Iterable[ProbeScanFeature], target_id: str
     return holders
 
 
-def kind_has_vertex_xy(f: ProbeScanFeature) -> bool:
+def kind_has_vertex_xy(f: CMMWorkbenchFeature) -> bool:
     """True for feature kinds that expose an XY vertex (usable in constructions)."""
     return f.kind in (
         FeatureKind.POINT,
@@ -105,7 +105,7 @@ def kind_has_vertex_xy(f: ProbeScanFeature) -> bool:
     )
 
 
-def resolve_xy(vertex: ProbeScanFeature) -> XY | None:
+def resolve_xy(vertex: CMMWorkbenchFeature) -> XY | None:
     """Vertices for constructions: POINT, CORNER, curve centers, DERIVED_POINT."""
     p = vertex.payload
     if vertex.kind == FeatureKind.POINT:
@@ -120,9 +120,9 @@ def resolve_xy(vertex: ProbeScanFeature) -> XY | None:
 
 
 def segment_endpoints(
-    by_id: dict[str, ProbeScanFeature],
-    seg: ProbeScanFeature,
-    resolve: Callable[[ProbeScanFeature], XY | None] = resolve_xy,
+    by_id: dict[str, CMMWorkbenchFeature],
+    seg: CMMWorkbenchFeature,
+    resolve: Callable[[CMMWorkbenchFeature], XY | None] = resolve_xy,
 ) -> tuple[XY, XY] | None:
     """Return ((x1,y1),(x2,y2)) for a SEGMENT feature."""
     if seg.kind != FeatureKind.SEGMENT:
@@ -138,7 +138,7 @@ def segment_endpoints(
     return pa, pb
 
 
-def resolve_circle(feature: ProbeScanFeature) -> tuple[float, float, float] | None:
+def resolve_circle(feature: CMMWorkbenchFeature) -> tuple[float, float, float] | None:
     """Return (cx, cy, r) for CIRCLE or DERIVED_CIRCLE features, else None."""
     p = feature.payload
     if feature.kind in (FeatureKind.CIRCLE, FeatureKind.DERIVED_CIRCLE):
@@ -150,7 +150,7 @@ def resolve_circle(feature: ProbeScanFeature) -> tuple[float, float, float] | No
     return None
 
 
-def resolve_ellipse(feature: ProbeScanFeature) -> tuple[float, float, float, float] | None:
+def resolve_ellipse(feature: CMMWorkbenchFeature) -> tuple[float, float, float, float] | None:
     """Return (cx, cy, rx, ry) for ELLIPSE features, else None."""
     if feature.kind != FeatureKind.ELLIPSE:
         return None
@@ -163,7 +163,7 @@ def resolve_ellipse(feature: ProbeScanFeature) -> tuple[float, float, float, flo
     )
 
 
-def resolve_curve(feature: ProbeScanFeature) -> Curve | None:
+def resolve_curve(feature: CMMWorkbenchFeature) -> Curve | None:
     """Return ('circle', (cx,cy,r)) or ('ellipse', (cx,cy,rx,ry)) for curve features."""
     circ = resolve_circle(feature)
     if circ is not None:
@@ -252,7 +252,7 @@ def _probe_axis_segment_bundle(
     *,
     include_center: bool = True,
     source: str,
-) -> list[ProbeScanFeature]:
+) -> list[CMMWorkbenchFeature]:
     """Chord along WCS X (axis x) or WCS Y (axis y) through MCS center"""
     half = float(diameter) / 2.0
     ux, uy = _wcs_axis_unit_delta_mcs(axis)
@@ -260,25 +260,25 @@ def _probe_axis_segment_bundle(
     x2_m, y2_m = cx_m + half * ux, cy_m + half * uy
     wx1, wy1, _ = mcs_xyz_to_wcs_xyz(x1_m, y1_m, 0.0)
     wx2, wy2, _ = mcs_xyz_to_wcs_xyz(x2_m, y2_m, 0.0)
-    pa = ProbeScanFeature.new_point(
+    pa = CMMWorkbenchFeature.new_point(
         endpoint_a_label,
         wx1,
         wy1,
         0.0,
         source=source,
     )
-    pb = ProbeScanFeature.new_point(
+    pb = CMMWorkbenchFeature.new_point(
         endpoint_b_label,
         wx2,
         wy2,
         0.0,
         source=source,
     )
-    seg = ProbeScanFeature.new_segment(segment_label, pa.id, pb.id)
-    out: list[ProbeScanFeature] = [pa, pb, seg]
+    seg = CMMWorkbenchFeature.new_segment(segment_label, pa.id, pb.id)
+    out: list[CMMWorkbenchFeature] = [pa, pb, seg]
     if include_center:
         mx_w, my_w = midpoint_2d(wx1, wy1, wx2, wy2)
-        out.append(ProbeScanFeature.new_derived_point(center_label, pa.id, pb.id, mx_w, my_w))
+        out.append(CMMWorkbenchFeature.new_derived_point(center_label, pa.id, pb.id, mx_w, my_w))
     return out
 
 
@@ -296,7 +296,7 @@ def _probe_rect_cross_features(
     diameter_y: float,
     *,
     source: str,
-) -> list[ProbeScanFeature]:
+) -> list[CMMWorkbenchFeature]:
     """Two orthogonal chords (horizontal + vertical) and one shared center point."""
     h_bundle = _probe_axis_segment_bundle(
         h_segment_label,
@@ -324,7 +324,7 @@ def _probe_rect_cross_features(
     )
     pa, pb = h_bundle[0], h_bundle[1]
     wx, wy, _ = mcs_xyz_to_wcs_xyz(cx_m, cy_m, 0.0)
-    center = ProbeScanFeature.new_derived_point(center_label, pa.id, pb.id, wx, wy)
+    center = CMMWorkbenchFeature.new_derived_point(center_label, pa.id, pb.id, wx, wy)
     return h_bundle + v_bundle + [center]
 
 
@@ -336,20 +336,20 @@ def _features_circle_or_ellipse(
     diameter_y: float,
     *,
     tolerance_mm: float,
-) -> tuple[list[ProbeScanFeature], str | None]:
+) -> tuple[list[CMMWorkbenchFeature], str | None]:
     wx, wy, _ = mcs_xyz_to_wcs_xyz(cx_m, cy_m, 0.0)
     if diameters_equal(diameter_x, diameter_y, tolerance_mm=tolerance_mm):
         r = diameter_x / 2.0
         if r <= 0:
             return [], _ERROR_INVALID_MISSING_DIAMETER
         return (
-            [ProbeScanFeature.new_circle(label, wx, wy, r)],
+            [CMMWorkbenchFeature.new_circle(label, wx, wy, r)],
             None,
         )
     if diameter_x <= 0 or diameter_y <= 0:
         return [], _ERROR_INVALID_MISSING_DIAMETER
     return (
-        [ProbeScanFeature.new_ellipse(label, wx, wy, diameter_x, diameter_y)],
+        [CMMWorkbenchFeature.new_ellipse(label, wx, wy, diameter_x, diameter_y)],
         None,
     )
 
@@ -374,7 +374,7 @@ def features_from_m461_m462(
     curve_label: str,
     source: str,
     tolerance_mm: float | None = None,
-) -> tuple[list[ProbeScanFeature], str | None]:
+) -> tuple[list[CMMWorkbenchFeature], str | None]:
     """
     Build probe-scan features from M461/M462 variables and UI preset.
 
@@ -526,8 +526,8 @@ FeatureGeom = PointGeom | CircleGeom | SegmentGeom | PolylineGeom | LabelGeom | 
 
 
 def resolve_geometry(
-    feature: ProbeScanFeature,
-    by_id: dict[str, ProbeScanFeature],
+    feature: CMMWorkbenchFeature,
+    by_id: dict[str, CMMWorkbenchFeature],
 ) -> FeatureGeom:
     """Map a feature to a typed geometry value for drawing and hit-testing.
 
@@ -612,10 +612,10 @@ def resolve_geometry(
 
 
 def construct_segment(
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     selection_ids: list[str],
     label: str = "Segment",
-) -> tuple[list[ProbeScanFeature], str | None]:
+) -> tuple[list[CMMWorkbenchFeature], str | None]:
     """Create a SEGMENT from exactly two point-like selected features."""
     if len(selection_ids) != 2:
         return [], "Select exactly two point features."
@@ -628,16 +628,16 @@ def construct_segment(
         return [], "Segments need point-like features (corner, center point, probe point\u2026)."
     if resolve_xy(a) is None or resolve_xy(b) is None:
         return [], "Could not resolve XY for selected features."
-    return [ProbeScanFeature.new_segment(label, selection_ids[0], selection_ids[1])], None
+    return [CMMWorkbenchFeature.new_segment(label, selection_ids[0], selection_ids[1])], None
 
 
 def construct_polyline(
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     selection_ids: list[str],
     label: str = "Polyline",
     closed: bool = False,
     min_verts_error: str | None = None,
-) -> tuple[list[ProbeScanFeature], str | None]:
+) -> tuple[list[CMMWorkbenchFeature], str | None]:
     """Create a POLYLINE from 2+ (open) or 3+ (closed) point-like selected features."""
     min_n = 3 if closed else 2
     if len(selection_ids) < min_n:
@@ -647,14 +647,14 @@ def construct_polyline(
         f = by_id.get(fid)
         if not f or not kind_has_vertex_xy(f) or resolve_xy(f) is None:
             return [], "Polyline needs point-like features only (wrong selection)."
-    return [ProbeScanFeature.new_polyline(label, selection_ids, closed=closed)], None
+    return [CMMWorkbenchFeature.new_polyline(label, selection_ids, closed=closed)], None
 
 
 def construct_circumcircle(
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     selection_ids: list[str],
     label: str = "Circumcircle",
-) -> tuple[list[ProbeScanFeature], str | None]:
+) -> tuple[list[CMMWorkbenchFeature], str | None]:
     """Create a DERIVED_CIRCLE (circumcircle) from exactly three point features."""
     if len(selection_ids) != 3:
         return [], "Select exactly three point features."
@@ -674,7 +674,7 @@ def construct_circumcircle(
             return [], "Points are colinear, cannot form a circle."
         return [], str(e)
     return [
-        ProbeScanFeature.new_derived_circle(
+        CMMWorkbenchFeature.new_derived_circle(
             label,
             (selection_ids[0], selection_ids[1], selection_ids[2]),
             ucx,
@@ -685,10 +685,10 @@ def construct_circumcircle(
 
 
 def construct_intersection(
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     selection_ids: list[str],
     intersection_base_label: str = "Intersection",
-) -> tuple[list[ProbeScanFeature], str | None]:
+) -> tuple[list[CMMWorkbenchFeature], str | None]:
     """Create DERIVED_POINT(s) at the intersection of two segments, curves, or mixed."""
 
     if len(selection_ids) != 2:
@@ -698,7 +698,7 @@ def construct_intersection(
     if not f1 or not f2:
         return [], "Missing features for intersection."
 
-    def _is_seg(f: ProbeScanFeature) -> bool:
+    def _is_seg(f: CMMWorkbenchFeature) -> bool:
         return f.kind == FeatureKind.SEGMENT
 
     new_pts: list[tuple[float, float]] = []
@@ -737,18 +737,18 @@ def construct_intersection(
     else:
         return [], "Select two segments, two curves, or a curve and a segment."
 
-    new_feats: list[ProbeScanFeature] = []
+    new_feats: list[CMMWorkbenchFeature] = []
     for i, (ix, iy) in enumerate(new_pts):
         lbl = f"{intersection_base_label} {i + 1}" if len(new_pts) > 1 else intersection_base_label
-        new_feats.append(ProbeScanFeature.new_derived_point(lbl, f1.id, f2.id, ix, iy))
+        new_feats.append(CMMWorkbenchFeature.new_derived_point(lbl, f1.id, f2.id, ix, iy))
     return new_feats, None
 
 
 def construct_midpoint(
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     selection_ids: list[str],
     label: str = "Midpoint",
-) -> tuple[list[ProbeScanFeature], str | None]:
+) -> tuple[list[CMMWorkbenchFeature], str | None]:
     """Create a DERIVED_POINT at the midpoint of two points or one segment."""
     by_id = index_by_id(features)
     n = len(selection_ids)
@@ -764,7 +764,7 @@ def construct_midpoint(
         mx, my = midpoint_2d(ax, ay, bx, by_)
         a_id = str(seg.payload.get("a_id", ""))
         b_id = str(seg.payload.get("b_id", ""))
-        return [ProbeScanFeature.new_derived_point(label, a_id, b_id, mx, my)], None
+        return [CMMWorkbenchFeature.new_derived_point(label, a_id, b_id, mx, my)], None
 
     if n != 2:
         return [], "Select one segment or two point features."
@@ -776,18 +776,18 @@ def construct_midpoint(
     if pa is None or pb is None:
         return [], "Could not resolve XY for selected features."
     mx, my = midpoint_2d(pa[0], pa[1], pb[0], pb[1])
-    return [ProbeScanFeature.new_derived_point(label, fa.id, fb.id, mx, my)], None
+    return [CMMWorkbenchFeature.new_derived_point(label, fa.id, fb.id, mx, my)], None
 
 
 def construct_tangent(
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     selection_ids: list[str],
     *,
     tangent_point_label: Callable[[int], str] | None = None,
     tangent_line_label: Callable[[int], str] | None = None,
     tangent_a_label: Callable[[int], str] | None = None,
     tangent_b_label: Callable[[int], str] | None = None,
-) -> tuple[list[ProbeScanFeature], str | None]:
+) -> tuple[list[CMMWorkbenchFeature], str | None]:
     """Create tangent derived points (and segment) from a point+curve or two curves."""
     if tangent_point_label is None:
         tangent_point_label = lambda n: f"Tangent point {n}"
@@ -805,7 +805,7 @@ def construct_tangent(
     if not f1 or not f2:
         return [], "Missing features for tangent."
 
-    def _is_pt(f: ProbeScanFeature) -> bool:
+    def _is_pt(f: CMMWorkbenchFeature) -> bool:
         return (
             f.kind in (FeatureKind.POINT, FeatureKind.CORNER, FeatureKind.DERIVED_POINT) and resolve_xy(f) is not None
         )
@@ -822,7 +822,7 @@ def construct_tangent(
     else:
         return [], "Select a point + curve, or two curves."
 
-    new_feats: list[ProbeScanFeature] = []
+    new_feats: list[CMMWorkbenchFeature] = []
 
     if pt_feat is not None and curve_feat is not None and curve is not None:
         pxy = resolve_xy(pt_feat)
@@ -836,7 +836,7 @@ def construct_tangent(
             return [], "Point is inside the ellipse \u2014 no tangent exists."
         for i, (tx, ty) in enumerate(touch_pts):
             new_feats.append(
-                ProbeScanFeature.new_derived_point(tangent_point_label(i + 1), pt_feat.id, curve_feat.id, tx, ty)
+                CMMWorkbenchFeature.new_derived_point(tangent_point_label(i + 1), pt_feat.id, curve_feat.id, tx, ty)
             )
 
     elif c1 is not None and c2 is not None:
@@ -846,13 +846,13 @@ def construct_tangent(
                 return [], "Circles are concentric \u2014 no external tangent exists."
             return [], "Ellipses have no external tangent."
         for i, (tp1, tp2) in enumerate(tangent_lines):
-            dp1 = ProbeScanFeature.new_derived_point(tangent_a_label(i + 1), f1.id, f2.id, tp1[0], tp1[1])
-            dp2 = ProbeScanFeature.new_derived_point(tangent_b_label(i + 1), f1.id, f2.id, tp2[0], tp2[1])
+            dp1 = CMMWorkbenchFeature.new_derived_point(tangent_a_label(i + 1), f1.id, f2.id, tp1[0], tp1[1])
+            dp2 = CMMWorkbenchFeature.new_derived_point(tangent_b_label(i + 1), f1.id, f2.id, tp2[0], tp2[1])
             new_feats.extend(
                 [
                     dp1,
                     dp2,
-                    ProbeScanFeature.new_segment(tangent_line_label(i + 1), dp1.id, dp2.id),
+                    CMMWorkbenchFeature.new_segment(tangent_line_label(i + 1), dp1.id, dp2.id),
                 ]
             )
 
@@ -872,7 +872,7 @@ class ConstructButtonStates:
 
 
 def compute_construct_button_states(
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     selection_ids: list[str],
     is_probing: bool,
 ) -> ConstructButtonStates:

@@ -65,13 +65,13 @@ from ..core.gcode import (
     split_execute_lines,
 )
 from ..core.io_export import export_csv, export_dxf, export_json
-from ..core.session import FeatureKind, ProbeScanFeature, ProbeScanSession
+from ..core.session import CMMWorkbenchFeature, CMMWorkbenchSession, FeatureKind
 from .display import feature_secondary_line, fmt_wcs_manual_field
 from .probe_runner import ProbeRunner
-from .sketch import ProbeScanPreviewSketch
+from .sketch import CMMWorkbenchPreviewSketch
 
-if "ProbeScanPreviewSketch" not in Factory.classes:
-    Factory.register("ProbeScanPreviewSketch", cls=ProbeScanPreviewSketch)
+if "CMMWorkbenchPreviewSketch" not in Factory.classes:
+    Factory.register("CMMWorkbenchPreviewSketch", cls=CMMWorkbenchPreviewSketch)
 
 # Feature list row highlight (canvas.before Color on each row BoxLayout).
 _FEATURE_ROW_FOCUS_RGBA_ON = (0.18, 0.38, 0.58, 0.22)
@@ -85,7 +85,7 @@ _SESSION_FILE_FILTERS = {
 }
 
 
-class ProbeScanIconToggle(ToggleButton):
+class CMMWorkbenchIconToggle(ToggleButton):
     image = StringProperty("")
 
     def __init__(self, **kwargs):
@@ -93,7 +93,7 @@ class ProbeScanIconToggle(ToggleButton):
         self.background_color = (0, 0, 0, 0)
 
 
-class ProbeScanSketchVisibilityToggle(ProbeScanIconToggle):
+class CMMWorkbenchSketchVisibilityToggle(CMMWorkbenchIconToggle):
     """Per-row sketch visibility toggle — not in a shared ToggleButton group."""
 
     def __init__(self, **kwargs):
@@ -101,14 +101,14 @@ class ProbeScanSketchVisibilityToggle(ProbeScanIconToggle):
         self.group = None
 
 
-if "ProbeScanIconToggle" not in Factory.classes:
-    Factory.register("ProbeScanIconToggle", cls=ProbeScanIconToggle)
+if "CMMWorkbenchIconToggle" not in Factory.classes:
+    Factory.register("CMMWorkbenchIconToggle", cls=CMMWorkbenchIconToggle)
 
-if "ProbeScanSketchVisibilityToggle" not in Factory.classes:
-    Factory.register("ProbeScanSketchVisibilityToggle", cls=ProbeScanSketchVisibilityToggle)
+if "CMMWorkbenchSketchVisibilityToggle" not in Factory.classes:
+    Factory.register("CMMWorkbenchSketchVisibilityToggle", cls=CMMWorkbenchSketchVisibilityToggle)
 
 
-class JogProbeScanPopup(ModalView):
+class JogCMMWorkbenchPopup(ModalView):
     _jog_height_tracking_inited = False
 
     def on_kv_post(self, base_widget):
@@ -148,8 +148,8 @@ class JogProbeScanPopup(ModalView):
         self._snap_modal_height_to_inner()
 
 
-if "JogProbeScanPopup" not in Factory.classes:
-    Factory.register("JogProbeScanPopup", cls=JogProbeScanPopup)
+if "JogCMMWorkbenchPopup" not in Factory.classes:
+    Factory.register("JogCMMWorkbenchPopup", cls=JogCMMWorkbenchPopup)
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +199,7 @@ def _corner_deltas_from_quadrant(quadrant: str, mx: float, my: float) -> tuple[f
     return sx * ax, sy * ay
 
 
-class ProbeScanPopup(ModalView):
+class CMMWorkbenchPopup(ModalView):
     controller: Controller
     _listener_handle: int | None = None
     _capture: M118ProbeCapture | None = None
@@ -220,7 +220,7 @@ class ProbeScanPopup(ModalView):
 
     def __init__(self, controller: Controller, **kwargs):
         self.controller = controller
-        self.session = ProbeScanSession()
+        self.session = CMMWorkbenchSession()
         self._selection_order: list[str] = []
         self._preview_focus_id: str | None = None
         self._angle_variant: str | None = None
@@ -249,7 +249,7 @@ class ProbeScanPopup(ModalView):
             logger.debug("Could not bind sketch tap handler", exc_info=True)
 
     def _on_sketch_feature_tap(self, feat_id: str) -> None:
-        """Called by ProbeScanPreviewSketch when the user taps a feature."""
+        """Called by CMMWorkbenchPreviewSketch when the user taps a feature."""
         feat = next((f for f in self.session.features if f.id == feat_id), None)
         if feat is None or not feat.sketch_visible:
             return
@@ -356,7 +356,7 @@ class ProbeScanPopup(ModalView):
             return
         jog = self._jog_popup
         if jog is None:
-            jog = Factory.JogProbeScanPopup()
+            jog = Factory.JogCMMWorkbenchPopup()
             jog.bind(on_open=self._on_jog_modal_open)
             jog.bind(on_dismiss=self._on_jog_modal_dismiss)
             self._jog_popup = jog
@@ -405,7 +405,7 @@ class ProbeScanPopup(ModalView):
 
         def on_confirm(*_args):
             self._cancel_probe_run()
-            super(ProbeScanPopup, self).dismiss()
+            super(CMMWorkbenchPopup, self).dismiss()
 
         cp.confirm = on_confirm
         cp.cancel = None
@@ -643,7 +643,7 @@ class ProbeScanPopup(ModalView):
             y_m = vd.get(PROBE_VAR_CENTER_Y, my)
             z_m = vd.get(PROBE_VAR_CENTER_Z, mz)
             wx, wy, wz = mcs_xyz_to_wcs_xyz(x_m, y_m, z_m)
-            f = ProbeScanFeature.new_point(
+            f = CMMWorkbenchFeature.new_point(
                 tr._("Touch probe (M466)"),
                 wx,
                 wy,
@@ -693,7 +693,7 @@ class ProbeScanPopup(ModalView):
             xm = float(vd.get(PROBE_VAR_CENTER_X, 0.0))
             ym = float(vd.get(PROBE_VAR_CENTER_Y, 0.0))
             wx, wy, _ = mcs_xyz_to_wcs_xyz(xm, ym, 0.0)
-            f = ProbeScanFeature.new_corner(
+            f = CMMWorkbenchFeature.new_corner(
                 tr._("Inside corner (M463)") if op == "M463" else tr._("Outside corner (M464)"),
                 wx,
                 wy,
@@ -706,7 +706,7 @@ class ProbeScanPopup(ModalView):
             my = float(CNC.vars.get("my", 0.0))
             mz = float(CNC.vars.get("mz", 0.0))
             wx, wy, wz = mcs_xyz_to_wcs_xyz(mx, my, mz)
-            f = ProbeScanFeature.new_angle(
+            f = CMMWorkbenchFeature.new_angle(
                 tr._("Angle (M465)"),
                 float(vd.get(PROBE_VAR_ANGLE, 0.0)),
                 probe_variant=str(self._angle_variant or ""),
@@ -829,7 +829,7 @@ class ProbeScanPopup(ModalView):
 
                 row.add_widget(cb_col)
                 row.add_widget(lbl)
-                vis_btn = ProbeScanSketchVisibilityToggle(
+                vis_btn = CMMWorkbenchSketchVisibilityToggle(
                     image="data/eye.png",
                     size_hint_x=None,
                     width=dp(32),
@@ -1083,7 +1083,7 @@ class ProbeScanPopup(ModalView):
         if parsed is None:
             return
         wx, wy, wz = parsed
-        f = ProbeScanFeature.new_point(
+        f = CMMWorkbenchFeature.new_point(
             tr._("Stored position"),
             wx,
             wy,
@@ -1110,7 +1110,7 @@ class ProbeScanPopup(ModalView):
         if r <= 0:
             self._toast(tr._("Radius must be greater than zero."))
             return
-        f = ProbeScanFeature.new_circle(
+        f = CMMWorkbenchFeature.new_circle(
             tr._("Manual circle"),
             wx,
             wy,
@@ -1394,7 +1394,7 @@ class ProbeScanPopup(ModalView):
     def on_reset_session(self):
         root = App.get_running_app().root
         cp = root.confirm_popup
-        cp.lb_title.text = tr._("Reset probe scan?")
+        cp.lb_title.text = tr._("Reset CMM Workbench?")
         cp.lb_content.text = tr._("Clear all features from the current session?\nYou will lose unsaved work.")
 
         def on_confirm():
@@ -1403,7 +1403,7 @@ class ProbeScanPopup(ModalView):
             self.session.features.clear()
             self._clear_construct_selection()
             self._refresh_feature_ui()
-            self._toast(tr._("Probe scan cleared."))
+            self._toast(tr._("CMM Workbench cleared."))
 
         cp.confirm = on_confirm
         cp.cancel = None
@@ -1444,7 +1444,7 @@ class ProbeScanPopup(ModalView):
 
         open_local_file_picker(
             title=tr._("Load session"),
-            default_name="probe_scan_export.json",
+            default_name="cmm_workbench_export.json",
             size_hint=(0.82, 0.82),
             on_confirm=on_confirm,
             confirm_label=tr._("Load"),
@@ -1457,9 +1457,9 @@ class ProbeScanPopup(ModalView):
         if kind not in ("JSON", "CSV", "DXF"):
             kind = "JSON"
         stems = {
-            "JSON": "probe_scan_export.json",
-            "CSV": "probe_scan_export.csv",
-            "DXF": "probe_scan_export.dxf",
+            "JSON": "cmm_workbench_export.json",
+            "CSV": "cmm_workbench_export.csv",
+            "DXF": "cmm_workbench_export.dxf",
         }
 
         def on_confirm(popup, dest):

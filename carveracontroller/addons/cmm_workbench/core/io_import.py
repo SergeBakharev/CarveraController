@@ -1,4 +1,4 @@
-"""Import probe scan sessions from JSON, CSV, and DXF."""
+"""Import CMM Workbench sessions from JSON, CSV, and DXF."""
 
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ if TYPE_CHECKING:
 from .features import payload_referenced_feature_ids
 from .io_export import DXF_LAYERS
 from .session import (
+    CMMWorkbenchFeature,
+    CMMWorkbenchSession,
     FeatureKind,
-    ProbeScanFeature,
-    ProbeScanSession,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,12 +45,12 @@ class ImportReport:
     imported: int = 0
 
 
-def load_session_from_path(path: str) -> tuple[ProbeScanSession, ImportReport]:
+def load_session_from_path(path: str) -> tuple[CMMWorkbenchSession, ImportReport]:
     with open(path, encoding="utf-8-sig") as fp:
         text = fp.read()
     ext = os.path.splitext(path)[1].lower()
     if ext == ".json":
-        session = ProbeScanSession.loads(text)
+        session = CMMWorkbenchSession.loads(text)
         report = ImportReport(imported=len(session.features))
         _validate_references(session.features, report)
         return session, report
@@ -61,7 +61,7 @@ def load_session_from_path(path: str) -> tuple[ProbeScanSession, ImportReport]:
     raise ValueError(f"Unsupported file extension {ext!r} (use .json, .csv, or .dxf)")
 
 
-def import_csv(text: str) -> tuple[ProbeScanSession, ImportReport]:
+def import_csv(text: str) -> tuple[CMMWorkbenchSession, ImportReport]:
     report = ImportReport()
     if not text.strip():
         raise ValueError("Empty CSV file")
@@ -80,7 +80,7 @@ def import_csv(text: str) -> tuple[ProbeScanSession, ImportReport]:
                 return (v or "").strip()
         return ""
 
-    features: list[ProbeScanFeature] = []
+    features: list[CMMWorkbenchFeature] = []
     seen_ids: set[str] = set()
     row_count = 0
 
@@ -123,7 +123,7 @@ def import_csv(text: str) -> tuple[ProbeScanSession, ImportReport]:
         _merge_csv_geometry(kind, payload, row, col, report)
 
         features.append(
-            ProbeScanFeature(
+            CMMWorkbenchFeature(
                 id=feat_id,
                 kind=kind,
                 label=col(row, "label"),
@@ -131,7 +131,7 @@ def import_csv(text: str) -> tuple[ProbeScanSession, ImportReport]:
             )
         )
 
-    session = ProbeScanSession(features=features)
+    session = CMMWorkbenchSession(features=features)
     report.imported = len(features)
     _validate_references(features, report)
     return session, report
@@ -190,7 +190,7 @@ def _merge_csv_geometry(
         payload["z"] = fz
 
 
-def import_dxf(text: str) -> tuple[ProbeScanSession, ImportReport]:
+def import_dxf(text: str) -> tuple[CMMWorkbenchSession, ImportReport]:
     import ezdxf
 
     report = ImportReport()
@@ -202,7 +202,7 @@ def import_dxf(text: str) -> tuple[ProbeScanSession, ImportReport]:
     except ezdxf.DXFError as e:
         raise ValueError(f"Invalid DXF: {e}") from e
 
-    features: list[ProbeScanFeature] = []
+    features: list[CMMWorkbenchFeature] = []
     registry = _PointRegistry(features, report)
     msp = doc.modelspace()
     entities = list(msp)
@@ -217,7 +217,7 @@ def import_dxf(text: str) -> tuple[ProbeScanSession, ImportReport]:
     def mark_used(batch: list[DXFEntity]) -> None:
         consumed.update(batch)
 
-    # Probe scan layers (/!\ order matters)
+    # CMM Workbench layers (/!\ order matters)
     _import_dxf_probed_points(by_layer.get("PROBED_POINTS", []), features, report, consumed)
     _import_dxf_probed_corners(by_layer.get("PROBED_CORNERS", []), features, report, consumed)
     _import_dxf_probed_angles(by_layer.get("PROBED_ANGLES", []), features, report, consumed)
@@ -268,13 +268,13 @@ def import_dxf(text: str) -> tuple[ProbeScanSession, ImportReport]:
             report.warnings.append(f"Skipped unsupported entity {dtype} on layer {layer!r}")
             report.skipped += 1
 
-    session = ProbeScanSession(features=features)
+    session = CMMWorkbenchSession(features=features)
     report.imported = len(features)
     return session, report
 
 
 class _PointRegistry:
-    def __init__(self, features: list[ProbeScanFeature], report: ImportReport) -> None:
+    def __init__(self, features: list[CMMWorkbenchFeature], report: ImportReport) -> None:
         self._features = features
         self._report = report
         self._counters: dict[str, int] = {}
@@ -284,7 +284,7 @@ class _PointRegistry:
         self._counters[prefix] = n
         return f"{prefix}{n}"
 
-    def _coords_of(self, feat: ProbeScanFeature) -> tuple[float, float, float] | None:
+    def _coords_of(self, feat: CMMWorkbenchFeature) -> tuple[float, float, float] | None:
         p = feat.payload
         if feat.kind == FeatureKind.POINT:
             return float(p["x"]), float(p["y"]), float(p.get("z", 0.0))
@@ -315,23 +315,23 @@ class _PointRegistry:
 
         label = self._next_label(prefix)
         if kind == FeatureKind.CORNER:
-            feat = ProbeScanFeature.new_corner(label, x, y)
+            feat = CMMWorkbenchFeature.new_corner(label, x, y)
         elif kind == FeatureKind.DERIVED_POINT:
-            feat = ProbeScanFeature(
+            feat = CMMWorkbenchFeature(
                 id=str(uuid.uuid4()),
                 kind=FeatureKind.DERIVED_POINT,
                 label=label,
                 payload={"x": x, "y": y, "z": z},
             )
         else:
-            feat = ProbeScanFeature.new_point(label, x, y, z)
+            feat = CMMWorkbenchFeature.new_point(label, x, y, z)
         self._features.append(feat)
         return feat.id
 
 
 def _import_dxf_probed_points(
     entities: list[DXFEntity],
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     report: ImportReport,
     consumed: set[DXFEntity],
 ) -> None:
@@ -345,7 +345,7 @@ def _import_dxf_probed_points(
         loc = ent.dxf.location
         n += 1
         features.append(
-            ProbeScanFeature.new_point(
+            CMMWorkbenchFeature.new_point(
                 f"P{n}",
                 float(loc.x),
                 float(loc.y),
@@ -362,7 +362,7 @@ _RE_ANGLE_DXF_TEXT = re.compile(
 
 def _import_dxf_probed_angles(
     entities: list[DXFEntity],
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     report: ImportReport,
     consumed: set[DXFEntity],
 ) -> None:
@@ -388,7 +388,7 @@ def _import_dxf_probed_angles(
         deg = float(m.group(1))
         n += 1
         features.append(
-            ProbeScanFeature.new_angle(
+            CMMWorkbenchFeature.new_angle(
                 f"A{n}",
                 deg,
                 x=float(ins.x),
@@ -400,7 +400,7 @@ def _import_dxf_probed_angles(
 
 def _import_dxf_probed_corners(
     entities: list[DXFEntity],
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     report: ImportReport,
     consumed: set[DXFEntity],
 ) -> None:
@@ -413,12 +413,12 @@ def _import_dxf_probed_corners(
         consumed.add(ent)
         loc = ent.dxf.location
         n += 1
-        features.append(ProbeScanFeature.new_corner(f"K{n}", float(loc.x), float(loc.y)))
+        features.append(CMMWorkbenchFeature.new_corner(f"K{n}", float(loc.x), float(loc.y)))
 
 
 def _import_dxf_probed_centers(
     entities: list[DXFEntity],
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     report: ImportReport,
     registry: _PointRegistry,
     consumed: set[DXFEntity],
@@ -440,7 +440,7 @@ def _import_dxf_probed_centers(
         cx, cy = float(center.x), float(center.y)
         curve_centers.append((cx, cy, 0.0))
         n += 1
-        features.append(ProbeScanFeature.new_circle(f"C{n}", cx, cy, r))
+        features.append(CMMWorkbenchFeature.new_circle(f"C{n}", cx, cy, r))
 
     for ent in ellipses:
         consumed.add(ent)
@@ -450,7 +450,7 @@ def _import_dxf_probed_centers(
         cx, cy, dx, dy = parsed
         curve_centers.append((cx, cy, 0.0))
         n += 1
-        features.append(ProbeScanFeature.new_ellipse(f"E{n}", cx, cy, dx, dy))
+        features.append(CMMWorkbenchFeature.new_ellipse(f"E{n}", cx, cy, dx, dy))
 
     for ent in points:
         consumed.add(ent)
@@ -463,7 +463,7 @@ def _import_dxf_probed_centers(
 
 def _import_dxf_segments(
     entities: list[DXFEntity],
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     report: ImportReport,
     registry: _PointRegistry,
     consumed: set[DXFEntity],
@@ -481,7 +481,7 @@ def _import_dxf_segments(
 
 def _add_segment_from_line(
     ent: DXFEntity,
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     report: ImportReport,
     registry: _PointRegistry,
     *,
@@ -499,12 +499,12 @@ def _add_segment_from_line(
     b_id = registry.snap(x2, y2, z2, prefix="P")
     if label is None:
         label = registry._next_label("S")
-    features.append(ProbeScanFeature.new_segment(label, a_id, b_id))
+    features.append(CMMWorkbenchFeature.new_segment(label, a_id, b_id))
 
 
 def _import_dxf_polylines(
     entities: list[DXFEntity],
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     report: ImportReport,
     registry: _PointRegistry,
     consumed: set[DXFEntity],
@@ -523,7 +523,7 @@ def _import_dxf_polylines(
 
 def _add_polyline_entity(
     ent: DXFEntity,
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     report: ImportReport,
     registry: _PointRegistry,
     *,
@@ -552,12 +552,12 @@ def _add_polyline_entity(
 
     if label is None:
         label = registry._next_label("PL")
-    features.append(ProbeScanFeature.new_polyline(label, vertex_ids, closed=closed))
+    features.append(CMMWorkbenchFeature.new_polyline(label, vertex_ids, closed=closed))
 
 
 def _import_dxf_derived_circles(
     entities: list[DXFEntity],
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     report: ImportReport,
     consumed: set[DXFEntity],
 ) -> None:
@@ -572,7 +572,7 @@ def _import_dxf_derived_circles(
         r = float(ent.dxf.radius)
         n += 1
         features.append(
-            ProbeScanFeature(
+            CMMWorkbenchFeature(
                 id=str(uuid.uuid4()),
                 kind=FeatureKind.DERIVED_CIRCLE,
                 label=f"DC{n}",
@@ -587,7 +587,7 @@ def _import_dxf_derived_circles(
 
 def _import_dxf_derived_points(
     entities: list[DXFEntity],
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     report: ImportReport,
     registry: _PointRegistry,
     consumed: set[DXFEntity],
@@ -609,7 +609,7 @@ def _import_dxf_derived_points(
 
 
 def _add_circle_feature(
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     report: ImportReport,
     kind: FeatureKind,
     cx: float,
@@ -625,7 +625,7 @@ def _add_circle_feature(
     n = sum(1 for f in features if f.kind == kind) + 1
     if kind == FeatureKind.DERIVED_CIRCLE:
         features.append(
-            ProbeScanFeature(
+            CMMWorkbenchFeature(
                 id=str(uuid.uuid4()),
                 kind=kind,
                 label=f"{prefix}{n}",
@@ -633,7 +633,7 @@ def _add_circle_feature(
             )
         )
     else:
-        features.append(ProbeScanFeature.new_circle(f"{prefix}{n}", cx, cy, r))
+        features.append(CMMWorkbenchFeature.new_circle(f"{prefix}{n}", cx, cy, r))
 
 
 def _parse_axis_aligned_dxf_ellipse(
@@ -665,7 +665,7 @@ def _parse_axis_aligned_dxf_ellipse(
 
 def _add_ellipse_from_dxf(
     ent: DXFEntity,
-    features: list[ProbeScanFeature],
+    features: list[CMMWorkbenchFeature],
     report: ImportReport,
     *,
     prefix: str,
@@ -675,10 +675,10 @@ def _add_ellipse_from_dxf(
         return
     cx, cy, dx, dy = parsed
     n = sum(1 for f in features if f.kind == FeatureKind.ELLIPSE) + 1
-    features.append(ProbeScanFeature.new_ellipse(f"{prefix}{n}", cx, cy, dx, dy))
+    features.append(CMMWorkbenchFeature.new_ellipse(f"{prefix}{n}", cx, cy, dx, dy))
 
 
-def _validate_references(features: list[ProbeScanFeature], report: ImportReport) -> None:
+def _validate_references(features: list[CMMWorkbenchFeature], report: ImportReport) -> None:
     ids = {f.id for f in features}
     for feat in features:
         for ref in payload_referenced_feature_ids(feat.payload):

@@ -21,7 +21,7 @@
 #:include addons/probing/ProbingPopup.kv
 #:include ui/popups/set_position/set_position.kv
 #:include ui/popups/adv_calibrate/adv_calibrate.kv
-#:include addons/probe_scan/ui/ProbeScanPopup.kv
+#:include addons/cmm_workbench/ui/CMMWorkbenchPopup.kv
 #:include addons/facing/FacingWizardPopup.kv
 #:include addons/camera/CameraControls.kv
 
@@ -3977,9 +3977,9 @@
                                                 height: '35dp'
                                                 disabled: not app.is_community_firmware or app.state != 'Idle'
                                                 text: tr._('Tools...')
-                                                values: [tr._('Probe scan...'), tr._('Facing...')]
+                                                values: [tr._('CMM Workbench...'), tr._('Facing...')]
                                                 on_text:
-                                                    if self.text == tr._('Probe scan...'): app.root.open_probe_scan_popup()
+                                                    if self.text == tr._('CMM Workbench...'): app.root.open_cmm_workbench_popup()
                                                     if self.text == tr._('Facing...'): app.root.open_facing_popup()
                                                     if self.text != tr._('Tools...'): self.text = tr._('Tools...')
 

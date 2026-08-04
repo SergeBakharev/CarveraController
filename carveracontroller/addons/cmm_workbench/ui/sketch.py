@@ -12,12 +12,12 @@ from kivy.uix.widget import Widget
 
 from ..core.features import (
     CircleGeom,
+    CMMWorkbenchFeature,
     FeatureGeom,
     FeatureKind,
     LabelGeom,
     PointGeom,
     PolylineGeom,
-    ProbeScanFeature,
     SegmentGeom,
     index_by_id,
     resolve_geometry,
@@ -51,12 +51,12 @@ def _ellipse_polyline_px(
     return pts
 
 
-class ProbeScanPreviewSketch(Widget):
+class CMMWorkbenchPreviewSketch(Widget):
     """Redraw when features or table/focus/selection state change via ``set_features``."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._features: list[ProbeScanFeature] = []
+        self._features: list[CMMWorkbenchFeature] = []
         self._hidden_ids: set[str] = set()
         self._focus_id: str | None = None
         self._selection_ids: list[str] = []
@@ -73,7 +73,7 @@ class ProbeScanPreviewSketch(Widget):
 
     def set_features(
         self,
-        feats: list[ProbeScanFeature],
+        feats: list[CMMWorkbenchFeature],
         *,
         focus_id: str | None = None,
         selection_ids: list[str] | None = None,
@@ -85,7 +85,7 @@ class ProbeScanPreviewSketch(Widget):
         self._selection_ids = list(selection_ids) if selection_ids is not None else []
         self._redraw()
 
-    def _is_visible(self, f: ProbeScanFeature) -> bool:
+    def _is_visible(self, f: CMMWorkbenchFeature) -> bool:
         return f.id not in self._hidden_ids
 
     def _draw_texture_label(
@@ -178,7 +178,7 @@ class ProbeScanPreviewSketch(Widget):
         dist_ring_px = abs(rho - 1.0) * min(aa, bb) * sc
         return min(dist_centre_px, dist_ring_px)
 
-    def _hit_radius_for_feature(self, f: ProbeScanFeature, by_id: dict[str, ProbeScanFeature]) -> float:
+    def _hit_radius_for_feature(self, f: CMMWorkbenchFeature, by_id: dict[str, CMMWorkbenchFeature]) -> float:
         """Screen-space hit radius in pixels for a given feature."""
         sc = abs(self._last_scale)
         geom = resolve_geometry(f, by_id)
@@ -196,7 +196,7 @@ class ProbeScanPreviewSketch(Widget):
         # SegmentGeom, PolylineGeom
         return dp(20)
 
-    def _distance_to_feature_px(self, f: ProbeScanFeature, by_id: dict, tx: float, ty: float) -> float:
+    def _distance_to_feature_px(self, f: CMMWorkbenchFeature, by_id: dict, tx: float, ty: float) -> float:
         """Minimum screen-pixel distance from (tx, ty) to feature geometry."""
         geom = resolve_geometry(f, by_id)
         if geom is None:
@@ -240,8 +240,8 @@ class ProbeScanPreviewSketch(Widget):
 
     def _draw_feature_highlight(
         self,
-        f: ProbeScanFeature,
-        by_id: dict[str, ProbeScanFeature],
+        f: CMMWorkbenchFeature,
+        by_id: dict[str, CMMWorkbenchFeature],
         px,
         scale: float,
         rgba: tuple[float, float, float, float],
@@ -288,8 +288,8 @@ class ProbeScanPreviewSketch(Widget):
 
     def _selection_badge_anchor_px(
         self,
-        f: ProbeScanFeature,
-        by_id: dict[str, ProbeScanFeature],
+        f: CMMWorkbenchFeature,
+        by_id: dict[str, CMMWorkbenchFeature],
         px,
     ) -> tuple[float, float] | None:
         geom = resolve_geometry(f, by_id)
@@ -311,8 +311,8 @@ class ProbeScanPreviewSketch(Widget):
 
     def _selection_badge_layout_px(
         self,
-        f: ProbeScanFeature,
-        by_id: dict[str, ProbeScanFeature],
+        f: CMMWorkbenchFeature,
+        by_id: dict[str, CMMWorkbenchFeature],
         px,
         scale: float,
         iw: float,
@@ -373,7 +373,7 @@ class ProbeScanPreviewSketch(Widget):
 
     def _draw_selection_order_badges(
         self,
-        by_id: dict[str, ProbeScanFeature],
+        by_id: dict[str, CMMWorkbenchFeature],
         px,
         scale: float,
         iw: float,
@@ -509,7 +509,7 @@ class ProbeScanPreviewSketch(Widget):
 
             by_id = index_by_id(self._features)
             # Precompute all geometries once for both drawing passes.
-            feature_geoms: list[tuple[ProbeScanFeature, FeatureGeom]] = [
+            feature_geoms: list[tuple[CMMWorkbenchFeature, FeatureGeom]] = [
                 (f, resolve_geometry(f, by_id)) for f in self._features if self._is_visible(f)
             ]
 

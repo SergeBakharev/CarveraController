@@ -1,4 +1,4 @@
-"""Display formatting helpers for probe scan feature lists.
+"""Display formatting helpers for CMM Workbench feature lists.
 
 All functions are pure (no Kivy state) and can be called from any context.
 """
@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from carveracontroller.translation import tr
 
-from ..core.features import FeatureKind, ProbeScanFeature, resolve_xy, segment_endpoints
+from ..core.features import CMMWorkbenchFeature, FeatureKind, resolve_xy, segment_endpoints
 
 
 def fmt_wcs_manual_field(v: float) -> str:
@@ -17,7 +17,7 @@ def fmt_wcs_manual_field(v: float) -> str:
 
 
 def payload_wcs_xyz_for_display(
-    feat: ProbeScanFeature,
+    feat: CMMWorkbenchFeature,
 ) -> tuple[float, float, float] | None:
     """Extract (x, y, z) from a feature's payload for display purposes."""
     p = feat.payload
@@ -43,7 +43,7 @@ def fmt_wcs_xy_detail(
     x: float,
     y: float,
     *,
-    feat: ProbeScanFeature | None,
+    feat: CMMWorkbenchFeature | None,
     z_fallback: float = 0.0,
 ) -> str:
     """Table detail text: includes Z only when the feature stores elevation."""
@@ -61,8 +61,8 @@ def fmt_wcs_xy_detail(
 
 
 def feature_secondary_line(
-    feat: ProbeScanFeature,
-    by_id: dict[str, ProbeScanFeature],
+    feat: CMMWorkbenchFeature,
+    by_id: dict[str, CMMWorkbenchFeature],
 ) -> str:
     """Build the second display line for a feature list row."""
     p = feat.payload
@@ -135,7 +135,7 @@ def feature_secondary_line(
         verts = p.get("vertex_feature_ids") or []
         if not isinstance(verts, list) or len(verts) < 2:
             return ""
-        vert_rows: list[tuple[ProbeScanFeature | None, float, float, float]] = []
+        vert_rows: list[tuple[CMMWorkbenchFeature | None, float, float, float]] = []
         for vid in verts:
             wf = by_id.get(str(vid))
             if wf is None:

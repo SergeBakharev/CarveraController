@@ -3,7 +3,7 @@
 #:import Window kivy.core.window.Window
 
 
-<ProbeScanSketchVisibilityToggle>:
+<CMMWorkbenchSketchVisibilityToggle>:
     background_color: 0, 0, 0, 0
     group: None
     canvas.before:
@@ -20,7 +20,7 @@
         pos: self.parent.pos
 
 
-<ProbeScanIconToggle>:
+<CMMWorkbenchIconToggle>:
     background_color: 0, 0, 0, 0
     group: ''
     canvas.before:
@@ -37,14 +37,14 @@
         pos: self.parent.pos
 
 
-<ProbeScanFieldLabel@Label>:
+<CMMWorkbenchFieldLabel@Label>:
     font_size: dp(15)
     color: 0.88, 0.88, 0.92, 1
     halign: 'center'
     valign: 'middle'
     text_size: self.size
 
-<ProbeScanFieldInput@TextInput>:
+<CMMWorkbenchFieldInput@TextInput>:
     multiline: False
     font_size: dp(15)
     size_hint_y: None
@@ -54,8 +54,8 @@
     input_filter: 'float'
 
 
-<ProbeScanPopup>:
-    title: tr._('Probe scan')
+<CMMWorkbenchPopup>:
+    title: tr._('CMM Workbench')
     size_hint: 0.9, 0.88
     pos_hint: {'center_x': 0.5, 'center_y': 0.5}
     auto_dismiss: False
@@ -64,7 +64,7 @@
     RelativeLayout:
         size_hint: 1, 1
         BoxLayout:
-            id: probe_scan_body
+            id: cmm_workbench_body
             orientation: 'vertical'
             padding: dp(8)
             spacing: dp(6)
@@ -145,21 +145,21 @@
                                     row_force_default: True
                                     size_hint_y: None
                                     height: self.minimum_height
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('X mm')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t_manual_wx
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Y mm')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t_manual_wy
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Z mm')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t_manual_wz
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Radius mm')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t_manual_radius
 
                                 Button:
@@ -204,22 +204,22 @@
                                     row_force_default: True
                                     size_hint_y: None
                                     height: self.minimum_height
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m466'
                                         image: 'addons/probing/data/icons_1024x768/single_axis/X+.png'
                                         on_state:
                                             if self.state == 'down': root.on_probe_side_hint('Left')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m466'
                                         image: 'addons/probing/data/icons_1024x768/single_axis/X-.png'
                                         on_state:
                                             if self.state == 'down': root.on_probe_side_hint('Right')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m466'
                                         image: 'addons/probing/data/icons_1024x768/single_axis/Y+.png'
                                         on_state:
                                             if self.state == 'down': root.on_probe_side_hint('Bottom')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m466'
                                         image: 'addons/probing/data/icons_1024x768/single_axis/Y-.png'
                                         on_state:
@@ -233,49 +233,49 @@
                                     row_force_default: True
                                     size_hint_y: None
                                     height: self.minimum_height
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('X / Y (mm)')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t466_xy
                                         text: '10'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Probe F')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t466_f
                                         text: '300'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Rapid K')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t466_k
                                         text: '800'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Tip Dia D')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t466_d
                                         hint_text: tr._('config')
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Depth E')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t466_e
                                         hint_text: '2'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Height H')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t466_h
                                         hint_text: '0'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Clearance C')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t466_c
                                         hint_text: '2'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Repeat L')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t466_l
                                         hint_text: '1'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Retract R')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t466_r
                                         hint_text: '1.5'
 
@@ -315,22 +315,22 @@
                                     row_force_default: True
                                     size_hint_y: None
                                     height: self.minimum_height
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m461'
                                         image: 'addons/probing/data/icons_1024x768/inside_center/inside_center_rectangular_pocket_x.png'
                                         on_state:
                                             if self.state == 'down': root.on_bore_preset('CenterX')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m461'
                                         image: 'addons/probing/data/icons_1024x768/inside_center/inside_center_rectangular_pocket_y.png'
                                         on_state:
                                             if self.state == 'down': root.on_bore_preset('CenterY')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m461'
                                         image: 'addons/probing/data/icons_1024x768/inside_center/inside_center_circular_bore.png'
                                         on_state:
                                             if self.state == 'down': root.on_bore_preset('CenterBore')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m461'
                                         image: 'addons/probing/data/icons_1024x768/inside_center/inside_center_rectangular_pocket.png'
                                         on_state:
@@ -344,59 +344,59 @@
                                     row_force_default: True
                                     size_hint_y: None
                                     height: self.minimum_height
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('X mm')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t461_x
                                         text: '10'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Y mm')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t461_y
                                         text: '10'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Circle tolerance (mm)')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t461_circle_tol
                                         text: '0.01'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Probe F')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t461_f
                                         text: '300'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Rapid K')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t461_k
                                         text: '800'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Tip Dia D')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t461_d
                                         hint_text: tr._('config')
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Depth E')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t461_e
                                         hint_text: '2'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Height H')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t461_h
                                         hint_text: '0'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Clearance C')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t461_c
                                         hint_text: '2'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Repeat L')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t461_l
                                         hint_text: '1'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Retract R')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t461_r
                                         hint_text: '1.5'
 
@@ -436,22 +436,22 @@
                                     row_force_default: True
                                     size_hint_y: None
                                     height: self.minimum_height
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m462'
                                         image: 'addons/probing/data/icons_1024x768/outside_center/outside_center_rect_boss_x.png'
                                         on_state:
                                             if self.state == 'down': root.on_boss_preset('CenterX')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m462'
                                         image: 'addons/probing/data/icons_1024x768/outside_center/outside_center_rect_boss_y.png'
                                         on_state:
                                             if self.state == 'down': root.on_boss_preset('CenterY')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m462'
                                         image: 'addons/probing/data/icons_1024x768/outside_center/outside_center_circular_boss.png'
                                         on_state:
                                             if self.state == 'down': root.on_boss_preset('CenterBoss')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m462'
                                         image: 'addons/probing/data/icons_1024x768/outside_center/outside_center_rect_boss.png'
                                         on_state:
@@ -465,64 +465,64 @@
                                     row_force_default: True
                                     size_hint_y: None
                                     height: self.minimum_height
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('X mm')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t462_x
                                         text: '10'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Y mm')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t462_y
                                         text: '10'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Circle tolerance (mm)')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t462_circle_tol
                                         text: '0.01'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Depth E')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t462_e
                                         hint_text: '2'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Clearance J')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t462_j
                                         hint_text: '4'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Height H')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t462_h
                                         hint_text: '0'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Clearance C')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t462_c
                                         hint_text: '2'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Probe F')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t462_f
                                         text: '300'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Rapid K')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t462_k
                                         text: '800'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Tip Dia D')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t462_d
                                         hint_text: tr._('config')
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Repeat L')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t462_l
                                         hint_text: '1'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Retract R')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t462_r
                                         hint_text: '1.5'
 
@@ -562,22 +562,22 @@
                                     row_force_default: True
                                     size_hint_y: None
                                     height: self.minimum_height
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m463'
                                         image: 'addons/probing/data/icons_1024x768/inside_corner/inX+Y+.png'
                                         on_state:
                                             if self.state == 'down': root.on_inside_corner_quick('BottomLeft')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m463'
                                         image: 'addons/probing/data/icons_1024x768/inside_corner/inX-Y+.png'
                                         on_state:
                                             if self.state == 'down': root.on_inside_corner_quick('BottomRight')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m463'
                                         image: 'addons/probing/data/icons_1024x768/inside_corner/inX+Y-.png'
                                         on_state:
                                             if self.state == 'down': root.on_inside_corner_quick('TopLeft')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m463'
                                         image: 'addons/probing/data/icons_1024x768/inside_corner/inX-Y-.png'
                                         on_state:
@@ -591,54 +591,54 @@
                                     row_force_default: True
                                     size_hint_y: None
                                     height: self.minimum_height
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('X mm')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t463_x
                                         text: '10'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Y mm')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t463_y
                                         text: '10'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Depth E')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t463_e
                                         hint_text: '2'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Height H')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t463_h
                                         hint_text: '0'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Clearance C')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t463_c
                                         hint_text: '2'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Probe F')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t463_f
                                         text: '300'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Rapid K')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t463_k
                                         text: '800'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Tip Dia D')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t463_d
                                         hint_text: tr._('config')
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Repeat L')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t463_l
                                         hint_text: '1'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Retract R')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t463_r
                                         hint_text: '1.5'
 
@@ -678,22 +678,22 @@
                                     row_force_default: True
                                     size_hint_y: None
                                     height: self.minimum_height
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m464'
                                         image: 'addons/probing/data/icons_1024x768/outside_corner/X+Y+.png'
                                         on_state:
                                             if self.state == 'down': root.on_outside_corner_quick('BottomLeft')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m464'
                                         image: 'addons/probing/data/icons_1024x768/outside_corner/X-Y+.png'
                                         on_state:
                                             if self.state == 'down': root.on_outside_corner_quick('BottomRight')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m464'
                                         image: 'addons/probing/data/icons_1024x768/outside_corner/X+Y-.png'
                                         on_state:
                                             if self.state == 'down': root.on_outside_corner_quick('TopLeft')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m464'
                                         image: 'addons/probing/data/icons_1024x768/outside_corner/X-Y-.png'
                                         on_state:
@@ -707,54 +707,54 @@
                                     row_force_default: True
                                     size_hint_y: None
                                     height: self.minimum_height
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('X mm')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t464_x
                                         text: '10'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Y mm')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t464_y
                                         text: '10'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Depth E')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t464_e
                                         hint_text: '2'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Height H')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t464_h
                                         hint_text: '0'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Clearance C')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t464_c
                                         hint_text: '2'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Probe F')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t464_f
                                         text: '300'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Rapid K')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t464_k
                                         text: '800'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Tip Dia D')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t464_d
                                         hint_text: tr._('config')
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Repeat L')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t464_l
                                         hint_text: '1'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Retract R')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t464_r
                                         hint_text: '1.5'
 
@@ -794,22 +794,22 @@
                                     row_force_default: True
                                     size_hint_y: None
                                     height: self.minimum_height
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m465'
                                         image: 'addons/probing/data/icons_1024x768/angle/probe_angle_x_above.png'
                                         on_state:
                                             if self.state == 'down': root.on_angle_axis_hint('above')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m465'
                                         image: 'addons/probing/data/icons_1024x768/angle/probe_angle_x_below.png'
                                         on_state:
                                             if self.state == 'down': root.on_angle_axis_hint('below')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m465'
                                         image: 'addons/probing/data/icons_1024x768/angle/probe_angle_y_left.png'
                                         on_state:
                                             if self.state == 'down': root.on_angle_axis_hint('left')
-                                    ProbeScanIconToggle:
+                                    CMMWorkbenchIconToggle:
                                         group: 'scan_m465'
                                         image: 'addons/probing/data/icons_1024x768/angle/probe_angle_y_right.png'
                                         on_state:
@@ -823,49 +823,49 @@
                                     row_force_default: True
                                     size_hint_y: None
                                     height: self.minimum_height
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('X / Y (mm)')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t465_xy
                                         text: '10'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Depth E')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t465_e
                                         hint_text: '2'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Height H')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t465_h
                                         hint_text: '0'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Clearance C')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t465_c
                                         hint_text: '2'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Probe F')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t465_f
                                         text: '300'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Rapid K')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t465_k
                                         text: '800'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Tip Dia D')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t465_d
                                         hint_text: tr._('config')
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Repeat L')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t465_l
                                         hint_text: '1'
-                                    ProbeScanFieldLabel:
+                                    CMMWorkbenchFieldLabel:
                                         text: tr._('Retract R')
-                                    ProbeScanFieldInput:
+                                    CMMWorkbenchFieldInput:
                                         id: t465_r
                                         hint_text: '1.5'
 
@@ -890,7 +890,7 @@
                     FloatLayout:
                         size_hint_y: 1
 
-                        ProbeScanPreviewSketch:
+                        CMMWorkbenchPreviewSketch:
                             id: sketch
                             pos_hint: {'x': 0, 'y': 0}
                             size_hint: 1, 1
@@ -1000,16 +1000,16 @@
                     size_hint_x: 1
                     on_release: root.dismiss()
                 HelpButton:
-                    helpPath: "https://carvera-community.gitbook.io/docs/controller/features/probe_scan"
+                    helpPath: "https://carvera-community.gitbook.io/docs/controller/features/cmm_workbench"
 
         BoxLayout:
             id: probing_banner
             orientation: 'horizontal'
             size_hint: None, None
             height: dp(40) if root.is_probing else 0
-            width: (probe_scan_body.width - probe_scan_body.padding[0] - probe_scan_body.padding[2]) if root.is_probing else 0
-            x: probe_scan_body.x + probe_scan_body.padding[0]
-            y: probe_scan_body.y + probe_scan_body.padding[3] + dp(58) + dp(6)
+            width: (cmm_workbench_body.width - cmm_workbench_body.padding[0] - cmm_workbench_body.padding[2]) if root.is_probing else 0
+            x: cmm_workbench_body.x + cmm_workbench_body.padding[0]
+            y: cmm_workbench_body.y + cmm_workbench_body.padding[3] + dp(58) + dp(6)
             opacity: 1 if root.is_probing else 0
             padding: dp(10), dp(6), dp(10), dp(6)
             spacing: dp(8)
@@ -1031,7 +1031,7 @@
                 text_size: self.width, self.height
 
 
-<JogProbeScanPopup>:
+<JogCMMWorkbenchPopup>:
     size_hint: None, None
     width: min(dp(1000), Window.width - dp(48))
     auto_dismiss: True
