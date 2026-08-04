@@ -570,7 +570,13 @@ def main():
             build_command = "buildozer android debug deploy run logcat"
         else:
             build_command = "buildozer -v android debug"
-        result = subprocess.run(build_command, shell=True)
+
+        # Make the `pip install -U pip` a no-op so that p4a doesn't get pip 26
+        # See https://github.com/kivy/python-for-android/issues/3339
+        build_env = os.environ.copy()
+        build_env["PIP_CONSTRAINT"] = str(ROOT_ASSETS_PATH.joinpath("android/pip-constraints.txt"))
+
+        result = subprocess.run(build_command, shell=True, env=build_env)
         if result.returncode != 0:
             logger.error("Error building Android APK")
             sys.exit(result.returncode)
