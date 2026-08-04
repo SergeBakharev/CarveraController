@@ -1,4 +1,4 @@
-"""Session feature model for probe scan."""
+"""Session feature model for CMM Workbench."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class FeatureKind(str, Enum):
 
 
 @dataclass
-class ProbeScanFeature:
+class CMMWorkbenchFeature:
     """One measured or constructed feature."""
 
     id: str
@@ -47,8 +47,8 @@ class ProbeScanFeature:
         z: float,
         *,
         source: str = "wcs",
-    ) -> ProbeScanFeature:
-        return ProbeScanFeature(
+    ) -> CMMWorkbenchFeature:
+        return CMMWorkbenchFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.POINT,
             label=label,
@@ -66,8 +66,8 @@ class ProbeScanFeature:
         cx: float,
         cy: float,
         r: float,
-    ) -> ProbeScanFeature:
-        return ProbeScanFeature(
+    ) -> CMMWorkbenchFeature:
+        return CMMWorkbenchFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.CIRCLE,
             label=label,
@@ -85,8 +85,8 @@ class ProbeScanFeature:
         cy: float,
         diameter_x: float,
         diameter_y: float,
-    ) -> ProbeScanFeature:
-        return ProbeScanFeature(
+    ) -> CMMWorkbenchFeature:
+        return CMMWorkbenchFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.ELLIPSE,
             label=label,
@@ -103,8 +103,8 @@ class ProbeScanFeature:
         label: str,
         x: float,
         y: float,
-    ) -> ProbeScanFeature:
-        return ProbeScanFeature(
+    ) -> CMMWorkbenchFeature:
+        return CMMWorkbenchFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.CORNER,
             label=label,
@@ -120,7 +120,7 @@ class ProbeScanFeature:
         x: float | None = None,
         y: float | None = None,
         z: float | None = None,
-    ) -> ProbeScanFeature:
+    ) -> CMMWorkbenchFeature:
         """``degrees`` from M465 probe result (``PROBE_VAR_ANGLE``, firmware #153)."""
         payload: dict[str, Any] = {"degrees": float(degrees)}
         if probe_variant:
@@ -130,7 +130,7 @@ class ProbeScanFeature:
             payload["y"] = float(y)
             if z is not None:
                 payload["z"] = float(z)
-        return ProbeScanFeature(
+        return CMMWorkbenchFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.ANGLE,
             label=label,
@@ -138,8 +138,8 @@ class ProbeScanFeature:
         )
 
     @staticmethod
-    def new_segment(label: str, a_id: str, b_id: str) -> ProbeScanFeature:
-        return ProbeScanFeature(
+    def new_segment(label: str, a_id: str, b_id: str) -> CMMWorkbenchFeature:
+        return CMMWorkbenchFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.SEGMENT,
             label=label,
@@ -152,8 +152,8 @@ class ProbeScanFeature:
         vertex_feature_ids: list[str],
         *,
         closed: bool = False,
-    ) -> ProbeScanFeature:
-        return ProbeScanFeature(
+    ) -> CMMWorkbenchFeature:
+        return CMMWorkbenchFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.POLYLINE,
             label=label,
@@ -170,9 +170,9 @@ class ProbeScanFeature:
         cx: float,
         cy: float,
         r: float,
-    ) -> ProbeScanFeature:
+    ) -> CMMWorkbenchFeature:
         a, b, c = source_ids
-        return ProbeScanFeature(
+        return CMMWorkbenchFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.DERIVED_CIRCLE,
             label=label,
@@ -191,8 +191,8 @@ class ProbeScanFeature:
         segment_b_id: str,
         x: float,
         y: float,
-    ) -> ProbeScanFeature:
-        return ProbeScanFeature(
+    ) -> CMMWorkbenchFeature:
+        return CMMWorkbenchFeature(
             id=str(uuid.uuid4()),
             kind=FeatureKind.DERIVED_POINT,
             label=label,
@@ -207,12 +207,12 @@ class ProbeScanFeature:
 
 
 @dataclass
-class ProbeScanSession:
+class CMMWorkbenchSession:
     """Full scan session for save/load and export."""
 
     version: int = SESSION_FORMAT_VERSION
     unit_mm: bool = True
-    features: list[ProbeScanFeature] = field(default_factory=list)
+    features: list[CMMWorkbenchFeature] = field(default_factory=list)
 
     def to_json_dict(self) -> dict:
         return {
@@ -232,8 +232,8 @@ class ProbeScanSession:
         }
 
     @classmethod
-    def from_json_dict(cls, data: dict) -> ProbeScanSession:
-        feats: list[ProbeScanFeature] = []
+    def from_json_dict(cls, data: dict) -> CMMWorkbenchSession:
+        feats: list[CMMWorkbenchFeature] = []
         for row in data.get("features", []):
             k = row.get("kind")
             if isinstance(k, FeatureKind):
@@ -243,11 +243,11 @@ class ProbeScanSession:
                     kind_enum = FeatureKind(str(k))
                 except ValueError:
                     logger.warning(
-                        "Probe scan session: skip feature with invalid kind %r",
+                        "CMM Workbench session: skip feature with invalid kind %r",
                         k,
                     )
                     continue
-            feat = ProbeScanFeature(
+            feat = CMMWorkbenchFeature(
                 id=row.get("id", str(uuid.uuid4())),
                 kind=kind_enum,
                 label=row.get("label", ""),
@@ -266,5 +266,5 @@ class ProbeScanSession:
         return json.dumps(self.to_json_dict(), indent=2)
 
     @classmethod
-    def loads(cls, s: str) -> ProbeScanSession:
+    def loads(cls, s: str) -> CMMWorkbenchSession:
         return cls.from_json_dict(json.loads(s))

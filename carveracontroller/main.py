@@ -3115,7 +3115,7 @@ class Makera(RelativeLayout):
         self.manual_wifi_popup = ManualWifiPopup()
 
         self.probing_popup = ProbingPopup(self.controller)
-        self.probe_scan_popup = None
+        self.cmm_workbench_popup = None
         self.facing_popup = FacingWizardPopup()
         self.adv_calibrate_popup = AdvCalibratePopup()
         self.wcs_settings_popup = WCSSettingsPopup(self.controller, self.wcs_names)
@@ -3450,27 +3450,27 @@ class Makera(RelativeLayout):
             self.select_probe_popup = SelectAndCalibrateProbePopup()
             self.select_probe_popup.open()
 
-    def _ensure_probe_scan_popup(self):
-        if self.probe_scan_popup is None:
-            from carveracontroller.addons.probe_scan.ui.ProbeScanPopup import (
-                ProbeScanPopup,
+    def _ensure_cmm_workbench_popup(self):
+        if self.cmm_workbench_popup is None:
+            from carveracontroller.addons.cmm_workbench.ui.CMMWorkbenchPopup import (
+                CMMWorkbenchPopup,
             )
 
-            self.probe_scan_popup = ProbeScanPopup(self.controller)
-        return self.probe_scan_popup
+            self.cmm_workbench_popup = CMMWorkbenchPopup(self.controller)
+        return self.cmm_workbench_popup
 
-    def open_probe_scan_popup(self):
+    def open_cmm_workbench_popup(self):
         app = App.get_running_app()
         if not app.is_community_firmware:
             self.show_message_popup(
-                tr._("Probe scan requires the Community firmware."),
+                tr._("CMM Workbench requires the Community firmware."),
                 False,
             )
             return
         if CNC.vars["tool"] == 0 or CNC.vars["tool"] >= 999990:
             self._pre_modal_keyboard_jog = self.keyboard_jog_control
             self.toggle_keyboard_jog_control(True)
-            self._ensure_probe_scan_popup().open()
+            self._ensure_cmm_workbench_popup().open()
         else:
             self.select_probe_popup = SelectAndCalibrateProbePopup()
             self.select_probe_popup.open()
@@ -6787,8 +6787,8 @@ class Makera(RelativeLayout):
 
     def _popup_prevents_jogging(self):
         modals = [self.probing_popup]
-        if self.probe_scan_popup is not None:
-            modals.append(self.probe_scan_popup)
+        if self.cmm_workbench_popup is not None:
+            modals.append(self.cmm_workbench_popup)
         return self._is_popup_open() and not any(m.allows_external_jog() for m in modals)
 
     def is_jogging_enabled(self):
@@ -6981,7 +6981,7 @@ class Makera(RelativeLayout):
             self.input_popup._is_open,
             self.config_popup._is_open,
             self.probing_popup._is_open,
-            (self.probe_scan_popup._is_open if self.probe_scan_popup is not None else False),
+            (self.cmm_workbench_popup._is_open if self.cmm_workbench_popup is not None else False),
             self.facing_popup._is_open,
         ]
 

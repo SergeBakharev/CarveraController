@@ -1,4 +1,4 @@
-"""Export probe scan sessions to JSON, CSV, and DXF."""
+"""Export CMM Workbench sessions to JSON, CSV, and DXF."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import os
 import tempfile
 
 from .features import index_by_id, resolve_xy, segment_endpoints
-from .session import FeatureKind, ProbeScanSession
+from .session import CMMWorkbenchSession, FeatureKind
 
 DXF_LAYERS = (
     "PROBED_POINTS",
@@ -24,11 +24,11 @@ DXF_LAYERS = (
 _DXF_ANGLE_TEXT_HEIGHT_MM = 2.0
 
 
-def export_json(session: ProbeScanSession) -> str:
+def export_json(session: CMMWorkbenchSession) -> str:
     return session.dumps()
 
 
-def export_csv(session: ProbeScanSession) -> str:
+def export_csv(session: CMMWorkbenchSession) -> str:
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["id", "kind", "label", "x", "y", "z", "r", "diameter_x", "diameter_y", "extra"])
@@ -60,7 +60,7 @@ def export_csv(session: ProbeScanSession) -> str:
     return buf.getvalue()
 
 
-def export_dxf(session: ProbeScanSession) -> str:
+def export_dxf(session: CMMWorkbenchSession) -> str:
     """Write a layered DXF (R2010) as a string for clipboard or disk."""
     import ezdxf
 

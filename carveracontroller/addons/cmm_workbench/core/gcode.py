@@ -1,4 +1,4 @@
-"""G-code helpers and M118 serial capture for probe scan."""
+"""G-code helpers and M118 serial capture for CMM Workbench."""
 
 from __future__ import annotations
 

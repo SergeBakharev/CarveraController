@@ -11,7 +11,7 @@
 - Enhancement: Added iPhone support
 - Enhancement: Improved gcode viewer toolbar buttons layout
 - Enhancement: Show current config probe tip diameter in probing panels
-- Enhancement: Add Probe Scan tool
+- Enhancement: Add CMM-like functionality. This is a dedicated UI for using the 3D Probe to created 2D designs from probed geometry
 - Enhancement: Show tool change markers on the playback progress bar
 - Enhancement: Add grid visualization, ortho projection, view cube and color schemes selector to the gcode viewer
 - Enhancement: Detect WHB04 pendant permission errors instead of silently ignoring pendant
