@@ -1,11 +1,18 @@
+import logging
 import math
 import os
 import re
 import types
 
+logger = logging.getLogger(__name__)
+
 PARENPAT = re.compile(r"(\(.*?\))")
 SEMIPAT = re.compile(r"(;.*)")
 CMDPAT = re.compile(r"([A-Za-z]+)")
+
+# G20 = inches, G21 = mm
+DOCUMENT_UNIT_PATTERN = re.compile(r"\bG0*2([01])\b", re.IGNORECASE)
+DOCUMENT_UNIT_DETECT_MAX_LINES = 1000
 
 _O_KEYWORDS = r"elseif|endwhile|endrepeat|endsub|endif|continue|" r"repeat|while|break|call|else|sub|do|if"
 OCODE_PATTERN = re.compile(r"(?:^|\s)[Oo]\d+\s+(?:" + _O_KEYWORDS + r")\b")
@@ -99,6 +106,30 @@ def highlight_gcode_line(line, colors=None):
     if highlight_end < len(line):
         result.append(escape_gcode_markup(line[highlight_end:]))
     return "".join(result)
+
+
+def detect_document_unit(lines):
+    """Return ``"in"`` or ``"mm"`` from the first G20/G21 in *lines*.
+    Can be used to display things like the tool table dimensions in the correct unit.
+    Defaults to ``"mm"`` when no unit command is found (or only inside comments).
+    """
+    for count, line in enumerate(lines):
+        if count >= DOCUMENT_UNIT_DETECT_MAX_LINES:
+            break
+        stripped = SEMIPAT.sub("", PARENPAT.sub("", line))
+        match = DOCUMENT_UNIT_PATTERN.search(stripped)
+        if match:
+            unit = "in" if match.group(1) == "0" else "mm"
+            logger.info(f"Detected document unit '{unit}' from {match.group(0)} on line {count + 1}")
+            return unit
+
+    logger.info(f"No G20/G21 found in the first {DOCUMENT_UNIT_DETECT_MAX_LINES} lines; assuming document unit 'mm'")
+    return "mm"
+
+
+def unit_scale_to_mm(unit):
+    """Return the multiplier that converts *unit* lengths into millimetres."""
+    return 25.4 if unit == "in" else 1.0
 
 
 XY = 0

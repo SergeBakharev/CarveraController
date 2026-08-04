@@ -7,11 +7,13 @@
 #:import _ carveracontroller.ui.DropDownSplitter
 #:import play_progress_bar carveracontroller.ui.PlayProgressBar
 #:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
+#:import ToolFilterButton carveracontroller.ui.ToolFilterButton.ToolFilterButton
 #:import CameraView carveracontroller.addons.camera.CameraView.CameraView
 #:import LASER_TOOL_NUMBER carveracontroller.CNC.LASER_TOOL_NUMBER
 #:import ZPROBE_TOOL_NUMBER carveracontroller.CNC.ZPROBE_TOOL_NUMBER
 #:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
 #:include ui/GcodeColorSchemePanel.kv
+#:include ui/ToolFilterButton.kv
 #:include addons/tooltips/Tooltips.kv
 #:include ui/LocalFilePicker.kv
 #:include ui/DirectoryView.kv
@@ -93,6 +95,9 @@
     width: '60dp'
     icon_size: 24
     icon: ''
+    # 'center' (default): icon centered behind the text, like the existing icon-only buttons.
+    # 'left': icon placed to the left of the text, side by side (used by the tool buttons).
+    icon_align: 'center'
     text: ''
     min_icon: ''
     min_icon_size: 12
@@ -104,22 +109,24 @@
     disabled_color: 0, 0, 0, 0
     Label:
         text: root.text if root.text else ''
-        halign: 'center'
-        valign: 'top' if root.min_icon else 'middle'
-        text_size: self.width, self.height - dp(root.min_icon_size + 12) if root.min_icon else None
+        halign: 'right' if root.icon_align == 'left' and root.icon else 'center'
+        valign: 'middle' if root.icon_align == 'left' else ('top' if root.min_icon else 'middle')
+        # Reserve a bit more bottom space when an eye icon is present so text/tool icons sit higher.
+        text_size: (self.width - dp(root.icon_size + 8), self.height - dp(root.min_icon_size + 12) if root.min_icon else self.height) if root.icon_align == 'left' and root.icon else (self.width, self.height - dp(root.min_icon_size + 12) if root.min_icon else None)
         color: tuple(app.active_color) if (root.active and not root.disabled) else ((110/255, 110/255, 110/255, 1) if root.disabled else (250/255, 250/255, 250/255, 1))
         canvas.before:
             Color:
                 rgba: tuple(app.active_color) if (root.active and not root.disabled) else ((110/255, 110/255, 110/255, 1) if root.disabled else (250/255, 250/255, 250/255, 1))
             Rectangle:
                 source: root.icon
-                pos: self.center_x - dp(root.icon_size / 2), self.center_y - dp(root.icon_size / 2)
+                # Nudge tool icons up slightly when an eye is shown, to keep a gap above it.
+                pos: (self.x + dp(4), self.center_y - dp(root.icon_size / 2) + (dp(4) if root.min_icon else 0)) if root.icon_align == 'left' else (self.center_x - dp(root.icon_size / 2), self.center_y - dp(root.icon_size / 2))
                 size: dp(root.icon_size) if root.icon else 0, dp(root.icon_size) if root.icon else 0
             Color:
                 rgba: (250/255, 250/255, 250/255, 1) if root.min_active else (60/255, 60/255, 60/255, 1)
             Rectangle:
                 source: root.min_icon if root.min_icon and not root.disabled else ''
-                pos: self.center_x - dp(root.min_icon_size / 2), self.y + dp(4)
+                pos: self.center_x - dp(root.min_icon_size / 2), self.y + dp(1)
                 size: dp(root.min_icon_size) if root.min_icon and not root.disabled else 0, dp(root.min_icon_size) if root.min_icon and not root.disabled else 0
 
 <TransparentGrayButton>:
@@ -4353,66 +4360,60 @@
                                     Widget:
 
                                     # tools
-                                    GcodeViewerToolBarButton:
+                                    ToolFilterButton:
                                         id: t1
-                                        width: '44dp'
-                                        valign: 'middle'
-                                        text: 'T1'
+                                        width: '74dp' if root.show_tool_button_icons else '44dp'
+                                        label_text: 'T1'
                                         active: app.tool == 1
                                         disabled: 1 not in root.used_tools
                                         min_icon: 'data/eye.png'
                                         on_release:
                                             self.min_active = not self.min_active
                                             app.root.filter_tool()
-                                    GcodeViewerToolBarButton:
+                                    ToolFilterButton:
                                         id: t2
-                                        width: '44dp'
-                                        valign: 'middle'
-                                        text: 'T2'
+                                        width: '74dp' if root.show_tool_button_icons else '44dp'
+                                        label_text: 'T2'
                                         active: app.tool == 2
                                         disabled: 2 not in root.used_tools
                                         min_icon: 'data/eye.png'
                                         on_release:
                                             self.min_active = not self.min_active
                                             app.root.filter_tool()
-                                    GcodeViewerToolBarButton:
+                                    ToolFilterButton:
                                         id: t3
-                                        width: '44dp'
-                                        valign: 'middle'
-                                        text: 'T3'
+                                        width: '74dp' if root.show_tool_button_icons else '44dp'
+                                        label_text: 'T3'
                                         active: app.tool == 3
                                         disabled: 3 not in root.used_tools
                                         min_icon: 'data/eye.png'
                                         on_release:
                                             self.min_active = not self.min_active
                                             app.root.filter_tool()
-                                    GcodeViewerToolBarButton:
+                                    ToolFilterButton:
                                         id: t4
-                                        width: '44dp'
-                                        valign: 'middle'
-                                        text: 'T4'
+                                        width: '74dp' if root.show_tool_button_icons else '44dp'
+                                        label_text: 'T4'
                                         active: app.tool == 4
                                         disabled: 4 not in root.used_tools
                                         min_icon: 'data/eye.png'
                                         on_release:
                                             self.min_active = not self.min_active
                                             app.root.filter_tool()
-                                    GcodeViewerToolBarButton:
+                                    ToolFilterButton:
                                         id: t5
-                                        width: '44dp'
-                                        valign: 'middle'
-                                        text: 'T5'
+                                        width: '74dp' if root.show_tool_button_icons else '44dp'
+                                        label_text: 'T5'
                                         active: app.tool == 5
                                         disabled: 5 not in root.used_tools
                                         min_icon: 'data/eye.png'
                                         on_release:
                                             self.min_active = not self.min_active
                                             app.root.filter_tool()
-                                    GcodeViewerToolBarButton:
+                                    ToolFilterButton:
                                         id: t6
-                                        width: '44dp'
-                                        valign: 'middle'
-                                        text: 'T6'
+                                        width: '74dp' if root.show_tool_button_icons else '44dp'
+                                        label_text: 'T6'
                                         active: app.tool == 6
                                         disabled: 6 not in root.used_tools
                                         min_icon: 'data/eye.png'

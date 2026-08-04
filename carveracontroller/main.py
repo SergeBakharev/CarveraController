@@ -83,7 +83,14 @@ from kivy.config import Config
 from kivy.factory import Factory
 from kivy.graphics import Color, Ellipse, Line, PopMatrix, PushMatrix, Rectangle, Rotate, Translate
 from kivy.metrics import Metrics, dp
-from kivy.properties import BooleanProperty, ListProperty, NumericProperty, ObjectProperty, StringProperty
+from kivy.properties import (
+    BooleanProperty,
+    DictProperty,
+    ListProperty,
+    NumericProperty,
+    ObjectProperty,
+    StringProperty,
+)
 from kivy.uix.behaviors import FocusBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
@@ -192,6 +199,12 @@ from .addons.camera.Z1Camera import (
     set_resolution,
 )
 from .addons.probing.ProbingControls import ProbeButton
+from .addons.tool_visualization import (
+    extract_tool_table,
+    format_tool_tooltip,
+)
+from .addons.tool_visualization.icon_builder import build_tool_tooltip_icon
+from .addons.tool_visualization.icon_geometry import build_icon_geometry
 from .addons.tooltips.Tooltips import Tooltip, ToolTipButton, ToolTipDropDown
 from .CNC import (
     CNC,
@@ -200,9 +213,11 @@ from .CNC import (
     OCODE_PATTERN,
     PROBE_3D_TOOL_NUMBER,
     ZPROBE_TOOL_NUMBER,
+    detect_document_unit,
     escape_gcode_markup,
     highlight_gcode_line,
     is_probe_tools_range,
+    unit_scale_to_mm,
 )
 from .Controller import (
     CONN_USB,
@@ -2950,6 +2965,9 @@ class Makera(RelativeLayout):
     upcoming_tool = 0
     file_has_ocodes = False
     tool_change_markers = []
+    tool_table = {}
+    document_unit = "mm"
+    show_tool_button_icons = BooleanProperty(False)
 
     # Custom property to monitor CNC light state
     light_state = LightProperty(False)
@@ -3126,6 +3144,12 @@ class Makera(RelativeLayout):
         self.gcode_viewer.set_error_popup_callback(self._on_gcode_cannot_visualise)
         self.gcode_viewer.time_estimate_progress_callback = self._on_time_estimate_progress
         self.float_layout.tool_bar.show_grid = self.gcode_viewer.is_grid_visible()
+
+        # Handle tool button icons visibility when the window is resized
+        self.bind(show_tool_button_icons=self._refresh_tool_filter_buttons)
+        self.float_layout.tool_bar.bind(width=self._update_tool_button_icon_visibility)
+        Window.bind(on_resize=self._update_tool_button_icon_visibility)
+        Clock.schedule_once(lambda _dt: self._refresh_tool_filter_buttons(), 0)
 
         # init camera live view
         self.camera_checked = False
@@ -4411,20 +4435,29 @@ class Makera(RelativeLayout):
         self.confirm_popup.open(self)
 
     # -----------------------------------------------------------------------
+    def _format_target_tool_text(self):
+        """Return display text for the tool being requested in a tool-change popup."""
+        tool_number = CNC.vars["target_tool"]
+        if tool_number == ZPROBE_TOOL_NUMBER:
+            return "Probe"
+        if tool_number == LASER_TOOL_NUMBER:
+            return "Laser"
+        if tool_number == PROBE_3D_TOOL_NUMBER:
+            return "3D Probe"
+        if is_probe_tools_range(tool_number):
+            return "Custom Probe"
+
+        tool_def = self.tool_table.get(tool_number)
+        tooltip = format_tool_tooltip(tool_def, markup=False, unit=self.document_unit) if tool_def else ""
+        return tooltip if tooltip else str(tool_number)
+
+    # -----------------------------------------------------------------------
     def open_tool_confirm_popup(self):
         if self.confirm_popup.showing:
             return
-        target_tool = str(CNC.vars["target_tool"])
+        target_tool = self._format_target_tool_text()
         target_collet_type = CNC.vars["target_collet_type"]
         target_collet_type_text = ["Undefined", "3mm", '1/8"', "4mm", "6mm", '1/4"', "8mm"]
-        if CNC.vars["target_tool"] == ZPROBE_TOOL_NUMBER:
-            target_tool = "Probe"
-        elif CNC.vars["target_tool"] == LASER_TOOL_NUMBER:
-            target_tool = "Laser"
-        elif CNC.vars["target_tool"] == PROBE_3D_TOOL_NUMBER:
-            target_tool = "3D Probe"
-        elif is_probe_tools_range(CNC.vars["target_tool"]):
-            target_tool = "Custom Probe"
 
         app = App.get_running_app()
         if app.has_atc:
@@ -4435,7 +4468,7 @@ class Makera(RelativeLayout):
                         self.confirm_popup.lb_title.text = tr._("Manual toolchange")
                         self.confirm_popup.lb_content.text = (
                             tr._("Insert tool: ")
-                            + "%s\n" % (target_tool)
+                            + "%s\n\n" % (target_tool)
                             + tr._("Then press ' Confirm' or main button to clamp.\n")
                         )
                     else:
@@ -7383,6 +7416,11 @@ class Makera(RelativeLayout):
         self.wpb_play.value = 0
         self.used_tools = []
         self.upcoming_tool = 0
+        self.tool_table = {}
+        self.document_unit = "mm"
+        self.gcode_viewer.tool_table = {}
+        self.gcode_viewer.tool_unit_scale = 1.0
+        self._refresh_tool_filter_buttons()
         self._clear_tool_change_markers()
         app = App.get_running_app()
         app.curr_page = 1
@@ -7575,6 +7613,10 @@ class Makera(RelativeLayout):
         self.file_has_ocodes = False
         self.used_tools = []
         self.tool_change_markers = []
+        self.tool_table = {}
+        self.document_unit = "mm"
+        self.gcode_viewer.tool_table = {}
+        self.gcode_viewer.tool_unit_scale = 1.0
         Clock.schedule_once(self.load_start)
         f = None
         try:
@@ -7601,6 +7643,12 @@ class Makera(RelativeLayout):
             self.lines = f.readlines()
             self.selected_file_line_count = len(self.lines)
             f.close()
+
+            self.document_unit = detect_document_unit(self.lines)
+            self.tool_table = extract_tool_table(self.lines)
+            self.gcode_viewer.tool_table = self.tool_table
+            self.gcode_viewer.tool_unit_scale = unit_scale_to_mm(self.document_unit)
+            self._refresh_tool_filter_buttons()
             app = App.get_running_app()
             app.total_pages = int(self.selected_file_line_count / MAX_LOAD_LINES) + (
                 0 if self.selected_file_line_count % MAX_LOAD_LINES == 0 else 1
@@ -7667,6 +7715,54 @@ class Makera(RelativeLayout):
             return
 
         Clock.schedule_once(self.load_end, 0)
+
+    # -----------------------------------------------------------------------
+    def _update_tool_button_icon_visibility(self, *_args):
+        tool_bar = self.float_layout.tool_bar
+        # Keep in sync with the '74dp' width on the six T buttons in makera.kv.
+        tool_bar_icons_required_width = dp(438 + 6 * 74)
+        if tool_bar.width <= 0:
+            return
+        has_parsed_tools = bool(self.tool_table)
+        show_icons = has_parsed_tools and tool_bar.width >= tool_bar_icons_required_width
+        if show_icons != self.show_tool_button_icons:
+            self.show_tool_button_icons = show_icons
+
+    @mainthread
+    def _refresh_tool_filter_buttons(self, *_args):
+        """Update T1..T6 toolbar icons and tooltips from the current tool table."""
+        tool_buttons = [
+            self.float_layout.t1,
+            self.float_layout.t2,
+            self.float_layout.t3,
+            self.float_layout.t4,
+            self.float_layout.t5,
+            self.float_layout.t6,
+        ]
+        self._update_tool_button_icon_visibility()
+        for number, tool_button in enumerate(tool_buttons, start=1):
+            tool_def = self.tool_table.get(number)
+            if self.show_tool_button_icons:
+                tool_button.tool_icon_geometry = build_icon_geometry(tool_def)
+            else:
+                tool_button.tool_icon_geometry = None
+
+            if tool_def:
+                tool_button.tooltip_markup = True
+                tool_button.tooltip_horizontal = True
+                tool_button.tooltip_image = ""
+                tool_button.tooltip_texture = None
+                tool_button.tooltip_image_size = None
+                tool_button.tooltip_texture_provider = partial(build_tool_tooltip_icon, tool_def)
+                tool_button.tooltip_txt = format_tool_tooltip(tool_def, unit=self.document_unit)
+            else:
+                tool_button.tooltip_txt = ""
+                tool_button.tooltip_image = ""
+                tool_button.tooltip_texture = None
+                tool_button.tooltip_texture_provider = None
+                tool_button.tooltip_image_size = None
+                tool_button.tooltip_horizontal = False
+                tool_button.tooltip_markup = False
 
     # -----------------------------------------------------------------------
     def init_tool_filter(self):
