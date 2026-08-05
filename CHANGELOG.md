@@ -1,3 +1,6 @@
+[unreleased]
+Fixed: Prevent a probing modal crash if E is not provided when using the angle operation
+
 [2.2.0-RC1]
 - Enhancement: Read tool definitions from post-processor outputs and use them in the G-code viewer
 - Enhancement: Add multi-select to the remote file browser
