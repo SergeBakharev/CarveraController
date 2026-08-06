@@ -31,7 +31,8 @@ _MAX_LINE_CHARS = 42
 _SEP_PLAIN = " · "
 
 
-def _format_tool_type_label(tool_def):
+def format_tool_type_label(tool_def):
+    """Return a localized tool-type label, or the raw CAM type name."""
     # Prefer our canonical labels when the type is known
     msgid = TOOL_TYPE_MSGIDS.get(tool_def.tool_type)
     if msgid:
@@ -179,7 +180,7 @@ def format_tool_tooltip(tool_def, *, markup=True, unit="mm"):
         return ""
 
     title = f"T{tool_def.number}"
-    type_label = _format_tool_type_label(tool_def)
+    type_label = format_tool_type_label(tool_def)
     if type_label:
         title = f"{title} · {type_label}"
 

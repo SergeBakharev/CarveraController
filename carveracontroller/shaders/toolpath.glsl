@@ -1,4 +1,4 @@
-// G-code toolpath line shader (line_strip with playback trim and type filter)
+// G-code toolpath line shader (line_strip with playback trim and visibility filters)
 
 ---vertex
 $HEADER$
@@ -52,14 +52,31 @@ varying float vs_vertex_z;
 
 // Kivy uniforms are float-only; -1 means show the full toolpath
 uniform float display_count;
-// Decimal-encoded type filter from set_display_mask (e.g. 1=type1, 10=type2, 11=types1+2)
-uniform float vertex_type_display;
 // 0 = move type, 1 = tool, 2 = feed speed, 3 = Z height
 uniform float color_scheme;
 uniform float feed_min;
 uniform float feed_max;
 uniform float z_min;
 uniform float z_max;
+
+// Move-type / shared rapid visibility (1 = show, 0 = hide)
+uniform float show_rapid;
+uniform float show_feed;
+
+// Speed / height bucket bitmasks (bits 0..10); 2047 = all 11 buckets visible
+uniform float speed_bucket_bits;
+uniform float z_bucket_bits;
+
+// Per-tool filter: up to 24 tool ids packed into 6 vec4s; bit i of tool_bits
+// means tool_ids[i] is visible. tool_filter_count == 0 means show all tools.
+uniform float tool_filter_count;
+uniform float tool_bits;
+uniform vec4 tool_ids0;
+uniform vec4 tool_ids1;
+uniform vec4 tool_ids2;
+uniform vec4 tool_ids3;
+uniform vec4 tool_ids4;
+uniform vec4 tool_ids5;
 
 vec3 tool_palette_color(float idx)
 {
@@ -88,26 +105,66 @@ vec3 speed_colormap(float t)
     return mix(vec3(0.95, 0.85, 0.15), vec3(0.9, 0.25, 0.2), (t - 0.66) / 0.34);
 }
 
-float mask_digit(float mask, float place)
+float tool_id_at(int i)
 {
-    return mod(floor(mask / place), 10.0);
+    if (i < 4) return tool_ids0[i];
+    if (i < 8) return tool_ids1[i - 4];
+    if (i < 12) return tool_ids2[i - 8];
+    if (i < 16) return tool_ids3[i - 12];
+    if (i < 20) return tool_ids4[i - 16];
+    return tool_ids5[i - 20];
 }
 
-bool is_vertex_type_enabled(float vertex_type, float type_mask)
+// Extract bit ``index`` from an integer stored in a float.
+// Avoid pow(2.0, n): GPU pow is not exact and mis-reads high bits (e.g. bit 10
+// of 2047), which hid paths until other bits were toggled.
+bool float_bit_enabled(float bits, int index)
 {
-    // A set decimal digit means "show this tool"; mask 0 therefore hides all.
-    float mask = floor(type_mask + 0.1);
+    float b = floor(bits + 0.5);
+    for (int i = 0; i < 24; i++) {
+        if (i == index) {
+            return mod(b, 2.0) >= 0.5;
+        }
+        b = floor(b * 0.5);
+    }
+    return true;
+}
+
+bool is_tool_enabled(float vertex_type)
+{
+    float count = floor(tool_filter_count + 0.1);
+    if (count < 0.5) {
+        return true;
+    }
     float vtype = floor(vertex_type + 0.1);
-    // T1-T6 and the laser each have a dedicated toolbar button/digit.
-    if (abs(vtype - 1.0) < 0.5) return mask_digit(mask, 1.0) >= 1.0;
-    if (abs(vtype - 2.0) < 0.5) return mask_digit(mask, 10.0) >= 1.0;
-    if (abs(vtype - 3.0) < 0.5) return mask_digit(mask, 100.0) >= 1.0;
-    if (abs(vtype - 4.0) < 0.5) return mask_digit(mask, 1000.0) >= 1.0;
-    if (abs(vtype - 5.0) < 0.5) return mask_digit(mask, 10000.0) >= 1.0;
-    if (abs(vtype - 6.0) < 0.5) return mask_digit(mask, 100000.0) >= 1.0;
-    if (abs(vtype - 8888.0) < 0.5) return mask_digit(mask, 1000000.0) >= 1.0;
-    // Tools without a dedicated button (T0, T7, T8, ...) share the next digit.
-    return mask_digit(mask, 10000000.0) >= 1.0;
+    for (int i = 0; i < 24; i++) {
+        if (float(i) >= count) {
+            break;
+        }
+        if (abs(vtype - floor(tool_id_at(i) + 0.1)) < 0.5) {
+            return float_bit_enabled(tool_bits, i);
+        }
+    }
+    // Tools not in the filter list stay visible (fail open).
+    return true;
+}
+
+bool is_bucket_bit_enabled(float bits, float bucket_index)
+{
+    int idx = int(floor(bucket_index + 0.1));
+    if (idx < 0) {
+        idx = 0;
+    }
+    if (idx > 10) {
+        idx = 10;
+    }
+    return float_bit_enabled(bits, idx);
+}
+
+bool is_rapid_move()
+{
+    // Match speed-scheme rapid detection; do not use interpolated vertex color.
+    return vs_vertex_feed < 0.5;
 }
 
 void main()
@@ -116,8 +173,45 @@ void main()
         discard;
     }
 
-    if (!is_vertex_type_enabled(vs_vertex_type, vertex_type_display)) {
+    if (!is_tool_enabled(vs_vertex_type)) {
         discard;
+    }
+
+    // Visibility filters from every color scheme stack (AND). Switching schemes
+    // does not clear other schemes' filters. The spinner marks modified schemes
+    // with a trailing '*'. Rapid is shared by Move type and Speed.
+    bool rapid = is_rapid_move();
+    if (rapid) {
+        if (show_rapid < 0.5) {
+            discard;
+        }
+    } else {
+        if (show_feed < 0.5) {
+            discard;
+        }
+        float feed_span = max(feed_max - feed_min, 1.0);
+        float feed_t = clamp((vs_vertex_feed - feed_min) / feed_span, 0.0, 1.0);
+        float speed_bucket = floor(feed_t * 10.0 + 0.5);
+        if (speed_bucket > 10.0) {
+            speed_bucket = 10.0;
+        }
+        if (!is_bucket_bit_enabled(speed_bucket_bits, speed_bucket)) {
+            discard;
+        }
+
+        float z_span = z_max - z_min;
+        if (z_span < 1e-6) {
+            z_span = 1e-6;
+        }
+        float z_t = clamp((vs_vertex_z - z_min) / z_span, 0.0, 1.0);
+        // Height legend: top = higher Z (t=1) as bucket 0, bottom = lower Z as bucket 10.
+        float z_bucket = floor((1.0 - z_t) * 10.0 + 0.5);
+        if (z_bucket > 10.0) {
+            z_bucket = 10.0;
+        }
+        if (!is_bucket_bit_enabled(z_bucket_bits, z_bucket)) {
+            discard;
+        }
     }
 
     vec3 color;
