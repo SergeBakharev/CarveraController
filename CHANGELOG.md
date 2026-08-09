@@ -1,3 +1,5 @@
+[2.2.0-RC2]
+
 [2.2.0-RC1]
 - Enhancement: Read tool definitions from post-processor outputs and use them in the G-code viewer
 - Enhancement: Add multi-select to the remote file browser
