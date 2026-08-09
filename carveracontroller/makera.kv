@@ -7,13 +7,11 @@
 #:import _ carveracontroller.ui.DropDownSplitter
 #:import play_progress_bar carveracontroller.ui.PlayProgressBar
 #:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
-#:import ToolFilterButton carveracontroller.ui.ToolFilterButton.ToolFilterButton
 #:import CameraView carveracontroller.addons.camera.CameraView.CameraView
 #:import LASER_TOOL_NUMBER carveracontroller.CNC.LASER_TOOL_NUMBER
 #:import ZPROBE_TOOL_NUMBER carveracontroller.CNC.ZPROBE_TOOL_NUMBER
 #:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
 #:include ui/GcodeColorSchemePanel.kv
-#:include ui/ToolFilterButton.kv
 #:include addons/tooltips/Tooltips.kv
 #:include ui/LocalFilePicker.kv
 #:include ui/DirectoryView.kv
@@ -95,13 +93,7 @@
     width: '60dp'
     icon_size: 24
     icon: ''
-    # 'center' (default): icon centered behind the text, like the existing icon-only buttons.
-    # 'left': icon placed to the left of the text, side by side (used by the tool buttons).
-    icon_align: 'center'
     text: ''
-    min_icon: ''
-    min_icon_size: 12
-    min_active: True
     active: False
     size_hint_x: None
     background_color: 0, 0, 0, 0
@@ -109,25 +101,17 @@
     disabled_color: 0, 0, 0, 0
     Label:
         text: root.text if root.text else ''
-        halign: 'right' if root.icon_align == 'left' and root.icon else 'center'
-        valign: 'middle' if root.icon_align == 'left' else ('top' if root.min_icon else 'middle')
-        # Reserve a bit more bottom space when an eye icon is present so text/tool icons sit higher.
-        text_size: (self.width - dp(root.icon_size + 8), self.height - dp(root.min_icon_size + 12) if root.min_icon else self.height) if root.icon_align == 'left' and root.icon else (self.width, self.height - dp(root.min_icon_size + 12) if root.min_icon else None)
+        halign: 'center'
+        valign: 'middle'
+        text_size: self.width, None
         color: tuple(app.active_color) if (root.active and not root.disabled) else ((110/255, 110/255, 110/255, 1) if root.disabled else (250/255, 250/255, 250/255, 1))
         canvas.before:
             Color:
                 rgba: tuple(app.active_color) if (root.active and not root.disabled) else ((110/255, 110/255, 110/255, 1) if root.disabled else (250/255, 250/255, 250/255, 1))
             Rectangle:
                 source: root.icon
-                # Nudge tool icons up slightly when an eye is shown, to keep a gap above it.
-                pos: (self.x + dp(4), self.center_y - dp(root.icon_size / 2) + (dp(4) if root.min_icon else 0)) if root.icon_align == 'left' else (self.center_x - dp(root.icon_size / 2), self.center_y - dp(root.icon_size / 2))
+                pos: self.center_x - dp(root.icon_size / 2), self.center_y - dp(root.icon_size / 2)
                 size: dp(root.icon_size) if root.icon else 0, dp(root.icon_size) if root.icon else 0
-            Color:
-                rgba: (250/255, 250/255, 250/255, 1) if root.min_active else (60/255, 60/255, 60/255, 1)
-            Rectangle:
-                source: root.min_icon if root.min_icon and not root.disabled else ''
-                pos: self.center_x - dp(root.min_icon_size / 2), self.y + dp(1)
-                size: dp(root.min_icon_size) if root.min_icon and not root.disabled else 0, dp(root.min_icon_size) if root.min_icon and not root.disabled else 0
 
 <TransparentGrayButton>:
     height: '32dp'
@@ -4258,14 +4242,6 @@
                             color_scheme_panel: color_scheme_panel
                             camera_controls: camera_controls
                             tool_bar: tool_bar
-                            t1: t1
-                            t2: t2
-                            t3: t3
-                            t4: t4
-                            t5: t5
-                            t6: t6
-                            laser: laser
-                            hide_all: hide_all
                             gcode_ctl_bar: gcode_ctl_bar
                             BoxLayout:
                                 id: gcode_viewer_container
@@ -4289,12 +4265,11 @@
                                 orbit: True
                                 show_grid: True
                                 ortho_projection: False
-                                size_hint_x: 1
-                                size_hint_y: None
+                                size_hint: None, None
+                                width: self.minimum_width
                                 height: dp(48) if app.show_gcode_ctl_bar else 0
                                 opacity: 1 if app.show_gcode_ctl_bar else 0
                                 disabled: not app.show_gcode_ctl_bar
-                                # pos: float_layout.x, 0
                                 pos_hint: {'x': 0.0, 'top': 1.0}
                                 canvas.before:
                                     Color:
@@ -4302,162 +4277,58 @@
                                     Rectangle:
                                         pos: self.pos
                                         size: self.size
-                                BoxLayout:
-                                    size_hint_y: None
-                                    height: dp(48) if app.show_gcode_ctl_bar else 0
-                                    # tool bar buttons
-                                    GcodeViewerToolBarButton:
-                                        width: '50dp'
-                                        active: tool_bar.orbit
-                                        icon: 'data/GcodeViewer/orbit.png'
-                                        disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
-                                        on_release:
-                                            tool_bar.orbit = True
-                                            root.gcode_viewer.set_orbit(True)
-                                    GcodeViewerToolBarButton:
-                                        width: '50dp'
-                                        active: not tool_bar.orbit
-                                        icon: 'data/GcodeViewer/pan.png'
-                                        disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
-                                        on_release:
-                                            tool_bar.orbit = False
-                                            root.gcode_viewer.set_orbit(False)
-                                    GcodeViewerToolBarButton:
-                                        width: '50dp'
-                                        icon: 'data/GcodeViewer/zoom_in.png'
-                                        disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
-                                        on_release:
-                                            root.gcode_viewer.zoom_in()
-                                    GcodeViewerToolBarButton:
-                                        width: '50dp'
-                                        icon: 'data/GcodeViewer/zoom_out.png'
-                                        disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
-                                        on_release:
-                                            root.gcode_viewer.zoom_out()
-                                    GcodeViewerToolBarButton:
-                                        width: '50dp'
-                                        icon: 'data/GcodeViewer/zoom_fit.png'
-                                        disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
-                                        on_release:
-                                            root.gcode_viewer.restore_default_view()
-                                    GcodeViewerToolBarButton:
-                                        width: '50dp'
-                                        active: tool_bar.show_grid
-                                        icon: 'data/GcodeViewer/grid.png'
-                                        disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
-                                        on_release:
-                                            tool_bar.show_grid = not tool_bar.show_grid
-                                            root.gcode_viewer.set_grid_visible(tool_bar.show_grid)
-                                    GcodeViewerToolBarButton:
-                                        width: '44dp'
-                                        valign: 'middle'
-                                        text: 'Ortho'
-                                        active: tool_bar.ortho_projection
-                                        disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
-                                        on_release:
-                                            tool_bar.ortho_projection = not tool_bar.ortho_projection
-                                            root.gcode_viewer.set_ortho_projection(tool_bar.ortho_projection)
-                                    Widget:
+                                GcodeViewerToolBarButton:
+                                    width: '50dp'
+                                    active: tool_bar.orbit
+                                    icon: 'data/GcodeViewer/orbit.png'
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        tool_bar.orbit = True
+                                        root.gcode_viewer.set_orbit(True)
+                                GcodeViewerToolBarButton:
+                                    width: '50dp'
+                                    active: not tool_bar.orbit
+                                    icon: 'data/GcodeViewer/pan.png'
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        tool_bar.orbit = False
+                                        root.gcode_viewer.set_orbit(False)
+                                GcodeViewerToolBarButton:
+                                    width: '50dp'
+                                    icon: 'data/GcodeViewer/zoom_in.png'
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        root.gcode_viewer.zoom_in()
+                                GcodeViewerToolBarButton:
+                                    width: '50dp'
+                                    icon: 'data/GcodeViewer/zoom_out.png'
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        root.gcode_viewer.zoom_out()
+                                GcodeViewerToolBarButton:
+                                    width: '50dp'
+                                    icon: 'data/GcodeViewer/zoom_fit.png'
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        root.gcode_viewer.restore_default_view()
+                                GcodeViewerToolBarButton:
+                                    width: '50dp'
+                                    active: tool_bar.show_grid
+                                    icon: 'data/GcodeViewer/grid.png'
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        tool_bar.show_grid = not tool_bar.show_grid
+                                        root.gcode_viewer.set_grid_visible(tool_bar.show_grid)
+                                GcodeViewerToolBarButton:
+                                    width: '44dp'
+                                    valign: 'middle'
+                                    text: 'Ortho'
+                                    active: tool_bar.ortho_projection
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        tool_bar.ortho_projection = not tool_bar.ortho_projection
+                                        root.gcode_viewer.set_ortho_projection(tool_bar.ortho_projection)
 
-                                    # tools
-                                    ToolFilterButton:
-                                        id: t1
-                                        width: '74dp' if root.show_tool_button_icons else '44dp'
-                                        label_text: 'T1'
-                                        active: app.tool == 1
-                                        disabled: 1 not in root.used_tools
-                                        min_icon: 'data/eye.png'
-                                        on_release:
-                                            self.min_active = not self.min_active
-                                            app.root.filter_tool()
-                                    ToolFilterButton:
-                                        id: t2
-                                        width: '74dp' if root.show_tool_button_icons else '44dp'
-                                        label_text: 'T2'
-                                        active: app.tool == 2
-                                        disabled: 2 not in root.used_tools
-                                        min_icon: 'data/eye.png'
-                                        on_release:
-                                            self.min_active = not self.min_active
-                                            app.root.filter_tool()
-                                    ToolFilterButton:
-                                        id: t3
-                                        width: '74dp' if root.show_tool_button_icons else '44dp'
-                                        label_text: 'T3'
-                                        active: app.tool == 3
-                                        disabled: 3 not in root.used_tools
-                                        min_icon: 'data/eye.png'
-                                        on_release:
-                                            self.min_active = not self.min_active
-                                            app.root.filter_tool()
-                                    ToolFilterButton:
-                                        id: t4
-                                        width: '74dp' if root.show_tool_button_icons else '44dp'
-                                        label_text: 'T4'
-                                        active: app.tool == 4
-                                        disabled: 4 not in root.used_tools
-                                        min_icon: 'data/eye.png'
-                                        on_release:
-                                            self.min_active = not self.min_active
-                                            app.root.filter_tool()
-                                    ToolFilterButton:
-                                        id: t5
-                                        width: '74dp' if root.show_tool_button_icons else '44dp'
-                                        label_text: 'T5'
-                                        active: app.tool == 5
-                                        disabled: 5 not in root.used_tools
-                                        min_icon: 'data/eye.png'
-                                        on_release:
-                                            self.min_active = not self.min_active
-                                            app.root.filter_tool()
-                                    ToolFilterButton:
-                                        id: t6
-                                        width: '74dp' if root.show_tool_button_icons else '44dp'
-                                        label_text: 'T6'
-                                        active: app.tool == 6
-                                        disabled: 6 not in root.used_tools
-                                        min_icon: 'data/eye.png'
-                                        on_release:
-                                            self.min_active = not self.min_active
-                                            app.root.filter_tool()
-                                    GcodeViewerToolBarButton:
-                                        id: laser
-                                        width: '44dp'
-                                        valign: 'middle'
-                                        icon: 'data/laser.png'
-                                        active: app.lasering == True
-                                        disabled: LASER_TOOL_NUMBER not in root.used_tools
-                                        min_icon: 'data/eye.png'
-                                        on_release:
-                                            self.min_active = not self.min_active
-                                            app.root.filter_tool()
-                                    TransparentGrayButton:
-                                        id: hide_all
-                                        height: dp(48) if app.show_gcode_ctl_bar else 0
-                                        size_hint_y: None
-                                        width: '50dp'
-                                        icon: 'data/eye.png'
-                                        disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
-                                        on_release:
-                                            if self.active:\
-                                            t1.min_active = False;\
-                                            t2.min_active = False;\
-                                            t3.min_active = False;\
-                                            t4.min_active = False;\
-                                            t5.min_active = False;\
-                                            t6.min_active = False;\
-                                            laser.min_active = False;\
-                                            app.root.show_other_tools = False;
-                                            else:\
-                                            t1.min_active = True;\
-                                            t2.min_active = True;\
-                                            t3.min_active = True;\
-                                            t4.min_active = True;\
-                                            t5.min_active = True;\
-                                            t6.min_active = True;\
-                                            laser.min_active = True;\
-                                            app.root.show_other_tools = True;
-                                            app.root.filter_tool()
                             BoxLayout:
                                 id: gcode_ctl_bar
                                 size_hint_x: 1

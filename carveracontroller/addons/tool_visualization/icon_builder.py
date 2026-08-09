@@ -1,11 +1,10 @@
 """Render tool silhouette icons into Kivy textures from real geometry.
 
-Tooltip body icons are generated on demand from ``ToolDefinition`` profiles
-(same source as the 3D viewer), cropped with body framing, and cached by
-geometry signature + pixel size.
+Tooltip and legend icons are generated on demand from ``ToolDefinition``
+profiles (same source as the 3D viewer), cropped with body or thumb framing,
+and cached by geometry signature + pixel size.
 
 Pixels are rasterized on the CPU and uploaded with ``Texture.blit_buffer``.
-Toolbar buttons draw the same geometry via Kivy Mesh (see ``icon_geometry``).
 """
 
 from __future__ import annotations
@@ -18,34 +17,20 @@ from kivy.metrics import Metrics, dp
 
 from carveracontroller.addons.tool_visualization.icon_geometry import (
     FRAMING_BODY,
+    FRAMING_THUMB,
     build_icon_geometry,
     geometry_cache_key,
 )
 from carveracontroller.addons.tool_visualization.mesh_builder import FLUTE_COLOR, SHANK_COLOR
 
 # Normalized float RGBA. Opaque variants of the 3D viewer colors (those carry
-# transparency for GL blending). Shared by Mesh Color instructions and the
-# tooltip rasterizer (which converts to 0..255).
+# transparency for GL blending); the rasterizer converts to 0..255.
 ICON_FLUTE_COLOR = (FLUTE_COLOR[0], FLUTE_COLOR[1], FLUTE_COLOR[2], 1.0)
 ICON_SHANK_COLOR = (SHANK_COLOR[0], SHANK_COLOR[1], SHANK_COLOR[2], 1.0)
 ICON_OUTLINE_COLOR = (45 / 255, 45 / 255, 45 / 255, 1.0)
 
-# Silhouette outline stroke width in dp. Shared with the toolbar buttons so
-# the Mesh-drawn and rasterized silhouettes look the same at any density.
+# Silhouette outline stroke width in dp (scaled with density / supersampling).
 ICON_OUTLINE_WIDTH_DP = 1.25
-
-# Mid greyscale for hidden (eye-off) toolbar buttons — lighter so it still
-# reads as "present but filtered", distinct from disabled.
-ICON_FLUTE_HIDDEN_COLOR = (170 / 255, 170 / 255, 170 / 255, 1.0)
-ICON_SHANK_HIDDEN_COLOR = (140 / 255, 140 / 255, 140 / 255, 1.0)
-ICON_OUTLINE_HIDDEN_COLOR = (90 / 255, 90 / 255, 90 / 255, 1.0)
-
-# Disabled (unused) slots: match the disabled tool-name label colour
-# (110/255 grey in ToolFilterButton KV), with a slightly darker shank/outline
-# so the silhouette still has a bit of depth.
-ICON_FLUTE_DISABLED_COLOR = (110 / 255, 110 / 255, 110 / 255, 1.0)
-ICON_SHANK_DISABLED_COLOR = (90 / 255, 90 / 255, 90 / 255, 1.0)
-ICON_OUTLINE_DISABLED_COLOR = (65 / 255, 65 / 255, 65 / 255, 1.0)
 
 # Default tooltip body icon size in dp. Tall so the extended shank crop reads
 # clearly beside the tooltip text.
@@ -262,6 +247,26 @@ def build_tool_tooltip_icon(tool_def, size=None):
         size = tooltip_icon_size()
     width, height = _normalize_size(size)
     texture = build_tool_tooltip_icon_texture(tool_def, size=(width, height))
+    return texture, (width, height)
+
+
+def build_tool_legend_icon(tool_def, size=None):
+    """Return ``(texture, display_size)`` for a compact thumb-framed legend icon."""
+    if size is None:
+        size = (dp(20), dp(20))
+    width, height = _normalize_size(size)
+    key = (geometry_cache_key(tool_def, framing=FRAMING_THUMB), width, height)
+    cached = _texture_cache.get(key)
+    if cached is not None:
+        _texture_cache.move_to_end(key)
+        return cached, (width, height)
+
+    box_aspect = width / float(height)
+    geometry = build_icon_geometry(tool_def, framing=FRAMING_THUMB, box_aspect=box_aspect)
+    texture = _render_icon_texture(geometry, width, height)
+    _texture_cache[key] = texture
+    while len(_texture_cache) > _CACHE_MAX:
+        _texture_cache.popitem(last=False)
     return texture, (width, height)
 
 

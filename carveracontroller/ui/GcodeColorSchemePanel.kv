@@ -5,11 +5,11 @@
 <GcodeColorSchemePanel>:
     orientation: 'vertical'
     size_hint: None, None
-    width: dp(180)
+    width: dp(270)
     height: 0 if not app.show_gcode_ctl_bar else (HEADER_HEIGHT + PANEL_BOTTOM_PADDING + legend_scroll.height)
     opacity: 1 if app.show_gcode_ctl_bar else 0
     disabled: not app.show_gcode_ctl_bar or (app.selected_remote_filename == '' and app.selected_local_filename == '')
-    pos_hint: {'right': 0.988, 'top': 0.90}
+    pos_hint: {'right': 1.0, 'top': 1.0}
     padding: 0, 0, 0, dp(6)
     spacing: 0
     canvas.before:
@@ -29,20 +29,24 @@
             Rectangle:
                 pos: self.pos
                 size: self.size
-        Label:
-            text: tr._('Colors')
-            halign: 'left'
-            valign: 'middle'
-            color: 250/255, 250/255, 250/255, 1
-            size_hint_x: 0.3
-            text_size: self.size
         Spinner:
             id: gcode_color_scheme_spinner
-            text: tr._('Move type')
-            values: tr._('Move type'), tr._('Tool'), tr._('Speed'), tr._('Height')
-            size_hint_x: 0.7
+            text: tr._('Tool')
+            values: tr._('Tool'), tr._('Move type'), tr._('Speed'), tr._('Height')
+            size_hint_x: 1
             on_text:
                 app.root.on_gcode_color_scheme_changed(self.text)
+        TransparentGrayButton:
+            id: visibility_toggle
+            size_hint: None, None
+            width: dp(32)
+            height: dp(28)
+            icon: 'data/eye.png'
+            icon_size: 18
+            active: root.any_visible
+            disabled: root.disabled
+            on_release:
+                app.root.toggle_gcode_visibility_all()
     ScrollView:
         id: legend_scroll
         size_hint_y: None
