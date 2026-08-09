@@ -54,6 +54,7 @@ class AngleParameterDefinitions:
         "Probe Depth",
         False,
         "how far below the top surface of the model to move down in order to probe on each side",
+        "2",
     )
 
     UseProbeNormallyClosed = ProbeSettingDefinition("I", "NC", False, "Probe is normally closed")
