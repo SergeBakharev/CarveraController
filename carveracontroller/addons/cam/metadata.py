@@ -1,0 +1,63 @@
+"""CAM-header metadata extracted from G-code comments."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition
+
+
+@dataclass(frozen=True)
+class CamStock:
+    """Stock definition parsed from a CAM post-processor header (millimetres).
+
+    Parsers should leave this unset until a real header example exists.
+    ``kind`` is ``"rectangular"`` or ``"cylindrical"``.
+    """
+
+    kind: str
+    width_mm: float | None = None
+    length_mm: float | None = None
+    height_mm: float | None = None
+    diameter_mm: float | None = None
+    xy_corner: str = "bl"
+    z_reference: str = "top"
+    offset_x_mm: float = 0.0
+    offset_y_mm: float = 0.0
+    offset_z_mm: float = 0.0
+
+    def to_shape_dict(self) -> dict:
+        if self.kind == "cylindrical":
+            return {
+                "kind": "cylindrical",
+                "diameter_mm": float(self.diameter_mm),
+                "height_mm": float(self.height_mm),
+            }
+        return {
+            "kind": "rectangular",
+            "width_mm": float(self.width_mm),
+            "length_mm": float(self.length_mm),
+            "height_mm": float(self.height_mm),
+        }
+
+    def to_origin_dict(self) -> dict:
+        return {
+            "xy_corner": self.xy_corner,
+            "z_reference": self.z_reference,
+            "offset_x_mm": float(self.offset_x_mm),
+            "offset_y_mm": float(self.offset_y_mm),
+            "offset_z_mm": float(self.offset_z_mm),
+        }
+
+
+@dataclass(frozen=True)
+class CamMetadata:
+    """Result of scanning a G-code file for CAM header comments."""
+
+    parser_name: str | None
+    tool_table: dict[int, ToolDefinition] = field(default_factory=dict)
+    stock: CamStock | None = None
+
+    @classmethod
+    def empty(cls) -> CamMetadata:
+        return cls(parser_name=None, tool_table={}, stock=None)

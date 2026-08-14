@@ -260,16 +260,24 @@ class StockSettingsPopup(ModalView):
                 ids.txt_length.disabled = False
         self._schedule_fit_popup_height()
 
-    def reset_for_loaded_file(self) -> dict:
-        """Keep applied shape/origin/quality/playback-mesh; force show/sim off; rewrite UI.
+    def reset_for_loaded_file(self, shape=None, origin=None) -> dict:
+        """Force show/sim off; optionally replace shape/origin; rewrite UI.
 
         Used when a new G-code file loads. Must not read the live form — dirty
         or invalid mid-edit fields would otherwise be committed (or wipe the
         applied baseline via a defaults fallback).
+
+        Quality / playback-mesh flags are kept from the last applied snapshot.
+        When *shape* / *origin* are provided (auto-init), they overwrite the
+        previous file's dimensions; otherwise those fields are left as-is.
         """
         settings = dict(self._settings_snapshot)
         settings["show_stock"] = False
         settings["simulate_cut"] = False
+        if shape is not None:
+            settings["shape"] = shape.to_dict()
+        if origin is not None:
+            settings["origin"] = origin.to_dict()
         self._write_settings_to_ui(settings)
         self._settings_snapshot = dict(settings)
         return settings

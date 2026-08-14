@@ -626,6 +626,7 @@ class GCodeViewer(Widget):
     sim_progress = NumericProperty(0.0)
     sim_checkpoints = ListProperty([])
     sim_hud_text = StringProperty("")
+    stock_visible = BooleanProperty(False)
 
     line_times = []
     total_time = 0.0
@@ -780,7 +781,6 @@ class GCodeViewer(Widget):
         # Stock preview / cut simulation state
         self.stock_bounds_mm: StockBounds | None = None
         self.stock_shape: StockShape | None = None
-        self.stock_visible = False
         self.simulate_cut = False
         self.stock_mesh_while_playing = False
         # Keep the translucent AABB up after pause until the worker flush

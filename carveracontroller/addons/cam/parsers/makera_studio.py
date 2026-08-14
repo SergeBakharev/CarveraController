@@ -8,7 +8,7 @@ file. Each tool is one line:
 
 import logging
 
-from carveracontroller.addons.tool_visualization.parsers.base import ToolTableParser
+from carveracontroller.addons.cam.parsers.base import CamHeaderParser
 from carveracontroller.addons.tool_visualization.tool_definition import (
     ToolDefinition,
     ToolType,
@@ -103,7 +103,7 @@ def _stick_length_from_fields(fields):
     return _positive_or_none(_to_float(fields.get("shoulderlength")))
 
 
-class MakeraStudioParser(ToolTableParser):
+class MakeraStudioParser(CamHeaderParser):
     name = "makera_studio"
 
     def parse(self, lines):

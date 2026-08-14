@@ -15,7 +15,7 @@ or the included tip/point angle for drills (converted to per-side on parse).
 import logging
 import re
 
-from carveracontroller.addons.tool_visualization.parsers.base import ToolTableParser
+from carveracontroller.addons.cam.parsers.base import CamHeaderParser
 from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition, ToolType, resolve_tool_type
 
 logger = logging.getLogger(__name__)
@@ -105,7 +105,7 @@ def _extract_full_line_comment(line):
     return None
 
 
-class Fusion360MakeraParser(ToolTableParser):
+class Fusion360MakeraParser(CamHeaderParser):
     name = "fusion360_makera"
 
     def parse(self, lines):

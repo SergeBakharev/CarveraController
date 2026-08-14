@@ -4,10 +4,27 @@ import math
 
 import pytest
 
+from carveracontroller.addons.cam import extract_cam_metadata
+from carveracontroller.addons.cam.parsers.freecad_makera import (
+    TOOL_TYPE_NAME_MAP as FREECAD_MAKERA_TOOL_TYPE_NAME_MAP,
+)
+from carveracontroller.addons.cam.parsers.freecad_makera import (
+    FreeCADMakeraParser,
+)
+from carveracontroller.addons.cam.parsers.fusion360_makera import (
+    TOOL_TYPE_NAME_MAP,
+    Fusion360MakeraParser,
+    _infer_shank_diameter,
+)
+from carveracontroller.addons.cam.parsers.makera_studio import (
+    TOOL_TYPE_NAME_MAP as MAKERA_STUDIO_TOOL_TYPE_NAME_MAP,
+)
+from carveracontroller.addons.cam.parsers.makera_studio import (
+    MakeraStudioParser,
+)
 from carveracontroller.addons.tool_visualization import (
     ToolDefinition,
     ToolType,
-    extract_tool_table,
     format_tool_tooltip,
 )
 from carveracontroller.addons.tool_visualization.icon_geometry import (
@@ -38,23 +55,6 @@ from carveracontroller.addons.tool_visualization.mesh_builder import (
     build_tool_mesh,
     build_tool_meshes,
     tool_profile,
-)
-from carveracontroller.addons.tool_visualization.parsers.freecad_makera import (
-    TOOL_TYPE_NAME_MAP as FREECAD_MAKERA_TOOL_TYPE_NAME_MAP,
-)
-from carveracontroller.addons.tool_visualization.parsers.freecad_makera import (
-    FreeCADMakeraParser,
-)
-from carveracontroller.addons.tool_visualization.parsers.fusion360_makera import (
-    TOOL_TYPE_NAME_MAP,
-    Fusion360MakeraParser,
-    _infer_shank_diameter,
-)
-from carveracontroller.addons.tool_visualization.parsers.makera_studio import (
-    TOOL_TYPE_NAME_MAP as MAKERA_STUDIO_TOOL_TYPE_NAME_MAP,
-)
-from carveracontroller.addons.tool_visualization.parsers.makera_studio import (
-    MakeraStudioParser,
 )
 from carveracontroller.addons.tool_visualization.tool_definition import resolve_tool_type
 from carveracontroller.CNC import unit_scale_to_mm
@@ -1728,16 +1728,21 @@ class TestMeshBuilder:
 
 
 class TestExtractor:
-    def test_extract_tool_table_returns_first_non_empty_parser_result(self):
+    def test_extract_returns_first_non_empty_parser_result(self):
         lines = ["(T1  End mill  D=6 CR=0 - flat end mill)\n", "G0 X0\n"]
-        table = extract_tool_table(lines)
+        metadata = extract_cam_metadata(lines)
 
-        assert 1 in table
-        assert table[1].tool_type == ToolType.FLAT_END_MILL
+        assert metadata.parser_name == "fusion360_makera"
+        assert 1 in metadata.tool_table
+        assert metadata.tool_table[1].tool_type == ToolType.FLAT_END_MILL
+        assert metadata.stock is None
 
-    def test_extract_tool_table_returns_empty_dict_when_unrecognised(self):
-        lines = ["G0 X0 Y0\n", "G1 X1 F100\n"]
-        assert extract_tool_table(lines) == {}
+    def test_extract_returns_empty_metadata_when_unrecognised(self):
+        metadata = extract_cam_metadata(["G0 X0 Y0\n", "G1 X1 F100\n"])
+
+        assert metadata.parser_name is None
+        assert metadata.tool_table == {}
+        assert metadata.stock is None
 
     def test_extract_prefers_makera_studio_when_mkr_header_present(self):
         lines = [
@@ -1749,7 +1754,7 @@ class TestExtractor:
             "(T1  Should be ignored  D=99 CR=0 - flat end mill)\n",
             "G0 X0\n",
         ]
-        table = extract_tool_table(lines)
+        table = extract_cam_metadata(lines).tool_table
 
         assert table[1].diameter == 2.0
         assert table[1].shank_diameter == 3.175
@@ -1763,7 +1768,7 @@ class TestExtractor:
             "(T1  Should be ignored  D=99 CR=0 - flat end mill)\n",
             "G0 X0\n",
         ]
-        table = extract_tool_table(lines)
+        table = extract_cam_metadata(lines).tool_table
 
         assert table[1].diameter == 1.5
         assert table[1].shank_diameter == 3.175

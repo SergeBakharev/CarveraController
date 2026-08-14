@@ -112,6 +112,7 @@ from kivy.uix.stencilview import StencilView
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
 
+from carveracontroller.addons.cam import CamMetadata, extract_cam_metadata
 from carveracontroller.addons.facing.FacingWizardPopup import FacingWizardPopup
 from carveracontroller.addons.pendant import (
     SUPPORTED_PENDANTS,
@@ -128,6 +129,7 @@ from carveracontroller.addons.stock.stock_defaults import (
     shape_from_settings,
     voxel_resolution_from_settings,
 )
+from carveracontroller.addons.stock.stock_estimate import auto_stock_for_loaded_file
 from carveracontroller.addons.stock.ui.StockSettingsPopup import StockSettingsPopup
 from carveracontroller.serial_listeners import dispatch_serial_line
 
@@ -209,7 +211,6 @@ from .addons.camera.Z1Camera import (
 )
 from .addons.probing.ProbingControls import ProbeButton
 from .addons.tool_visualization import (
-    extract_tool_table,
     format_tool_tooltip,
 )
 from .addons.tooltips.Tooltips import Tooltip, ToolTipButton, ToolTipDropDown
@@ -3047,6 +3048,7 @@ class Makera(RelativeLayout):
     file_has_ocodes = False
     tool_change_markers = []
     tool_table = {}
+    cam_metadata = None
     document_unit = "mm"
 
     # Path visibility filters for the G-code viewer color-scheme panel.
@@ -3235,6 +3237,8 @@ class Makera(RelativeLayout):
         self.gcode_viewer.bind(sim_hud_text=self._on_viewer_sim_hud_text)
         self._on_viewer_sim_hud_text(self.gcode_viewer, self.gcode_viewer.sim_hud_text)
         self.float_layout.tool_bar.show_grid = self.gcode_viewer.is_grid_visible()
+        self.gcode_viewer.bind(stock_visible=self._on_viewer_stock_visible)
+        self._on_viewer_stock_visible(self.gcode_viewer, self.gcode_viewer.stock_visible)
         self.path_hidden_tools = set()
 
         # init camera live view
@@ -3613,23 +3617,48 @@ class Makera(RelativeLayout):
             return False
         return True
 
+    def _reset_stock_settings(self, shape=None, origin=None):
+        """Push a stock reset into the popup and viewer. Must already be main thread."""
+        popup = getattr(self, "stock_settings_popup", None)
+        if popup is not None:
+            settings = popup.reset_for_loaded_file(shape=shape, origin=origin)
+        else:
+            settings = default_settings()
+            if shape is not None:
+                settings["shape"] = shape.to_dict()
+            if origin is not None:
+                settings["origin"] = origin.to_dict()
+        return self._apply_stock_settings_impl(settings)
+
+    def _auto_stock_shape_origin(self):
+        """CAM-header stock if present, otherwise toolpath AABB estimate."""
+        metadata = getattr(self, "cam_metadata", None) or CamMetadata.empty()
+        viewer = getattr(self, "gcode_viewer", None)
+        feed_z_max_mm = None
+        if viewer is not None and getattr(viewer, "raw_feed_rates", None):
+            feed_z_max_mm = float(getattr(viewer, "z_max_mm", 0.0))
+        return auto_stock_for_loaded_file(
+            metadata.stock,
+            CNC.vars["xmin"],
+            CNC.vars["ymin"],
+            CNC.vars["zmin"],
+            CNC.vars["xmax"],
+            CNC.vars["ymax"],
+            CNC.vars["zmax"],
+            tool_table=self.tool_table,
+            unit_scale=unit_scale_to_mm(self.document_unit),
+            feed_z_max_mm=feed_z_max_mm,
+        )
+
     @mainthread
     def reset_stock_for_loaded_file(self):
-        """Reset session stock toggles and re-apply settings after a file load.
+        """Hide stock for a new file load (shape/origin filled later in load_end).
 
         Must run on the main thread — touches popup widgets and rebuilds GL meshes.
         Uses the last *applied* snapshot (not live UI) so an open popup's dirty
         or invalid edits are discarded rather than committed.
-
-        Calls ``_apply_stock_settings_impl`` directly so apply runs in this same
-        Clock callback (same thread as the popup widget updates above).
         """
-        popup = getattr(self, "stock_settings_popup", None)
-        if popup is not None:
-            settings = popup.reset_for_loaded_file()
-        else:
-            settings = default_settings()
-        self._apply_stock_settings_impl(settings)
+        self._reset_stock_settings()
 
     def open_adv_calibrate_popup(self):
         app = App.get_running_app()
@@ -7492,6 +7521,12 @@ class Makera(RelativeLayout):
         if label is not None:
             label.text = value or ""
 
+    def _on_viewer_stock_visible(self, _instance, visible):
+        """Keep the Stock toolbar button highlight in sync with viewer visibility."""
+        tool_bar = getattr(getattr(self, "float_layout", None), "tool_bar", None)
+        if tool_bar is not None:
+            tool_bar.show_stock = bool(visible)
+
     # -----------------------------------------------------------------------
     def gcode_play_call_back(self, distance, line_number):
         if not self.loading_file:
@@ -7598,6 +7633,7 @@ class Makera(RelativeLayout):
         self.used_tools = []
         self.upcoming_tool = 0
         self.tool_table = {}
+        self.cam_metadata = CamMetadata.empty()
         self.document_unit = "mm"
         self.gcode_viewer.tool_table = {}
         self.gcode_viewer.tool_unit_scale = 1.0
@@ -7759,10 +7795,7 @@ class Makera(RelativeLayout):
             popup = getattr(self, "stock_settings_popup", None)
             if popup is not None:
                 popup.dismiss()
-                settings = popup.reset_for_loaded_file()
-            else:
-                settings = default_settings()
-            self._apply_stock_settings_impl(settings)
+            self._reset_stock_settings()
         else:
             if (CNC.vars["wcox"] - CNC.vars["anchor1_x"] - CNC.vars["anchor2_offset_x"]) >= 0 and (
                 CNC.vars["wcoy"] - CNC.vars["anchor1_y"] - CNC.vars["anchor2_offset_y"]
@@ -7770,6 +7803,8 @@ class Makera(RelativeLayout):
                 self.coord_popup.set_config("origin", "anchor", 2)
             else:
                 self.coord_popup.set_config("origin", "anchor", 1)
+            shape, origin = self._auto_stock_shape_origin()
+            self._reset_stock_settings(shape=shape, origin=origin)
         self.coord_popup.load_config()
 
         self.file_popup.dismiss()
@@ -7809,6 +7844,7 @@ class Makera(RelativeLayout):
         self.used_tools = []
         self.tool_change_markers = []
         self.tool_table = {}
+        self.cam_metadata = CamMetadata.empty()
         self.document_unit = "mm"
         self.gcode_viewer.tool_table = {}
         self.gcode_viewer.tool_unit_scale = 1.0
@@ -7840,13 +7876,14 @@ class Makera(RelativeLayout):
             self.selected_file_line_count = len(self.lines)
             f.close()
 
-            # Detect tools and set document unit if available
+            # Detect tools/stock metadata and set document unit if available
             self.document_unit = detect_document_unit(self.lines)
-            self.tool_table = extract_tool_table(self.lines)
+            self.cam_metadata = extract_cam_metadata(self.lines)
+            self.tool_table = self.cam_metadata.tool_table
             self.gcode_viewer.tool_table = self.tool_table
             self.gcode_viewer.tool_unit_scale = unit_scale_to_mm(self.document_unit)
 
-            # Reset current stock settings for the new file
+            # Hide previous stock immediately; dimensions are filled in load_end.
             self.reset_stock_for_loaded_file()
 
             # Load the first "page" of the file

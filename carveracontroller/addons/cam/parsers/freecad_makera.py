@@ -16,7 +16,7 @@ The parser converts those included angles to per-side degrees for ToolDefinition
 
 import logging
 
-from carveracontroller.addons.tool_visualization.parsers.base import ToolTableParser
+from carveracontroller.addons.cam.parsers.base import CamHeaderParser
 from carveracontroller.addons.tool_visualization.tool_definition import (
     ToolDefinition,
     ToolType,
@@ -136,7 +136,7 @@ def _taper_angle_from_fields(fields, tool_type):
     return None
 
 
-class FreeCADMakeraParser(ToolTableParser):
+class FreeCADMakeraParser(CamHeaderParser):
     name = "freecad_makera"
 
     def parse(self, lines):

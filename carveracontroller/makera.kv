@@ -4279,6 +4279,7 @@
                                 orbit: True
                                 show_grid: True
                                 ortho_projection: False
+                                show_stock: False
                                 size_hint: None, None
                                 width: self.minimum_width
                                 height: dp(48) if app.show_gcode_ctl_bar else 0
@@ -4344,8 +4345,9 @@
                                         root.gcode_viewer.set_ortho_projection(tool_bar.ortho_projection)
                                 GcodeViewerToolBarButton:
                                     width: '50dp'
-                                    valign: 'middle'
-                                    text: tr._('Stock')
+                                    icon: 'data/GcodeViewer/stock.png'
+                                    tooltip_txt: tr._('Stock')
+                                    active: tool_bar.show_stock
                                     disabled: (app.selected_remote_filename == '' and app.selected_local_filename == '') or app.has_4axis
                                     on_release: root.open_stock_settings_popup()
 
