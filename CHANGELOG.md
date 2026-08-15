@@ -1,4 +1,5 @@
 [2.2.0-RC2]
+- Enhancement: Adds "Allow Jogging When Spindle Is On" option (disabled by default). "Allow Jogging When Machine Running" will now be enabled by default. Existing configs that already allowed jogging while the machine is running also enable the new spindle option.
 - Fixed: Prevent a probing modal crash if E is not provided when using the angle operation
 
 [2.2.0-RC1]
