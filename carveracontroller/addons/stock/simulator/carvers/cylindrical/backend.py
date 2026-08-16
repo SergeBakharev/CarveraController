@@ -30,9 +30,6 @@ from carveracontroller.addons.stock.stock_shape import (
 )
 
 _EMPTY_R = np.float32(-1.0)
-# Treat A as constant over a few degrees (same idea as the voxel carver) so a
-# long indexed X feed is one swept test instead of one binary-search per cell.
-_MAX_DA_DEG = 2.0
 _INF = 1.0e30
 # Safety net if a tiny cell_size is passed directly (puck + High used to
 # explode to tens of thousands of θ samples).
@@ -54,32 +51,53 @@ def pick_cylindrical_dims(bounds: StockBounds, cell_size_mm: float, diameter_mm:
     return nx, n_theta, d_theta
 
 
-def pose_ts_along_segment(
+def pose_ts_cell_aligned(
     p0: tuple[float, float, float],
     p1: tuple[float, float, float],
-    da_deg: float,
+    a0: float,
+    a1: float,
     *,
+    min_x: float,
     cell_size_mm: float,
     d_theta_deg: float,
 ) -> np.ndarray:
-    """``t`` samples in ``[0, 1]`` covering both XYZ length and A change.
+    """``t`` samples at endpoints and at X / θ cell centers the helix crosses.
 
-    Constant-A feeds still step along XYZ (indexed cuts). Point poses stay a
-    single sample.
+    Linspace stamps land on cell *edges*, so a V-bit tip splits across two
+    cells and the groove floor beats against the (x, θ) grid. Crossing every
+    cell center aims the tip at a stored dexel instead.
     """
     dx = p1[0] - p0[0]
     dy = p1[1] - p0[1]
     dz = p1[2] - p0[2]
+    da = float(a1) - float(a0)
     xyz_len = math.sqrt(dx * dx + dy * dy + dz * dz)
-    cell = max(float(cell_size_mm), 1e-9)
-    dth = max(float(d_theta_deg), 1e-6)
-    n_xyz = 1 if xyz_len < 1e-12 else int(math.ceil(xyz_len / cell)) + 1
-    n_a = 1 if abs(da_deg) < 1e-9 else int(math.ceil(abs(da_deg) / dth)) + 1
-    moving = xyz_len >= 1e-12 or abs(da_deg) >= 1e-9
-    n_pose = max(2 if moving else 1, n_xyz, n_a)
-    if n_pose <= 1:
+    if xyz_len < 1e-12 and abs(da) < 1e-9:
         return np.array([0.0], dtype=np.float64)
-    return np.linspace(0.0, 1.0, n_pose)
+
+    ts = [0.0, 1.0]
+    cell = max(float(cell_size_mm), 1e-9)
+    if abs(dx) >= 1e-12:
+        lo, hi = (p0[0], p1[0]) if dx > 0.0 else (p1[0], p0[0])
+        ix0 = math.ceil((lo - min_x) / cell - 0.5)
+        ix1 = math.floor((hi - min_x) / cell - 0.5)
+        if ix1 >= ix0:
+            wx = min_x + (np.arange(ix0, ix1 + 1, dtype=np.float64) + 0.5) * cell
+            ts.extend(((wx - p0[0]) / dx).tolist())
+
+    dth = max(float(d_theta_deg), 1e-6)
+    if abs(da) >= 1e-9:
+        lo_a, hi_a = (float(a0), float(a1)) if da > 0.0 else (float(a1), float(a0))
+        k0 = math.ceil(lo_a / dth - 0.5)
+        k1 = math.floor(hi_a / dth - 0.5)
+        if k1 >= k0:
+            ac = (np.arange(k0, k1 + 1, dtype=np.float64) + 0.5) * dth
+            ts.extend(((ac - float(a0)) / da).tolist())
+
+    arr = np.unique(np.round(np.clip(np.asarray(ts, dtype=np.float64), 0.0, 1.0), 10))
+    if arr.size < 2:
+        return np.array([0.0, 1.0], dtype=np.float64)
+    return arr
 
 
 def _sample_profile_radius(profile_zs: np.ndarray, profile_rs: np.ndarray, z_rel: np.ndarray) -> np.ndarray:
@@ -209,7 +227,7 @@ def _xyz_inside_tool(
     return _inside_from_xy(window_ok, dist_xy, z_rel=z_rel)
 
 
-def _cylinder_cut_radius(
+def _cylinder_s_interval(
     wx: np.ndarray,
     uy: np.ndarray,
     uz: np.ndarray,
@@ -219,15 +237,8 @@ def _cylinder_cut_radius(
     radius: float,
     flute_z0: float,
     flute_z1: float,
-    s_hi: np.ndarray,
-    probe: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Outside-in remaining dexel radius vs a Z-aligned finite cylinder.
-
-    Each dexel is the ray ``(wx, y0 + s·uy, z0_axis + s·uz)``. Returns
-    ``(new_s, hit)``; ``hit`` is true when the current surface (or a one-cell
-    inward probe) lies in the tool, so internal cavities are not punched.
-    """
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """s-interval where a dexel is inside a Z-aligned finite cylinder."""
     tx, ty, tz = float(tip[0]), float(tip[1]), float(tip[2])
     r_tool = float(radius)
     z_lo = tz + float(flute_z0)
@@ -269,11 +280,240 @@ def _cylinder_cut_radius(
     s_enter = np.maximum(np.maximum(s_xy_lo, s_z_lo), 0.0)
     s_exit = np.minimum(s_xy_hi, s_z_hi)
     valid = s_enter <= s_exit + 1e-9
+    return s_enter, s_exit, valid
+
+
+def _hit_from_s_interval(
+    s_enter: np.ndarray,
+    s_exit: np.ndarray,
+    valid: np.ndarray,
+    s_hi: np.ndarray,
+    probe: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Outside-in remaining radius from a dexel/tool s-interval."""
     s_probe = np.maximum(s_hi - probe, 0.0)
     inside_hi = valid & (s_hi >= s_enter - 1e-9) & (s_hi <= s_exit + 1e-9)
     inside_pr = valid & (s_probe >= s_enter - 1e-9) & (s_probe <= s_exit + 1e-9)
     hit = (s_hi >= 0.0) & (inside_hi | inside_pr)
     new_s = np.where(hit, s_enter, s_hi)
+    return new_s, hit
+
+
+def _cylinder_cut_radius(
+    wx: np.ndarray,
+    uy: np.ndarray,
+    uz: np.ndarray,
+    y0: float,
+    z0_axis: float,
+    tip: tuple[float, float, float],
+    radius: float,
+    flute_z0: float,
+    flute_z1: float,
+    s_hi: np.ndarray,
+    probe: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Outside-in remaining dexel radius vs a Z-aligned finite cylinder.
+
+    Each dexel is the ray ``(wx, y0 + s·uy, z0_axis + s·uz)``. Returns
+    ``(new_s, hit)``; ``hit`` is true when the current surface (or a one-cell
+    inward probe) lies in the tool, so internal cavities are not punched.
+    """
+    s_enter, s_exit, valid = _cylinder_s_interval(wx, uy, uz, y0, z0_axis, tip, radius, flute_z0, flute_z1)
+    return _hit_from_s_interval(s_enter, s_exit, valid, s_hi, probe)
+
+
+def _profile_segments(profile_zs: np.ndarray, profile_rs: np.ndarray) -> list[tuple[float, float, float, float]]:
+    """Non-degenerate (z, r) frustum segments, z increasing."""
+    segs: list[tuple[float, float, float, float]] = []
+    n = int(profile_zs.size)
+    for i in range(n - 1):
+        za, zb = float(profile_zs[i]), float(profile_zs[i + 1])
+        ra, rb = float(profile_rs[i]), float(profile_rs[i + 1])
+        if abs(zb - za) < 1e-12 and abs(rb - ra) < 1e-12:
+            continue
+        if zb < za:
+            za, zb, ra, rb = zb, za, rb, ra
+        segs.append((za, zb, ra, rb))
+    return segs
+
+
+def _clip_s_interval(
+    lo_a: np.ndarray | float,
+    hi_a: np.ndarray | float,
+    lo_b: np.ndarray | float,
+    hi_b: np.ndarray | float,
+) -> tuple[np.ndarray, np.ndarray]:
+    return np.maximum(lo_a, lo_b), np.minimum(hi_a, hi_b)
+
+
+def _frustum_s_intervals(
+    wx: np.ndarray,
+    uy: np.ndarray,
+    uz: np.ndarray,
+    y0: float,
+    z0_axis: float,
+    tip: tuple[float, float, float],
+    za: float,
+    zb: float,
+    ra: float,
+    rb: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Up to two s-intervals where a dexel is inside a truncated cone.
+
+    Returns ``(lo1, hi1, ok1, lo2, hi2, ok2)``. Slot 2 is empty unless the
+    infinite-cone quadratic opens down and the Z-slab overlaps both wings.
+    """
+    tx, ty, tz = float(tip[0]), float(tip[1]), float(tip[2])
+    dx = (wx - tx)[:, None]
+    q = y0 - ty
+    uy_b = uy[None, :]
+    uz_b = uz[None, :]
+    z_lo = tz + float(za)
+    z_hi = tz + float(zb)
+    empty_lo = np.full((wx.size, uy.size), _INF)
+    empty_hi = np.full((wx.size, uy.size), -_INF)
+
+    z_fixed = np.abs(uz_b) < 1e-12
+    inside_z_fixed = (z_lo - 1e-9) <= z0_axis <= (z_hi + 1e-9)
+    uz_safe = np.where(z_fixed, 1.0, uz_b)
+    sz_a = (z_lo - z0_axis) / uz_safe
+    sz_b = (z_hi - z0_axis) / uz_safe
+    s_z_lo = np.minimum(sz_a, sz_b)
+    s_z_hi = np.maximum(sz_a, sz_b)
+    s_z_lo = np.where(z_fixed, np.where(inside_z_fixed, -_INF, _INF), s_z_lo)
+    s_z_hi = np.where(z_fixed, np.where(inside_z_fixed, _INF, -_INF), s_z_hi)
+
+    dz = float(zb) - float(za)
+    k = 0.0 if abs(dz) < 1e-12 else (float(rb) - float(ra)) / dz
+    # r(s) = A + B·s along the dexel (linear interpolation of the profile).
+    A = float(ra) + k * (z0_axis - tz - float(za))
+    B = k * uz_b
+
+    b_fixed = np.abs(B) < 1e-12
+    r_pos_fixed = A >= -1e-12
+    B_safe = np.where(b_fixed, 1.0, B)
+    s_r0 = -A / B_safe
+    s_r_lo = np.where(b_fixed, np.where(r_pos_fixed, -_INF, _INF), np.where(B > 0.0, s_r0, -_INF))
+    s_r_hi = np.where(b_fixed, np.where(r_pos_fixed, _INF, -_INF), np.where(B > 0.0, _INF, s_r0))
+
+    box_lo, box_hi = _clip_s_interval(s_z_lo, s_z_hi, s_r_lo, s_r_hi)
+    box_lo = np.maximum(box_lo, 0.0)
+    box_ok = box_lo <= box_hi + 1e-9
+
+    # rho(s)^2 <= r(s)^2  →  cs2 s^2 + cs1 s + cs0 <= 0
+    cs2 = uy_b * uy_b - B * B
+    cs1 = 2.0 * q * uy_b - 2.0 * A * B
+    cs0 = dx * dx + q * q - A * A
+    lin = np.abs(cs2) < 1e-14
+    disc_raw = cs1 * cs1 - 4.0 * cs2 * cs0
+    disc = np.maximum(disc_raw, 0.0)
+    sqrt_d = np.sqrt(disc)
+    cs2_safe = np.where(lin, 1.0, cs2)
+    inv = 0.5 / cs2_safe
+    r1 = (-cs1 - sqrt_d) * inv
+    r2 = (-cs1 + sqrt_d) * inv
+    root_lo = np.minimum(r1, r2)
+    root_hi = np.maximum(r1, r2)
+
+    lo1, hi1 = empty_lo.copy(), empty_hi.copy()
+    lo2, hi2 = empty_lo.copy(), empty_hi.copy()
+
+    always_in = (~lin) & (disc_raw < -1e-12) & (cs2 < 0.0) & box_ok
+    lo1 = np.where(always_in, box_lo, lo1)
+    hi1 = np.where(always_in, box_hi, hi1)
+
+    up = (~lin) & (cs2 >= 0.0) & (disc_raw >= -1e-12) & box_ok
+    u_lo, u_hi = _clip_s_interval(box_lo, box_hi, root_lo, root_hi)
+    u_ok = up & (u_lo <= u_hi + 1e-9)
+    lo1 = np.where(u_ok, u_lo, lo1)
+    hi1 = np.where(u_ok, u_hi, hi1)
+
+    down = (~lin) & (cs2 < 0.0) & (disc_raw >= -1e-12) & box_ok
+    w1_lo, w1_hi = _clip_s_interval(box_lo, box_hi, -_INF, root_lo)
+    w2_lo, w2_hi = _clip_s_interval(box_lo, box_hi, root_hi, _INF)
+    v1 = down & (w1_lo <= w1_hi + 1e-9)
+    v2 = down & (w2_lo <= w2_hi + 1e-9)
+    both = v1 & v2
+    lo1 = np.where(v1, w1_lo, lo1)
+    hi1 = np.where(v1, w1_hi, hi1)
+    lo1 = np.where((~v1) & v2, w2_lo, lo1)
+    hi1 = np.where((~v1) & v2, w2_hi, hi1)
+    lo2 = np.where(both, w2_lo, lo2)
+    hi2 = np.where(both, w2_hi, hi2)
+
+    c1_fixed = np.abs(cs1) < 1e-14
+    inside_lin_fixed = cs0 <= 1e-12
+    cs1_safe = np.where(c1_fixed, 1.0, cs1)
+    s_lin = -cs0 / cs1_safe
+    s_lin_lo = np.where(c1_fixed, np.where(inside_lin_fixed, -_INF, _INF), np.where(cs1 > 0.0, -_INF, s_lin))
+    s_lin_hi = np.where(c1_fixed, np.where(inside_lin_fixed, _INF, -_INF), np.where(cs1 > 0.0, s_lin, _INF))
+    l_lo, l_hi = _clip_s_interval(box_lo, box_hi, s_lin_lo, s_lin_hi)
+    l_ok = lin & box_ok & (l_lo <= l_hi + 1e-9)
+    lo1 = np.where(l_ok, l_lo, lo1)
+    hi1 = np.where(l_ok, l_hi, hi1)
+
+    ok1 = lo1 <= hi1 + 1e-9
+    ok2 = lo2 <= hi2 + 1e-9
+    return lo1, hi1, ok1, lo2, hi2, ok2
+
+
+def _revolution_cut_radius(
+    wx: np.ndarray,
+    uy: np.ndarray,
+    uz: np.ndarray,
+    y0: float,
+    z0_axis: float,
+    tip: tuple[float, float, float],
+    profile_zs: np.ndarray,
+    profile_rs: np.ndarray,
+    s_hi: np.ndarray,
+    probe: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Outside-in remaining dexel radius vs a Z-aligned tool of revolution.
+
+    Piecewise-linear profiles (V-bit / chamfer / taper) become truncated cones.
+    Overlapping frustum intervals that contain the current surface are merged
+    so a cone+cylinder bit still cuts down to the first entry from the axis.
+    """
+    segs = _profile_segments(profile_zs, profile_rs)
+    if not segs:
+        return s_hi, np.zeros(s_hi.shape, dtype=bool)
+    if len(segs) == 1 and abs(segs[0][2] - segs[0][3]) < 1e-12:
+        za, zb, ra, _rb = segs[0]
+        return _cylinder_cut_radius(wx, uy, uz, y0, z0_axis, tip, ra, za, zb, s_hi, probe)
+
+    slots: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    for za, zb, ra, rb in segs:
+        if abs(rb - ra) < 1e-12:
+            lo, hi, ok = _cylinder_s_interval(wx, uy, uz, y0, z0_axis, tip, ra, za, zb)
+            slots.append((lo, hi, ok))
+            continue
+        lo1, hi1, ok1, lo2, hi2, ok2 = _frustum_s_intervals(wx, uy, uz, y0, z0_axis, tip, za, zb, ra, rb)
+        slots.append((lo1, hi1, ok1))
+        if ok2.any():
+            slots.append((lo2, hi2, ok2))
+
+    if not slots:
+        return s_hi, np.zeros(s_hi.shape, dtype=bool)
+    if len(slots) == 1:
+        return _hit_from_s_interval(slots[0][0], slots[0][1], slots[0][2], s_hi, probe)
+
+    los = np.stack([lo for lo, _hi, _ok in slots])
+    his = np.stack([hi for _lo, hi, _ok in slots])
+    oks = np.stack([ok for _lo, _hi, ok in slots])
+    s_probe = np.maximum(s_hi - probe, 0.0)
+    contains = oks & (
+        ((s_hi >= los - 1e-9) & (s_hi <= his + 1e-9)) | ((s_probe >= los - 1e-9) & (s_probe <= his + 1e-9))
+    )
+    hit = np.any(contains, axis=0) & (s_hi >= 0.0)
+    enter = np.min(np.where(contains, los, _INF), axis=0)
+    exit_ = np.max(np.where(contains, his, -_INF), axis=0)
+    for _ in range(len(slots) - 1):
+        overlap = oks & (los <= exit_ + 1e-9) & (his >= enter - 1e-9)
+        overlap &= hit
+        enter = np.minimum(enter, np.min(np.where(overlap, los, _INF), axis=0))
+        exit_ = np.maximum(exit_, np.max(np.where(overlap, his, -_INF), axis=0))
+    new_s = np.where(hit, np.maximum(enter, 0.0), s_hi)
     return new_s, hit
 
 
@@ -397,12 +637,18 @@ class CylindricalBackend:
         dxs = p1[0] - p0[0]
         dys = p1[1] - p0[1]
         dzs = p1[2] - p0[2]
-        step_a = max(float(self.d_theta), _MAX_DA_DEG)
+        step_a = float(self.d_theta)
         args = (profile_zs, profile_rs, const_r, max_r)
 
         # Indexed (tiny ΔA): one swept XYZ test. Wrapping / tight helix: pose
-        # samples into one buffer. Shallow helix (a few degrees over a long X):
+        # samples into one buffer. Shallow helix (a few θ cells over a long X):
         # a handful of swept chunks — cheaper than one sample per XYZ cell.
+        # A full turn at constant XYZ cuts every θ the same way — one pose plus
+        # a ring broadcast, not one sample per degree.
+        xyz_len_sq = dxs * dxs + dys * dys + dzs * dzs
+        if abs(da) >= 360.0 - 1e-6 and xyz_len_sq <= self.cell_size * self.cell_size:
+            tip = p0 if xyz_len_sq < 1e-18 else (p0[0] + 0.5 * dxs, p0[1] + 0.5 * dys, p0[2] + 0.5 * dzs)
+            return self._carve_full_revolution(tip, 0.5 * (a0 + a1), *args)
         if abs(da) <= step_a + 1e-9:
             return self._carve_constant_a(p0, p1, 0.5 * (a0 + a1), *args)
         n_a = int(math.ceil(abs(da) / step_a)) + 1
@@ -513,13 +759,24 @@ class CylindricalBackend:
         const_r: float | None,
         max_r: float,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Return ``(new_s, hit)`` for a constant-A pose or XYZ sweep."""
+        """Return ``(new_s, hit)`` for a constant-A pose or XYZ sweep.
+
+        Point poses and sub-cell XYZ steps use an analytic solid-of-revolution
+        test (V-bit / taper wrapping). Longer XYZ sweeps still binary-search.
+        """
         uy, uz, y0, z0_axis = self._ray_frame(it, angle)
         z0 = float(profile_zs[0]) if profile_zs.size else 0.0
         z1 = float(profile_zs[-1]) if profile_zs.size else 0.0
-        point_pose = (p0[0] - p1[0]) ** 2 + (p0[1] - p1[1]) ** 2 + (p0[2] - p1[2]) ** 2 < 1e-18
-        if const_r is not None and point_pose:
-            return _cylinder_cut_radius(wx, uy, uz, y0, z0_axis, p0, const_r, z0, z1, slab, self.cell_size * 0.5)
+        dx = p1[0] - p0[0]
+        dy = p1[1] - p0[1]
+        dz = p1[2] - p0[2]
+        seg_len_sq = dx * dx + dy * dy + dz * dz
+        cell = float(self.cell_size)
+        if seg_len_sq <= cell * cell:
+            tip = p0 if seg_len_sq < 1e-18 else (p0[0] + 0.5 * dx, p0[1] + 0.5 * dy, p0[2] + 0.5 * dz)
+            if const_r is not None:
+                return _cylinder_cut_radius(wx, uy, uz, y0, z0_axis, tip, const_r, z0, z1, slab, cell * 0.5)
+            return _revolution_cut_radius(wx, uy, uz, y0, z0_axis, tip, profile_zs, profile_rs, slab, cell * 0.5)
 
         def _inside(r_field: np.ndarray) -> np.ndarray:
             valid = r_field >= 0.0
@@ -540,6 +797,40 @@ class CylindricalBackend:
             lo = np.where(ins, lo, mid)
         return np.maximum(lo, 0.0), hit
 
+    def _carve_full_revolution(
+        self,
+        tip: tuple[float, float, float],
+        angle: float,
+        profile_zs: np.ndarray,
+        profile_rs: np.ndarray,
+        const_r: float | None,
+        max_r: float,
+    ) -> set[TileKey]:
+        """Constant-XYZ wrap of ≥360°: one pose, then the same remaining r on every θ."""
+        pad = max_r + self.cell_size
+        ix0 = max(0, self._x_index(tip[0] - pad))
+        ix1 = min(self.nx - 1, self._x_index(tip[0] + pad))
+        if ix0 > ix1:
+            return set()
+        it = self._theta_window_indices(tip, tip, angle, max_r)
+        if it.size == 0:
+            return set()
+        wx = self.bounds.min_x + (np.arange(ix0, ix1 + 1, dtype=np.float64) + 0.5) * self.cell_size
+        ix = np.arange(ix0, ix1 + 1)
+        slab = self.radii[ix[:, None], it[None, :]].astype(np.float64, copy=True)
+        new_s, hit = self._cut_slab(slab, wx, it, angle, tip, tip, profile_zs, profile_rs, const_r, max_r)
+        if not hit.any():
+            return set()
+        r_cut_x = np.min(np.where(hit, new_s, _INF), axis=1)
+        ring = self.radii[ix0 : ix1 + 1, :].astype(np.float64, copy=True)
+        upd = r_cut_x[:, None] < ring - 1e-9
+        if not upd.any():
+            return set()
+        self.radii[ix0 : ix1 + 1, :] = np.where(upd, r_cut_x[:, None], ring).astype(np.float32)
+        dirty = self._dirty_from_mask(upd, ix0, np.arange(self.n_theta, dtype=np.int32))
+        self._touched |= dirty
+        return dirty
+
     def _carve_moving_a(
         self,
         p0: tuple[float, float, float],
@@ -553,8 +844,15 @@ class CylindricalBackend:
     ) -> set[TileKey]:
         """Wrapping / helix: sample poses, cut into one buffer, commit once."""
         da = a1 - a0
-        step_a = max(float(self.d_theta), _MAX_DA_DEG)
-        tseg = pose_ts_along_segment(p0, p1, da, cell_size_mm=self.cell_size, d_theta_deg=step_a)
+        tseg = pose_ts_cell_aligned(
+            p0,
+            p1,
+            a0,
+            a1,
+            min_x=self.bounds.min_x,
+            cell_size_mm=self.cell_size,
+            d_theta_deg=self.d_theta,
+        )
         pad = max_r + self.cell_size
         ix0 = max(0, self._x_index(min(p0[0], p1[0]) - pad))
         ix1 = min(self.nx - 1, self._x_index(max(p0[0], p1[0]) + pad))
