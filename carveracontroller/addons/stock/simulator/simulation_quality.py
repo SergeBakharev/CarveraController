@@ -39,12 +39,11 @@ _TARGET_BY_CARVER = {
     "cylindrical": CYLINDRICAL_TARGET_BY_LEVEL,
 }
 
-# Minimum cell size (mm). Voxels keep a coarse floor so a small block cannot
-# explode into 500³ cells; 2D carvers follow the cell-count target instead.
+# Minimum cell size (mm).
 MIN_CELL_SIZE_MM = {
     "voxel": 0.1,
-    "heightmap": 0.01,
-    "cylindrical": 0.01,
+    "heightmap": 0.05,
+    "cylindrical": 0.2,
 }
 MAX_CELL_SIZE_MM = {
     "voxel": 1.0,
@@ -83,12 +82,7 @@ def _carver_key(carver: str) -> str:
 
 
 def _reference_length_mm(carver: str, bounds: StockBounds) -> float:
-    """Length that the cell-count target is measured against.
-
-    Voxels use the longest AABB edge; heightmaps are XY-only; cylindrical
-    cells use the larger of X (rotary axis) and circumference πD, where D is
-    the rotary AABB diameter ``min(sy, sz)``. θ then shares that cell size.
-    """
+    """Length that the cell-count target is measured against."""
     sx, sy, sz = bounds.size
     kind = _carver_key(carver)
     if kind == "heightmap":
@@ -107,12 +101,7 @@ def pick_cell_size_mm(
     level: Any = None,
     target: int | None = None,
 ) -> float:
-    """Cell/voxel edge so the reference length has roughly ``target`` samples.
-
-    ``target`` overrides the per-carver preset for ``level``. Size is clamped
-    to the carver's min/max so small voxel grids cannot go finer than 0.1 mm,
-    while heightmap/cylindrical may.
-    """
+    """Cell/voxel edge so the reference length has roughly ``target`` samples."""
     kind = _carver_key(carver)
     n = int(target) if target is not None else cell_target_for_carver(kind, level)
     size = _reference_length_mm(kind, bounds) / max(n, 1)
@@ -132,6 +121,15 @@ def format_cell_size_mm(cell_mm: float) -> str:
         return f"{v:.2f}"
     text = f"{v:.3f}".rstrip("0").rstrip(".")
     return text if text else "0"
+
+
+def format_diameter_mm(diameter_mm: float) -> str:
+    """Compact millimetre text for a stock diameter (HUD)."""
+    v = float(diameter_mm)
+    rounded = round(v)
+    if abs(v - rounded) < 0.05:
+        return f"{int(rounded)}"
+    return f"{v:.1f}"
 
 
 def normalize_checkpoint_level(value: Any) -> str:

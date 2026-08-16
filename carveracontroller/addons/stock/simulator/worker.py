@@ -1024,6 +1024,26 @@ class StockSimulator:
                 if now_p - last_progress_t >= 0.05:
                     self._emit_progress(seg.end_vertex)
                     last_progress_t = now_p
+        if not interrupted:
+            with self._lock:
+                if self._generation != gen or self._resimulating:
+                    return last_end_vertex, True
+                filled = True
+                while True:
+                    nxt = store.next_unrecorded_target()
+                    if nxt is None or int(nxt) > int(to_vertex):
+                        break
+                    if not self._maybe_record_checkpoint(int(nxt), grid_or_backend, changed_since_cp):
+                        filled = False
+                        break
+                    changed_since_cp.clear()
+                    last_end_vertex = int(nxt)
+                if filled:
+                    last_end_vertex = max(last_end_vertex, int(to_vertex))
+                    if idle:
+                        self._bake_carved_vertex = last_end_vertex
+                    else:
+                        self._grid_carved_vertex = last_end_vertex
         return last_end_vertex, interrupted
 
     def _follow_display_vertex(

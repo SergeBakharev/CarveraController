@@ -712,6 +712,7 @@ class CylindricalBackend:
             "grid_nx": int(self.nx),
             "grid_ny": int(self.n_theta),
             "grid_nz": 1,
+            "stock_diameter_mm": float(self.stock_radius) * 2.0,
         }
 
     @staticmethod

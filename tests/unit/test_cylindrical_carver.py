@@ -30,6 +30,7 @@ def test_cylindrical_seeds_full_radius():
     shape = RotaryCylindricalStock(diameter_mm=28.0, length_mm=40.0)
     cyl = CylindricalBackend(bounds, 1.0, shape)
     assert cyl.hud_stats()["carver"] == "cylindrical"
+    assert abs(cyl.hud_stats()["stock_diameter_mm"] - 28.0) < 1e-6
     r = cyl.radius_at(20.0, 0.0)
     assert r is not None and abs(r - 14.0) < 1e-3
 

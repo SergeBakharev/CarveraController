@@ -102,8 +102,11 @@ def _resolution_size_label(level: str, cell_mm: float | None, carver: str) -> st
             "high": tr._("High (finer)"),
         }[level]
     size_txt = format_cell_size_mm(cell_mm)
-    if str(carver).strip().lower() == BACKEND_VOXEL:
+    kind = str(carver).strip().lower()
+    if kind == BACKEND_VOXEL:
         token = tr._("%s mm/voxel") % size_txt
+    elif kind == BACKEND_CYLINDRICAL:
+        token = tr._("%s mm along X, %s mm at OD") % (size_txt, size_txt)
     else:
         token = tr._("%s mm/cell") % size_txt
     if level == "low":

@@ -138,3 +138,38 @@ def test_raw_feed_z_max_uses_unrotated_wcs_z():
         z_max_mm=0.0,
     )
     assert GCodeViewer.raw_feed_z_max_mm(viewer) == pytest.approx(22.0)
+
+
+def test_format_sim_hud_cylindrical_names_od():
+    viewer = _viewer()
+    viewer._stock_simulator.hud_stats.return_value = {
+        "carver": "cylindrical",
+        "cell_size_mm": 0.38,
+        "grid_nx": 800,
+        "grid_ny": 472,
+        "grid_nz": 1,
+        "stock_diameter_mm": 50.0,
+        "checkpoint_count": 0,
+        "checkpoint_max_count": 0,
+        "checkpoint_head_vertex": 0,
+    }
+    text = viewer._format_sim_hud_text()
+    assert "Cylindrical: 800x472" in text
+    assert "0.38 mm along X and at Ø50" in text
+    assert "mm/cell" not in text
+
+
+def test_format_sim_hud_heightmap_keeps_mm_per_cell():
+    viewer = _viewer()
+    viewer._stock_simulator.hud_stats.return_value = {
+        "carver": "heightmap",
+        "cell_size_mm": 0.21,
+        "grid_nx": 200,
+        "grid_ny": 200,
+        "grid_nz": 1,
+        "checkpoint_count": 0,
+        "checkpoint_max_count": 0,
+        "checkpoint_head_vertex": 0,
+    }
+    text = viewer._format_sim_hud_text()
+    assert "Heightmap: 200x200 - 0.21mm/cell" in text

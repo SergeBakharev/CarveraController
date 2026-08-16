@@ -60,6 +60,7 @@ from .addons.stock.simulator.simulation_quality import (
     DEFAULT_CHECKPOINT_LEVEL,
     DEFAULT_VOXEL_RESOLUTION,
     format_cell_size_mm,
+    format_diameter_mm,
     normalize_checkpoint_level,
     normalize_voxel_resolution,
 )
@@ -1873,10 +1874,11 @@ class GCodeViewer(Widget):
                 cell_txt,
             )
         elif carver == "cylindrical":
-            grid_line = tr._("Cylindrical: %dx%d - %smm/cell") % (
+            grid_line = tr._("Cylindrical: %dx%d - %s mm along X and at Ø%s") % (
                 int(stats.get("grid_nx", 0)),
                 int(stats.get("grid_ny", 0)),
                 cell_txt,
+                format_diameter_mm(float(stats["stock_diameter_mm"])),
             )
         else:
             grid_line = tr._("Grid: %dx%dx%d - %smm/voxel") % (

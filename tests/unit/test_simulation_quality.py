@@ -16,6 +16,7 @@ from carveracontroller.addons.stock.simulator.simulation_quality import (
     cell_target_for_carver,
     checkpoint_slots_for_level,
     format_cell_size_mm,
+    format_diameter_mm,
     normalize_checkpoint_level,
     normalize_voxel_resolution,
     pick_cell_size_mm,
@@ -77,7 +78,7 @@ def test_pick_cell_size_heightmap_levels_differ_on_small_stock():
     high = pick_cell_size_mm(bounds, carver="heightmap", level="high")
     assert low == pytest.approx(42 / HEIGHTMAP_TARGET_BY_LEVEL["low"])
     assert mid == pytest.approx(42 / HEIGHTMAP_TARGET_BY_LEVEL["medium"])
-    assert high == pytest.approx(42 / HEIGHTMAP_TARGET_BY_LEVEL["high"])
+    assert high == pytest.approx(MIN_CELL_SIZE_MM["heightmap"])
     assert high < mid < low
     assert high < MIN_CELL_SIZE_MM["voxel"]
 
@@ -123,6 +124,13 @@ def test_format_cell_size_mm():
     assert format_cell_size_mm(0.042) == "0.042"
     assert format_cell_size_mm(1.0) == "1.0"
     assert format_cell_size_mm(12.0) == "12"
+
+
+def test_format_diameter_mm():
+    assert format_diameter_mm(50.0) == "50"
+    assert format_diameter_mm(28.0) == "28"
+    assert format_diameter_mm(12.7) == "12.7"
+    assert format_diameter_mm(12.74) == "12.7"
 
 
 def test_default_settings_include_quality_presets():

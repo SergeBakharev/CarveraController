@@ -708,13 +708,26 @@ def test_voxel_resolution_pairs_show_actual_cell_size():
     hm = [lab for lab, _ in _voxel_resolution_pairs(BACKEND_HEIGHTMAP, bounds)]
     assert "0.21 mm/cell" in hm[0]
     assert "0.084 mm/cell" in hm[1]
-    assert "0.042 mm/cell" in hm[2]
+    assert "0.05 mm/cell" in hm[2]
     assert hm[1] != hm[2]
     assert all("/ axis" not in lab for lab in hm)
 
     vx = [lab for lab, _ in _voxel_resolution_pairs(BACKEND_VOXEL, bounds)]
     assert "mm/voxel" in vx[0]
     assert "/ axis" not in vx[0]
+
+
+def test_voxel_resolution_pairs_cylindrical_names_od():
+    from carveracontroller.addons.stock.simulator.carver_select import BACKEND_CYLINDRICAL
+    from carveracontroller.addons.stock.stock_geometry import StockBounds
+    from carveracontroller.addons.stock.ui.StockSettingsPopup import _voxel_resolution_pairs
+
+    bounds = StockBounds(0, -25, -25, 80, 25, 25)
+    cyl = [lab for lab, _ in _voxel_resolution_pairs(BACKEND_CYLINDRICAL, bounds)]
+    assert "mm along X" in cyl[0]
+    assert "mm at OD" in cyl[0]
+    assert "mm/cell" not in cyl[0]
+    assert "Low (~" in cyl[0] and "faster" in cyl[0]
 
 
 def test_bounds_for_resolution_preview_from_form():

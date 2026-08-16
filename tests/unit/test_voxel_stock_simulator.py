@@ -532,6 +532,48 @@ def test_idle_precompute_carves_to_end_of_file():
         sim.stop()
 
 
+def test_idle_bake_fills_last_checkpoint_slot_after_trailing_rapids():
+    """Last target is the final vertex; trailing G0s must still fill every slot."""
+
+    from carveracontroller.addons.stock.simulator import StockSimulator
+
+    bounds = StockBounds(min_x=-20, min_y=-5, min_z=-5, max_x=20, max_y=5, max_z=0)
+    tool = _flat_tool()
+    n_cut = 80
+    n_rapid = 4
+    n_verts = n_cut + n_rapid
+    positions: list[float] = []
+    vertex_types: list[float] = []
+    tools: list[int] = []
+    for i in range(n_verts):
+        positions.extend((-10.0 + i * 0.2, 0.0, -1.0))
+        vertex_types.append(2.0 if i == 0 or i >= n_cut else 1.0)
+        tools.append(1)
+
+    slots = 8
+    sim = StockSimulator(mesh_throttle_s=0.01)
+    try:
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, checkpoint_slots=slots, carver_mode="voxel")
+        _wait_until(lambda: not sim.resimulating, timeout=2.0)
+        sim.set_toolpath(positions, vertex_types, tools, {1: tool})
+        store = sim._checkpoints
+        assert store is not None
+        assert store.target_count == slots
+        assert store._targets[-1] == n_verts - 1
+        sim.set_idle_ahead_allowed(True)
+        sim.submit_idle_precompute(0)
+        assert _wait_until(lambda: len(sim._checkpoints) == slots, timeout=5.0)
+        with sim._lock:
+            assert len(sim._checkpoints) == store.target_count
+            assert sim._checkpoints.vertices()[-1] == n_verts - 1
+        stats = sim.hud_stats()
+        assert stats is not None
+        assert stats["checkpoint_count"] == stats["checkpoint_max_count"] == slots
+        assert stats["checkpoint_head_vertex"] == n_verts - 1
+    finally:
+        sim.stop()
+
+
 def test_idle_precompute_is_invisible_to_progress_and_mesh_callbacks():
     """Idle must not call on_progress / on_meshes_ready."""
 
