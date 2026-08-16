@@ -27,6 +27,7 @@ def test_reset_for_loaded_file_uses_snapshot_not_ui():
         "mesh_while_playing": False,
         "voxel_resolution": "high",
         "checkpoint_level": "medium",
+        "carver_mode": "voxel",
     }
     popup._settings_snapshot = dict(custom)
     written = []
@@ -41,11 +42,86 @@ def test_reset_for_loaded_file_uses_snapshot_not_ui():
     assert out["origin"]["offset_z_mm"] == 0.25
     assert out["voxel_resolution"] == "high"
     assert out["checkpoint_level"] == "medium"
+    assert out["carver_mode"] == "voxel"
     assert out["show_stock"] is False
     assert out["simulate_cut"] is False
     assert out["mesh_while_playing"] is False
     assert popup._settings_snapshot == out
     assert written == [out]
+
+
+def test_carver_mode_from_settings_defaults_auto():
+    from carveracontroller.addons.stock.stock_defaults import (
+        carver_mode_from_settings,
+        default_settings,
+    )
+
+    assert default_settings()["carver_mode"] == "auto"
+    assert carver_mode_from_settings({}) == "auto"
+    assert carver_mode_from_settings({"carver_mode": "heightmap"}) == "heightmap"
+    assert carver_mode_from_settings({"carver_mode": "NOPE"}) == "auto"
+
+
+def test_auto_carver_label_includes_backend():
+    from carveracontroller.addons.stock.simulator.carver_select import (
+        BACKEND_CYLINDRICAL,
+        BACKEND_HEIGHTMAP,
+        BACKEND_VOXEL,
+    )
+    from carveracontroller.addons.stock.ui.StockSettingsPopup import _auto_carver_label
+
+    assert _auto_carver_label(BACKEND_HEIGHTMAP) == "Auto (heightmap)"
+    assert _auto_carver_label(BACKEND_CYLINDRICAL) == "Auto (cylindrical)"
+    assert _auto_carver_label(BACKEND_VOXEL) == "Auto (voxels)"
+    assert _auto_carver_label(None) == "Auto"
+
+
+def test_carver_spinner_filters_incompatible_modes():
+    """3-axis jobs must not offer cylindrical; 4-axis jobs must not offer heightmap."""
+    from carveracontroller.addons.stock.simulator.carver_select import (
+        MODE_AUTO,
+        MODE_CYLINDRICAL,
+        MODE_HEIGHTMAP,
+        MODE_VOXEL,
+    )
+    from carveracontroller.addons.stock.ui.StockSettingsPopup import (
+        StockSettingsPopup,
+        _carver_mode_pairs,
+    )
+
+    popup = StockSettingsPopup.__new__(StockSettingsPopup)
+    popup.rotary_mode = False
+    popup.simulation_available = True
+    popup._carver_mode_pairs = _carver_mode_pairs()
+    popup._voxel_resolution_pairs = [("Low", "low")]
+    spinner = type("S", (), {"values": [], "text": ""})()
+    popup.ids = {"spn_carver_mode": spinner}
+    popup._viewer_tools = lambda: (None, 1.0)
+
+    popup._refresh_carver_spinner_options()
+    values = set(spinner.values)
+    assert any("Auto" in v or "auto" in v.lower() for v in values) or MODE_AUTO in [
+        val for lab, val in _carver_mode_pairs() if lab in values
+    ]
+    labels = list(spinner.values)
+    assert "Auto (heightmap)" in labels
+    assert spinner.text == "Auto (heightmap)"
+    assert not any("Cylindrical" in lab for lab in labels)
+    assert any("Heightmap" in lab for lab in labels)
+    assert any("Voxel" in lab for lab in labels)
+    assert popup._carver_mode_from_ui() == MODE_AUTO
+
+    popup.rotary_mode = True
+    spinner.text = ""
+    popup._refresh_carver_spinner_options()
+    labels = list(spinner.values)
+    assert "Auto (cylindrical)" in labels
+    assert spinner.text == "Auto (cylindrical)"
+    assert any("Cylindrical" in lab for lab in labels)
+    assert not any("Heightmap" in lab for lab in labels)
+    assert MODE_HEIGHTMAP not in {val for lab, val in popup._carver_mode_pairs if lab in labels}
+    assert MODE_CYLINDRICAL in {val for lab, val in popup._carver_mode_pairs if lab in labels}
+    assert MODE_VOXEL in {val for lab, val in popup._carver_mode_pairs if lab in labels}
 
 
 def test_reset_for_loaded_file_preserves_cylindrical_shape():
@@ -611,3 +687,49 @@ def test_on_apply_and_close_keeps_snapshot_when_viewer_missing(monkeypatch):
     popup.on_apply_and_close()
     assert popup._settings_snapshot == old
     assert dismissed == []
+
+
+def test_voxel_resolution_pairs_without_bounds_omit_precision():
+    from carveracontroller.addons.stock.simulator.carver_select import BACKEND_HEIGHTMAP
+    from carveracontroller.addons.stock.ui.StockSettingsPopup import _voxel_resolution_pairs
+
+    pairs = _voxel_resolution_pairs(BACKEND_HEIGHTMAP)
+    labels = [lab for lab, _ in pairs]
+    assert labels == ["Low (faster)", "Medium", "High (finer)"]
+    assert all("/ axis" not in lab for lab in labels)
+
+
+def test_voxel_resolution_pairs_show_actual_cell_size():
+    from carveracontroller.addons.stock.simulator.carver_select import BACKEND_HEIGHTMAP, BACKEND_VOXEL
+    from carveracontroller.addons.stock.stock_geometry import StockBounds
+    from carveracontroller.addons.stock.ui.StockSettingsPopup import _voxel_resolution_pairs
+
+    bounds = StockBounds(0, 0, 0, 42, 42, 1)
+    hm = [lab for lab, _ in _voxel_resolution_pairs(BACKEND_HEIGHTMAP, bounds)]
+    assert "0.21 mm/cell" in hm[0]
+    assert "0.084 mm/cell" in hm[1]
+    assert "0.042 mm/cell" in hm[2]
+    assert hm[1] != hm[2]
+    assert all("/ axis" not in lab for lab in hm)
+
+    vx = [lab for lab, _ in _voxel_resolution_pairs(BACKEND_VOXEL, bounds)]
+    assert "mm/voxel" in vx[0]
+    assert "/ axis" not in vx[0]
+
+
+def test_bounds_for_resolution_preview_from_form():
+    popup = StockSettingsPopup.__new__(StockSettingsPopup)
+    popup.rotary_mode = False
+    popup._shape_pairs = [("Rectangular", "rectangular"), ("Cylinder", "cylindrical")]
+    popup.ids = {
+        "txt_width": _FieldStub("42"),
+        "txt_length": _FieldStub("42"),
+        "txt_height": _FieldStub("1"),
+        "spn_shape": _FieldStub("Rectangular"),
+    }
+    bounds = popup._bounds_for_resolution_preview()
+    assert bounds is not None
+    assert bounds.size == (42.0, 42.0, 1.0)
+
+    popup.ids["txt_width"].text = ""
+    assert popup._bounds_for_resolution_preview() is None

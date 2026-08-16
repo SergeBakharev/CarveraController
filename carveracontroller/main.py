@@ -123,6 +123,7 @@ from carveracontroller.addons.pendant import (
 from carveracontroller.addons.probing.ProbingPopup import ProbingPopup
 from carveracontroller.addons.stock.stock_defaults import (
     bounds_from_settings,
+    carver_mode_from_settings,
     checkpoint_level_from_settings,
     default_settings,
     mesh_while_playing_from_settings,
@@ -3604,6 +3605,7 @@ class Makera(RelativeLayout):
                 voxel_resolution=voxel_resolution_from_settings(settings),
                 checkpoint_level=checkpoint_level_from_settings(settings),
                 mesh_while_playing=mesh_while_playing_from_settings(settings),
+                carver_mode=carver_mode_from_settings(settings),
                 shape=shape_from_settings(settings),
             )
         except Exception:

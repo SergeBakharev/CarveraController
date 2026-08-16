@@ -1,11 +1,11 @@
 """Unit tests for non-box stock voxel occupancy seeding."""
 
 from carveracontroller.addons.facing.stock_geometry import CORNER_BL, CORNER_CENTER
+from carveracontroller.addons.stock.simulator.carvers.voxel.grid import ChunkedVoxelGrid
+from carveracontroller.addons.stock.simulator.carvers.voxel.occupancy import non_full_chunk_keys, seed_shape_occupancy
 from carveracontroller.addons.stock.stock_geometry import compute_wcs_bounds
 from carveracontroller.addons.stock.stock_origin import Z_BOTTOM, Z_CENTER, Z_TOP, StockOrigin
 from carveracontroller.addons.stock.stock_shape import CylindricalStock, RectangularStock, RotaryCylindricalStock
-from carveracontroller.addons.stock.voxel.stock_occupancy import non_full_chunk_keys, seed_shape_occupancy
-from carveracontroller.addons.stock.voxel.voxel_grid import ChunkedVoxelGrid
 
 
 def test_rectangular_seed_is_noop():

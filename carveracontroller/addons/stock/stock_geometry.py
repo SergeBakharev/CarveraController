@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import numpy as np
+
 from carveracontroller.addons.facing.stock_geometry import stock_rect_from_origin_corner
 
 from .stock_origin import Z_BOTTOM, Z_CENTER, Z_TOP, StockOrigin
@@ -48,6 +50,14 @@ def rotate_yz(y: float, z: float, angle_deg: float) -> tuple[float, float]:
     c = math.cos(rad)
     s = math.sin(rad)
     return (y * c - z * s, y * s + z * c)
+
+
+def rotate_yz_np(y: np.ndarray, z: np.ndarray, angle_deg: float) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorized :func:`rotate_yz`."""
+    rad = np.deg2rad(float(angle_deg))
+    c = np.cos(rad)
+    s = np.sin(rad)
+    return y * c - z * s, y * s + z * c
 
 
 def compute_wcs_bounds(shape: StockShape, origin: StockOrigin) -> StockBounds:

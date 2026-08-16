@@ -18,9 +18,24 @@ from carveracontroller.addons.facing.stock_geometry import (
     CORNER_TL,
     CORNER_TR,
 )
-from carveracontroller.addons.stock.simulation_quality import (
+from carveracontroller.addons.stock.simulator.carver_select import (
+    BACKEND_CYLINDRICAL,
+    BACKEND_HEIGHTMAP,
+    BACKEND_VOXEL,
+    DEFAULT_CARVER_MODE,
+    MODE_AUTO,
+    MODE_CYLINDRICAL,
+    MODE_HEIGHTMAP,
+    MODE_VOXEL,
+    normalize_carver_mode,
+    recommend_carver,
+)
+from carveracontroller.addons.stock.simulator.simulation_quality import (
     DEFAULT_CHECKPOINT_LEVEL,
     DEFAULT_VOXEL_RESOLUTION,
+    RESOLUTION_LEVELS,
+    format_cell_size_mm,
+    pick_cell_size_mm,
 )
 from carveracontroller.addons.stock.stock_defaults import (
     DEFAULT_DIAMETER_MM,
@@ -29,6 +44,7 @@ from carveracontroller.addons.stock.stock_defaults import (
     DEFAULT_WIDTH_MM,
     default_settings,
 )
+from carveracontroller.addons.stock.stock_geometry import StockBounds
 from carveracontroller.addons.stock.stock_origin import Z_BOTTOM, Z_CENTER, Z_TOP, StockOrigin
 from carveracontroller.addons.stock.stock_shape import CylindricalStock, RectangularStock, RotaryCylindricalStock
 from carveracontroller.translation import tr
@@ -77,11 +93,34 @@ def _shape_kind_pairs(rotary: bool = False):
     ]
 
 
-def _voxel_resolution_pairs():
+def _resolution_size_label(level: str, cell_mm: float | None, carver: str) -> str:
+    """Caption for one quality level, with real cell size when known."""
+    if cell_mm is None:
+        return {
+            "low": tr._("Low (faster)"),
+            "medium": tr._("Medium"),
+            "high": tr._("High (finer)"),
+        }[level]
+    size_txt = format_cell_size_mm(cell_mm)
+    if str(carver).strip().lower() == BACKEND_VOXEL:
+        token = tr._("%s mm/voxel") % size_txt
+    else:
+        token = tr._("%s mm/cell") % size_txt
+    if level == "low":
+        return tr._("Low (~%s, faster)") % token
+    if level == "high":
+        return tr._("High (~%s, finer)") % token
+    return tr._("Medium (~%s)") % token
+
+
+def _voxel_resolution_pairs(carver: str = BACKEND_VOXEL, bounds: StockBounds | None = None):
+    """Low/medium/high labels; include mm/cell when stock size is known."""
+    sizes = None
+    if bounds is not None:
+        sizes = {level: pick_cell_size_mm(bounds, carver=carver, level=level) for level in RESOLUTION_LEVELS}
     return [
-        (tr._("Low (faster, coarser detail)"), "low"),
-        (tr._("Medium"), "medium"),
-        (tr._("High (slower, finer detail)"), "high"),
+        (_resolution_size_label(level, None if sizes is None else sizes[level], carver), level)
+        for level in RESOLUTION_LEVELS
     ]
 
 
@@ -90,6 +129,28 @@ def _checkpoint_level_pairs():
         (tr._("Low (less memory, coarser scrubbing)"), "low"),
         (tr._("Medium"), "medium"),
         (tr._("High (more memory, smoother scrubbing)"), "high"),
+    ]
+
+
+def _auto_carver_label(backend: str | None = None) -> str:
+    """Spinner caption for Auto, including the backend it would pick."""
+    names = {
+        BACKEND_HEIGHTMAP: tr._("heightmap"),
+        BACKEND_CYLINDRICAL: tr._("cylindrical"),
+        BACKEND_VOXEL: tr._("voxels"),
+    }
+    name = names.get(str(backend or "").strip().lower())
+    if name:
+        return tr._("Auto (%s)") % name
+    return tr._("Auto")
+
+
+def _carver_mode_pairs(recommended: str | None = None):
+    return [
+        (_auto_carver_label(recommended), MODE_AUTO),
+        (tr._("Heightmap (fast / no undercuts)"), MODE_HEIGHTMAP),
+        (tr._("Cylindrical (fast / no undercuts)"), MODE_CYLINDRICAL),
+        (tr._("Voxels (slower / undercuts)"), MODE_VOXEL),
     ]
 
 
@@ -154,6 +215,7 @@ class StockSettingsPopup(ModalView):
         self._shape_pairs = None
         self._voxel_resolution_pairs = None
         self._checkpoint_level_pairs = None
+        self._carver_mode_pairs = None
         self._fit_event = None
         # Snapshot seeds the form and is the Cancel/dismiss restore baseline.
         self._settings_snapshot: dict = default_settings()
@@ -168,22 +230,101 @@ class StockSettingsPopup(ModalView):
         self._write_settings_to_ui(self._settings_snapshot)
         self.ids.chk_show_stock.bind(active=self._on_show_stock_active)
         self.ids.spn_shape.bind(text=self._on_shape_text)
+        if "spn_carver_mode" in self.ids:
+            self.ids.spn_carver_mode.bind(text=self._on_carver_mode_text)
+        for field in ("txt_width", "txt_length", "txt_height"):
+            if field in self.ids:
+                self.ids[field].bind(text=self._on_dimension_text)
         if "form_body" in self.ids:
             self.ids.form_body.bind(minimum_height=self._schedule_fit_popup_height)
         if "lbl_help" in self.ids:
             self.ids.lbl_help.bind(height=self._schedule_fit_popup_height)
 
     def _ensure_lists(self):
-        if self._corner_pairs is None:
+        if getattr(self, "_corner_pairs", None) is None:
             self._corner_pairs = _rotary_x_end_pairs() if self.rotary_mode else _stock_corner_pairs()
-        if self._z_pairs is None:
+        if getattr(self, "_z_pairs", None) is None:
             self._z_pairs = _rotary_z_pairs() if self.rotary_mode else _z_reference_pairs()
-        if self._shape_pairs is None:
+        if getattr(self, "_shape_pairs", None) is None:
             self._shape_pairs = _shape_kind_pairs(rotary=self.rotary_mode)
-        if self._voxel_resolution_pairs is None:
-            self._voxel_resolution_pairs = _voxel_resolution_pairs()
-        if self._checkpoint_level_pairs is None:
+        if getattr(self, "_voxel_resolution_pairs", None) is None:
+            self._voxel_resolution_pairs = _voxel_resolution_pairs(BACKEND_VOXEL)
+        if getattr(self, "_checkpoint_level_pairs", None) is None:
             self._checkpoint_level_pairs = _checkpoint_level_pairs()
+        if getattr(self, "_carver_mode_pairs", None) is None:
+            self._carver_mode_pairs = _carver_mode_pairs()
+
+    def _path_recommendation(self, mode: str = MODE_AUTO):
+        """Recommend a carver for spinner filtering and resolution labels."""
+        tool_table, scale = self._viewer_tools()
+        return recommend_carver(
+            mode=mode,
+            has_4axis=bool(self.rotary_mode),
+            tool_table=tool_table,
+            tool_unit_scale=scale,
+        )
+
+    def _effective_carver_for_resolution_labels(self) -> str:
+        """Backend whose cell-count labels should be shown for the resolution spinner."""
+        mode = self._carver_mode_from_ui()
+        rec = self._path_recommendation(mode)
+        return rec.backend
+
+    def _refresh_carver_spinner_options(self) -> None:
+        """Offer Auto + only carvers compatible with the loaded path."""
+        if "spn_carver_mode" not in self.ids:
+            return
+        self._ensure_lists()
+        rec = self._path_recommendation(MODE_AUTO)
+        current = self._carver_mode_from_ui()
+        self._carver_mode_pairs = _carver_mode_pairs(rec.backend)
+        allowed_modes = {MODE_AUTO} | set(rec.allowed)
+        pairs = [(lab, val) for lab, val in self._carver_mode_pairs if val in allowed_modes]
+        if not pairs:
+            pairs = list(self._carver_mode_pairs)
+        self.ids.spn_carver_mode.values = [lab for lab, _ in pairs]
+        if current not in allowed_modes:
+            self.ids.spn_carver_mode.text = self._label_for_value(pairs, MODE_AUTO)
+        else:
+            # Keep selection if still listed; refresh Auto caption from the new pairs.
+            self.ids.spn_carver_mode.text = self._label_for_value(pairs, current)
+
+    def _bounds_for_resolution_preview(self) -> StockBounds | None:
+        """AABB size from the form (origin is irrelevant for cell size)."""
+        ids = getattr(self, "ids", None)
+        if not ids or "txt_width" not in ids or "txt_height" not in ids:
+            return None
+        try:
+            kind = self._shape_kind_from_ui()
+            if kind == RotaryCylindricalStock.kind:
+                diameter = _parse_positive_float(ids.txt_width.text, tr._("Diameter"))
+                length = _parse_positive_float(ids.txt_height.text, tr._("Length"))
+                return StockBounds(0.0, 0.0, 0.0, length, diameter, diameter)
+            if kind == "cylindrical":
+                diameter = _parse_positive_float(ids.txt_width.text, tr._("Diameter"))
+                height = _parse_positive_float(ids.txt_height.text, tr._("Height"))
+                return StockBounds(0.0, 0.0, 0.0, diameter, diameter, height)
+            width = _parse_positive_float(ids.txt_width.text, tr._("Width"))
+            height = _parse_positive_float(ids.txt_height.text, tr._("Height"))
+            if "txt_length" not in ids:
+                return None
+            length = _parse_positive_float(ids.txt_length.text, tr._("Length"))
+            return StockBounds(0.0, 0.0, 0.0, width, length, height)
+        except (TypeError, ValueError, AttributeError):
+            return None
+
+    def _refresh_resolution_spinner_labels(self) -> None:
+        """Update Low/Medium/High captions for the selected carver and stock size."""
+        if "spn_voxel_resolution" not in self.ids:
+            return
+        level = self._voxel_resolution_from_ui()
+        carver = self._effective_carver_for_resolution_labels()
+        self._voxel_resolution_pairs = _voxel_resolution_pairs(
+            carver,
+            bounds=self._bounds_for_resolution_preview(),
+        )
+        self.ids.spn_voxel_resolution.values = [lab for lab, _ in self._voxel_resolution_pairs]
+        self.ids.spn_voxel_resolution.text = self._label_for_value(self._voxel_resolution_pairs, level)
 
     def _pin_detachable_rows(self) -> None:
         """Keep a strong ref to rows that leave the layout so they can be re-added.
@@ -220,6 +361,8 @@ class StockSettingsPopup(ModalView):
 
     def _on_open(self, *_args):
         self._refresh_simulation_availability()
+        self._refresh_carver_spinner_options()
+        self._refresh_resolution_spinner_labels()
         Window.bind(size=self._schedule_fit_popup_height)
         self._schedule_fit_popup_height()
 
@@ -292,9 +435,15 @@ class StockSettingsPopup(ModalView):
         if "spn_shape" in getattr(self, "ids", {}):
             self._update_dimension_field_visibility()
             self._populate_spinner_choices()
+        self._refresh_carver_spinner_options()
+        self._refresh_resolution_spinner_labels()
 
     def _on_shape_text(self, *_args) -> None:
         self._update_dimension_field_visibility()
+        self._refresh_resolution_spinner_labels()
+
+    def _on_dimension_text(self, *_args) -> None:
+        self._refresh_resolution_spinner_labels()
 
     def _shape_kind_from_ui(self) -> str:
         text = self.ids.spn_shape.text
@@ -404,12 +553,7 @@ class StockSettingsPopup(ModalView):
         return settings
 
     def _refresh_simulation_availability(self):
-        app = App.get_running_app()
-        tool_table = {}
-        if app is not None and getattr(app, "root", None) is not None:
-            viewer = getattr(app.root, "gcode_viewer", None)
-            if viewer is not None:
-                tool_table = getattr(viewer, "tool_table", None) or {}
+        tool_table, _scale = self._viewer_tools()
         self.simulation_available = bool(tool_table)
 
     def _populate_spinner_choices(self):
@@ -421,6 +565,8 @@ class StockSettingsPopup(ModalView):
             ids["spn_z_ref"].values = [lab for lab, _ in self._z_pairs]
         ids.spn_voxel_resolution.values = [lab for lab, _ in self._voxel_resolution_pairs]
         ids.spn_checkpoint_level.values = [lab for lab, _ in self._checkpoint_level_pairs]
+        if "spn_carver_mode" in ids:
+            ids.spn_carver_mode.values = [lab for lab, _ in self._carver_mode_pairs]
 
     def _label_for_value(self, pairs, value, fallback: str | None = None) -> str:
         for label, val in pairs:
@@ -465,6 +611,13 @@ class StockSettingsPopup(ModalView):
             self._checkpoint_level_pairs,
             settings.get("checkpoint_level", DEFAULT_CHECKPOINT_LEVEL),
         )
+        if "spn_carver_mode" in ids:
+            ids.spn_carver_mode.text = self._label_for_value(
+                self._carver_mode_pairs,
+                normalize_carver_mode(settings.get("carver_mode", DEFAULT_CARVER_MODE)),
+            )
+        self._refresh_carver_spinner_options()
+        self._refresh_resolution_spinner_labels()
 
     def _corner_from_ui(self) -> str:
         text = self.ids.spn_corner.text
@@ -493,6 +646,34 @@ class StockSettingsPopup(ModalView):
             if lab == text:
                 return val
         return DEFAULT_CHECKPOINT_LEVEL
+
+    def _carver_mode_from_ui(self) -> str:
+        if "spn_carver_mode" not in self.ids:
+            return DEFAULT_CARVER_MODE
+        text = self.ids.spn_carver_mode.text
+        for lab, val in self._carver_mode_pairs:
+            if lab == text:
+                return val
+        # Stale "Auto (...)" caption after the recommended backend changed.
+        if (text or "").startswith(tr._("Auto")):
+            return MODE_AUTO
+        return DEFAULT_CARVER_MODE
+
+    def _on_carver_mode_text(self, *_args) -> None:
+        self._refresh_resolution_spinner_labels()
+
+    def _viewer_tools(self):
+        """Tool table and unit scale from the loaded file, if any."""
+        app = App.get_running_app()
+        if app is None or getattr(app, "root", None) is None:
+            return None, 1.0
+        viewer = getattr(app.root, "gcode_viewer", None)
+        if viewer is None:
+            return None, 1.0
+        return (
+            getattr(viewer, "tool_table", None),
+            float(getattr(viewer, "tool_unit_scale", 1.0) or 1.0),
+        )
 
     def read_settings_from_ui(self) -> dict:
         height = _parse_positive_float(self.ids.txt_height.text, tr._("Height"))
@@ -527,6 +708,7 @@ class StockSettingsPopup(ModalView):
             "mesh_while_playing": mesh_while_playing,
             "voxel_resolution": self._voxel_resolution_from_ui(),
             "checkpoint_level": self._checkpoint_level_from_ui(),
+            "carver_mode": self._carver_mode_from_ui(),
         }
 
     def on_apply_and_close(self):

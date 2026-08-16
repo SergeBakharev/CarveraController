@@ -7,9 +7,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from carveracontroller.addons.stock.simulation_quality import (
+from carveracontroller.addons.stock.simulator.simulation_quality import (
     DEFAULT_VOXEL_RESOLUTION,
+    MAX_CELL_SIZE_MM,
+    MIN_CELL_SIZE_MM,
     VOXEL_TARGET_BY_LEVEL,
+    pick_cell_size_mm,
 )
 from carveracontroller.addons.stock.stock_geometry import StockBounds
 
@@ -18,8 +21,8 @@ CHUNK_FULL = object()
 CHUNK_EMPTY = object()
 
 DEFAULT_CHUNK_SIZE = 16
-MIN_VOXEL_SIZE_MM = 0.1
-MAX_VOXEL_SIZE_MM = 5.0
+MIN_VOXEL_SIZE_MM = MIN_CELL_SIZE_MM["voxel"]
+MAX_VOXEL_SIZE_MM = MAX_CELL_SIZE_MM["voxel"]
 
 
 def pick_voxel_size_mm(
@@ -27,10 +30,7 @@ def pick_voxel_size_mm(
     target: int = VOXEL_TARGET_BY_LEVEL[DEFAULT_VOXEL_RESOLUTION],
 ) -> float:
     """Choose a voxel size so the longest stock axis has roughly ``target`` voxels."""
-    sx, sy, sz = bounds.size
-    longest = max(sx, sy, sz, 1e-6)
-    size = longest / max(target, 1)
-    return float(min(MAX_VOXEL_SIZE_MM, max(MIN_VOXEL_SIZE_MM, size)))
+    return pick_cell_size_mm(bounds, carver="voxel", target=target)
 
 
 @dataclass(frozen=True)
@@ -81,6 +81,10 @@ class ChunkedVoxelGrid:
 
         # Lazily populated: missing key == CHUNK_FULL (untouched solid stock).
         self._chunks: dict[tuple[int, int, int], object] = {}
+        # Interior chunks are entirely in-bounds; share one mask. Edge chunks cache.
+        cs = self.chunk_size
+        self._full_valid = np.ones((cs, cs, cs), dtype=bool)
+        self._valid_mask_cache: dict[tuple[int, int, int], np.ndarray] = {}
 
     def reset(self) -> None:
         self._chunks.clear()
@@ -209,26 +213,63 @@ class ChunkedVoxelGrid:
             return arr
         return state  # type: ignore[return-value]
 
+    def release_unmodified_full(self, coord: ChunkCoord) -> None:
+        """Drop a just-materialised FULL chunk that was never carved (missing ⇒ FULL)."""
+        self._chunks.pop(coord.as_tuple(), None)
+
+    def _chunk_fully_in_bounds(self, coord: ChunkCoord) -> bool:
+        """True when every local voxel of ``coord`` lies inside ``nx/ny/nz``."""
+        cs = self.chunk_size
+        return (coord.cx + 1) * cs <= self.nx and (coord.cy + 1) * cs <= self.ny and (coord.cz + 1) * cs <= self.nz
+
+    def _valid_count(self, coord: ChunkCoord) -> int:
+        """Number of in-bounds voxels in ``coord``."""
+        if self._chunk_fully_in_bounds(coord):
+            cs = self.chunk_size
+            return cs * cs * cs
+        return int(self._valid_mask(coord).sum())
+
     def _valid_mask(self, coord: ChunkCoord) -> np.ndarray:
         """Boolean mask of local voxels that lie inside the logical grid."""
+        if self._chunk_fully_in_bounds(coord):
+            return self._full_valid
+        key = coord.as_tuple()
+        cached = self._valid_mask_cache.get(key)
+        if cached is not None:
+            return cached
         cs = self.chunk_size
         ix0 = coord.cx * cs
         iy0 = coord.cy * cs
         iz0 = coord.cz * cs
         lx = np.arange(cs)
-        return (
+        mask = (
             ((ix0 + lx)[:, None, None] < self.nx)
             & ((iy0 + lx)[None, :, None] < self.ny)
             & ((iz0 + lx)[None, None, :] < self.nz)
         )
+        self._valid_mask_cache[key] = mask
+        return mask
 
-    def maybe_collapse_chunk(self, coord: ChunkCoord, arr: np.ndarray) -> None:
+    def maybe_collapse_chunk(
+        self,
+        coord: ChunkCoord,
+        arr: np.ndarray,
+        solid_count: int | None = None,
+    ) -> None:
         """Collapse a fully-empty or fully-solid-in-bounds chunk to a sentinel."""
         key = coord.as_tuple()
-        valid = self._valid_mask(coord)
-        if not arr[valid].any():
+        n = int(arr.sum()) if solid_count is None else int(solid_count)
+        if n == 0:
             self._chunks[key] = CHUNK_EMPTY
-        elif valid.any() and arr[valid].all() and not arr[~valid].any():
+            return
+        n_valid = self._valid_count(coord)
+        if n < n_valid:
+            return
+        if self._chunk_fully_in_bounds(coord):
+            self._chunks[key] = CHUNK_FULL
+            return
+        valid = self._valid_mask(coord)
+        if valid.any() and not arr[~valid].any():
             # All in-bounds voxels solid and no stray padding solid → FULL.
             self._chunks[key] = CHUNK_FULL
 

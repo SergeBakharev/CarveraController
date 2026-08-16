@@ -5,10 +5,10 @@ import time
 import numpy as np
 import pytest
 
+from carveracontroller.addons.stock.simulator import carve_segment_into_grid
+from carveracontroller.addons.stock.simulator.carvers.voxel.grid import ChunkedVoxelGrid
+from carveracontroller.addons.stock.simulator.carvers.voxel.mesher import mesh_chunk
 from carveracontroller.addons.stock.stock_geometry import StockBounds
-from carveracontroller.addons.stock.voxel.stock_simulator import carve_segment_into_grid
-from carveracontroller.addons.stock.voxel.voxel_grid import ChunkedVoxelGrid
-from carveracontroller.addons.stock.voxel.voxel_mesher import mesh_chunk
 from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition, ToolType
 
 
@@ -154,7 +154,7 @@ def test_helical_ish_move_clears_on_path():
 
 
 def test_mesh_chunk_produces_geometry_after_carve():
-    from carveracontroller.addons.stock.voxel.voxel_grid import ChunkCoord
+    from carveracontroller.addons.stock.simulator.carvers.voxel.grid import ChunkCoord
 
     grid = _small_grid(voxel=1.0)
     tool = ToolDefinition(
@@ -182,10 +182,60 @@ def test_mesh_chunk_produces_geometry_after_carve():
     assert meshed
 
 
+def test_greedy_rects_cover_mask_exactly():
+    from carveracontroller.addons.stock.simulator.carvers.voxel.mesher import _greedy_rects
+
+    rng = np.random.default_rng(0)
+    mask = rng.random((16, 16)) > 0.55
+    i0, j0, i1, j1 = _greedy_rects(mask)
+    covered = np.zeros_like(mask)
+    for a, b, c, d in zip(i0, j0, i1, j1):
+        assert not covered[a:c, b:d].any()
+        covered[a:c, b:d] = True
+    assert np.array_equal(covered, mask)
+    full_i0, full_j0, full_i1, full_j1 = _greedy_rects(np.ones((8, 8), dtype=bool))
+    assert list(full_i0) == [0] and list(full_j0) == [0]
+    assert list(full_i1) == [8] and list(full_j1) == [8]
+
+
+def test_full_cube_greedy_mesh_is_six_quads():
+    from carveracontroller.addons.stock.simulator.carvers.voxel.grid import ChunkCoord
+    from carveracontroller.addons.stock.simulator.carvers.voxel.mesher import mesh_chunk_state
+
+    bounds = StockBounds(min_x=0, min_y=0, min_z=0, max_x=8, max_y=8, max_z=8)
+    grid = ChunkedVoxelGrid(bounds, voxel_size_mm=1.0, chunk_size=8)
+    packed = mesh_chunk_state(grid, ChunkCoord(0, 0, 0))
+    assert packed is not None
+    verts = np.asarray(packed[0], dtype=np.float32).reshape(-1, 12)
+    # 6 faces × 4 verts; greedy merge turns each face into one quad.
+    assert verts.shape[0] == 24
+    pos = verts[:, :3]
+    assert pos[:, 0].min() == pytest.approx(0.0)
+    assert pos[:, 0].max() == pytest.approx(8.0)
+    assert pos[:, 1].min() == pytest.approx(0.0)
+    assert pos[:, 1].max() == pytest.approx(8.0)
+    assert pos[:, 2].min() == pytest.approx(0.0)
+    assert pos[:, 2].max() == pytest.approx(8.0)
+    indices = packed[1]
+    assert len(indices) == 36  # 6 quads × 2 tris × 3
+
+
+def test_indexed_a90_does_not_allocate_far_chunks():
+    from carveracontroller.addons.stock.simulator.carvers.voxel.grid import CHUNK_FULL, ChunkCoord
+
+    bounds = StockBounds(min_x=0, min_y=-40, min_z=-40, max_x=80, max_y=40, max_z=40)
+    grid = ChunkedVoxelGrid(bounds, voxel_size_mm=1.0, chunk_size=8)
+    tool = _flat_tool(diameter=6.0, flute_length=8.0)
+    carve_segment_into_grid(grid, (40.0, 0.0, 8.0), (40.0, 0.0, 8.0), tool, a0=90.0, a1=90.0)
+    far = ChunkCoord(cx=grid.n_chunks_x - 1, cy=0, cz=0)
+    assert grid.get_chunk_state(far) is CHUNK_FULL or far.as_tuple() not in grid._chunks
+    assert not isinstance(grid.get_chunk_state(far), np.ndarray)
+
+
 def test_full_chunk_and_neighbors_mesh_pocket_floor():
     """FULL shell chunks must mesh; carved neighbors expose pocket floors."""
-    from carveracontroller.addons.stock.voxel.voxel_grid import CHUNK_FULL, ChunkCoord
-    from carveracontroller.addons.stock.voxel.voxel_mesher import mesh_chunk_state, mesh_dirty_chunks
+    from carveracontroller.addons.stock.simulator.carvers.voxel.grid import CHUNK_FULL, ChunkCoord
+    from carveracontroller.addons.stock.simulator.carvers.voxel.mesher import mesh_chunk_state, mesh_dirty_chunks
 
     grid = _small_grid(voxel=1.0)
     # Exterior FULL chunk (top) should produce a surface even before any carve.
@@ -209,7 +259,7 @@ def test_full_chunk_and_neighbors_mesh_pocket_floor():
 
 
 def test_snapshot_non_full_omits_full_and_restores():
-    from carveracontroller.addons.stock.voxel.voxel_grid import CHUNK_EMPTY, CHUNK_FULL
+    from carveracontroller.addons.stock.simulator.carvers.voxel.grid import CHUNK_EMPTY, CHUNK_FULL
 
     grid = _small_grid(voxel=1.0)
     tool = ToolDefinition(
@@ -235,7 +285,7 @@ def test_snapshot_non_full_omits_full_and_restores():
 
 
 def test_checkpoint_store_equal_spaced_targets():
-    from carveracontroller.addons.stock.voxel.stock_simulator import CheckpointStore
+    from carveracontroller.addons.stock.simulator import CheckpointStore
 
     grid = _small_grid(voxel=1.0)
     tool = ToolDefinition(
@@ -266,7 +316,7 @@ def test_checkpoint_store_equal_spaced_targets():
 
 
 def test_checkpoint_short_path_dedupes_targets():
-    from carveracontroller.addons.stock.voxel.stock_simulator import CheckpointStore
+    from carveracontroller.addons.stock.simulator import CheckpointStore
 
     store = CheckpointStore(slot_count=256)
     store.set_path_vertex_count(5)  # last=4 → many rounds collapse
@@ -278,7 +328,7 @@ def test_checkpoint_short_path_dedupes_targets():
 
 def test_set_path_vertex_count_same_length_preserves_checkpoints():
     """Seek/recarve republishes the toolpath; identical V must not wipe slots."""
-    from carveracontroller.addons.stock.voxel.stock_simulator import CheckpointStore
+    from carveracontroller.addons.stock.simulator import CheckpointStore
 
     grid = _small_grid(voxel=1.0)
     tool = ToolDefinition(
@@ -305,7 +355,7 @@ def test_set_path_vertex_count_same_length_preserves_checkpoints():
 
 
 def test_checkpoint_bit_packing_shrinks_payload():
-    from carveracontroller.addons.stock.voxel.stock_simulator import (
+    from carveracontroller.addons.stock.simulator import (
         CheckpointStore,
         _pack_chunk_state,
         _unpack_chunk_state,
@@ -343,7 +393,7 @@ def test_checkpoint_bit_packing_shrinks_payload():
 
 
 def test_delta_checkpoints_form_gops_and_reconstruct():
-    from carveracontroller.addons.stock.voxel.stock_simulator import CheckpointStore
+    from carveracontroller.addons.stock.simulator import CheckpointStore
 
     grid = _small_grid(voxel=1.0)
     tool = ToolDefinition(
@@ -402,7 +452,7 @@ def test_delta_checkpoints_form_gops_and_reconstruct():
 
 def test_empty_delta_pframe_is_recorded_and_resolves_to_prior_base():
     """Blank stretches must still place seek anchors (empty P-frames)."""
-    from carveracontroller.addons.stock.voxel.stock_simulator import CheckpointStore
+    from carveracontroller.addons.stock.simulator import CheckpointStore
 
     grid = _small_grid(voxel=1.0)
     tool = ToolDefinition(
@@ -450,7 +500,7 @@ def test_empty_delta_pframe_is_recorded_and_resolves_to_prior_base():
 def test_idle_precompute_carves_to_end_of_file():
     """Idle precompute carves the toolpath tail and records checkpoints."""
 
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-20, min_y=-5, min_z=-5, max_x=20, max_y=5, max_z=0)
     tool = _flat_tool()
@@ -459,7 +509,7 @@ def test_idle_precompute_carves_to_end_of_file():
 
     sim = StockSimulator(mesh_throttle_s=0.01)
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, carver_mode="voxel")
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
         sim.set_idle_ahead_allowed(True)
         sim.submit_idle_precompute(0)
@@ -485,7 +535,7 @@ def test_idle_precompute_carves_to_end_of_file():
 def test_idle_precompute_is_invisible_to_progress_and_mesh_callbacks():
     """Idle must not call on_progress / on_meshes_ready."""
 
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-20, min_y=-5, min_z=-5, max_x=20, max_y=5, max_z=0)
     tool = _flat_tool()
@@ -501,7 +551,7 @@ def test_idle_precompute_is_invisible_to_progress_and_mesh_callbacks():
         mesh_throttle_s=0.01,
     )
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, carver_mode="voxel")
         _wait_until(lambda: len(mesh_calls) > 0, timeout=1.0)
         time.sleep(0.05)
         progress_calls.clear()
@@ -526,8 +576,8 @@ def test_idle_precompute_is_preempted_by_real_work():
     the next segment boundary instead of running to completion first."""
     import threading
 
-    from carveracontroller.addons.stock.voxel import stock_simulator as sim_module
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator.carvers.voxel import backend as voxel_backend
 
     bounds = StockBounds(min_x=-20, min_y=-5, min_z=-5, max_x=20, max_y=5, max_z=0)
     tool = ToolDefinition(
@@ -569,20 +619,20 @@ def test_idle_precompute_is_preempted_by_real_work():
 
     waiter = _ProgressWaiter()
     call_count = {"n": 0}
-    original_carve = sim_module.carve_segment_into_grid
+    original_carve = voxel_backend.carve_segment_into_grid
 
-    def slow_counting_carve(grid, p0, p1, tool_def, tool_unit_scale=1.0):
+    def slow_counting_carve(grid, p0, p1, tool_def, tool_unit_scale=1.0, **kwargs):
         call_count["n"] += 1
         time.sleep(0.003)
-        return original_carve(grid, p0, p1, tool_def, tool_unit_scale=tool_unit_scale)
+        return original_carve(grid, p0, p1, tool_def, tool_unit_scale=tool_unit_scale, **kwargs)
 
     sim = StockSimulator(on_progress=waiter.on_progress, mesh_throttle_s=0.01)
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, carver_mode="voxel")
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
         sim.set_idle_ahead_allowed(True)
 
-        sim_module.carve_segment_into_grid = slow_counting_carve
+        voxel_backend.carve_segment_into_grid = slow_counting_carve
         try:
             sim.submit_idle_precompute(0)
             time.sleep(0.05)  # let a handful of slow segments carve
@@ -592,7 +642,7 @@ def test_idle_precompute_is_preempted_by_real_work():
             waiter.wait_for(20, timeout=5.0)
             elapsed = time.monotonic() - start
         finally:
-            sim_module.carve_segment_into_grid = original_carve
+            voxel_backend.carve_segment_into_grid = original_carve
 
         # If the idle job weren't pre-empted it would have to reach the end
         # of the 300-vertex range first (~0.9s at 3ms/segment) before the
@@ -614,8 +664,8 @@ def test_seek_forward_past_existing_checkpoint_jumps_instead_of_recarving():
     """
     import threading
 
-    from carveracontroller.addons.stock.voxel import stock_simulator as sim_module
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator.carvers.voxel import backend as voxel_backend
 
     bounds = StockBounds(min_x=-20, min_y=-5, min_z=-5, max_x=20, max_y=5, max_z=0)
     tool = ToolDefinition(
@@ -657,18 +707,18 @@ def test_seek_forward_past_existing_checkpoint_jumps_instead_of_recarving():
 
     waiter = _ProgressWaiter()
     call_count = {"n": 0}
-    original_carve = sim_module.carve_segment_into_grid
+    original_carve = voxel_backend.carve_segment_into_grid
 
-    def counting_carve(grid, p0, p1, tool_def, tool_unit_scale=1.0):
+    def counting_carve(grid, p0, p1, tool_def, tool_unit_scale=1.0, **kwargs):
         call_count["n"] += 1
-        return original_carve(grid, p0, p1, tool_def, tool_unit_scale=tool_unit_scale)
+        return original_carve(grid, p0, p1, tool_def, tool_unit_scale=tool_unit_scale, **kwargs)
 
     sim = StockSimulator(on_progress=waiter.on_progress, mesh_throttle_s=0.01)
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, carver_mode="voxel")
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
 
-        sim_module.carve_segment_into_grid = counting_carve
+        voxel_backend.carve_segment_into_grid = counting_carve
         try:
             # Forward playback all the way to the end.
             sim.submit_range(0, n_steps)
@@ -687,7 +737,7 @@ def test_seek_forward_past_existing_checkpoint_jumps_instead_of_recarving():
             sim.submit_range(150, n_steps)
             waiter.wait_for(n_steps)
         finally:
-            sim_module.carve_segment_into_grid = original_carve
+            voxel_backend.carve_segment_into_grid = original_carve
 
         # The jump must have restored the checkpoint and only carved the
         # remainder — never the whole (150, n_steps] range one segment at a
@@ -714,12 +764,12 @@ def test_seek_forward_past_existing_checkpoint_jumps_instead_of_recarving():
 def test_reset_applies_voxel_target_and_checkpoint_slots():
     """StockSimulator.reset() should honor quality presets for grid size + store."""
 
-    from carveracontroller.addons.stock.simulation_quality import (
+    from carveracontroller.addons.stock.simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator.carvers.voxel.grid import pick_voxel_size_mm
+    from carveracontroller.addons.stock.simulator.simulation_quality import (
         CHECKPOINT_SLOTS_BY_LEVEL,
         VOXEL_TARGET_BY_LEVEL,
     )
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
-    from carveracontroller.addons.stock.voxel.voxel_grid import pick_voxel_size_mm
 
     bounds = StockBounds(min_x=0, min_y=0, min_z=-10, max_x=100, max_y=50, max_z=0)
     slots = CHECKPOINT_SLOTS_BY_LEVEL["high"]
@@ -728,12 +778,7 @@ def test_reset_applies_voxel_target_and_checkpoint_slots():
 
     sim = StockSimulator()
     try:
-        sim.reset(
-            bounds,
-            enable=True,
-            voxel_target=target,
-            checkpoint_slots=slots,
-        )
+        sim.reset(bounds, enable=True, voxel_target=target, checkpoint_slots=slots, carver_mode="voxel")
         time.sleep(0.05)
         assert sim.grid is not None
         assert abs(sim.grid.voxel_size - expected_size) < 1e-9
@@ -745,14 +790,14 @@ def test_reset_applies_voxel_target_and_checkpoint_slots():
 
 
 def test_reset_seeds_cylindrical_occupancy():
+    from carveracontroller.addons.stock.simulator import StockSimulator
     from carveracontroller.addons.stock.stock_shape import CylindricalStock
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
 
     bounds = StockBounds(min_x=-20, min_y=-20, min_z=-10, max_x=20, max_y=20, max_z=0)
     shape = CylindricalStock(diameter_mm=40, height_mm=10)
     sim = StockSimulator()
     try:
-        sim.reset(bounds, enable=True, voxel_size_mm=2.0, shape=shape)
+        sim.reset(bounds, enable=True, cell_size_mm=2.0, shape=shape, carver_mode="voxel")
         assert sim.grid is not None
         assert sim.grid.is_solid_at_world(0.0, 0.0, -5.0)
         assert not sim.grid.is_solid_at_world(-19.0, -19.0, -5.0)
@@ -762,22 +807,22 @@ def test_reset_seeds_cylindrical_occupancy():
 
 def test_hud_stats_report_voxel_and_checkpoints():
 
-    from carveracontroller.addons.stock.simulation_quality import CHECKPOINT_SLOTS_BY_LEVEL
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator.simulation_quality import CHECKPOINT_SLOTS_BY_LEVEL
 
     bounds = StockBounds(min_x=0, min_y=0, min_z=-5, max_x=20, max_y=10, max_z=0)
     slots = CHECKPOINT_SLOTS_BY_LEVEL["low"]
     sim = StockSimulator()
     try:
         assert sim.hud_stats() is None
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True, checkpoint_slots=slots)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, checkpoint_slots=slots, carver_mode="voxel")
         # Initial surface emit may leave resimulating briefly set — wait for idle.
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline and sim.resimulating:
             time.sleep(0.01)
         stats = sim.hud_stats()
         assert stats is not None
-        assert abs(stats["voxel_size_mm"] - 0.5) < 1e-9
+        assert abs(stats["cell_size_mm"] - 0.5) < 1e-9
         assert stats["grid_nx"] == 40
         assert stats["grid_ny"] == 20
         assert stats["grid_nz"] == 10
@@ -805,7 +850,7 @@ def test_hud_stats_report_voxel_and_checkpoints():
 def test_idle_bake_does_not_move_display_grid():
     """Idle precompute carves the bake grid only; display occupancy stays put."""
 
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-20, min_y=-5, min_z=-5, max_x=20, max_y=5, max_z=0)
     tool = ToolDefinition(
@@ -834,7 +879,7 @@ def test_idle_bake_does_not_move_display_grid():
         mesh_throttle_s=0.01,
     )
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, carver_mode="voxel")
         _wait_until(lambda: len(mesh_calls) > 0, timeout=2.0)
         time.sleep(0.05)
         mesh_calls.clear()
@@ -857,7 +902,7 @@ def test_hud_stats_concurrent_with_carve_does_not_raise():
     hold the same lock so concurrent HUD polls never hit RuntimeError.
     """
 
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-20, min_y=-5, min_z=-5, max_x=20, max_y=5, max_z=0)
     tool = ToolDefinition(
@@ -881,7 +926,7 @@ def test_hud_stats_concurrent_with_carve_does_not_raise():
 
     sim = StockSimulator(mesh_throttle_s=0.01)
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, carver_mode="voxel")
         _wait_until(lambda: not sim.resimulating, timeout=2.0)
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
         sim.submit_range(0, n_steps)
@@ -893,7 +938,7 @@ def test_hud_stats_concurrent_with_carve_does_not_raise():
             if stats is not None:
                 saw_stats = True
                 assert stats["grid_nx"] > 0
-                assert stats["voxel_size_mm"] > 0
+                assert stats["cell_size_mm"] > 0
             if not sim.grid.is_solid_at_world(xs[-2], 0.0, -0.5):
                 break
             time.sleep(0.0)  # yield to worker
@@ -908,24 +953,24 @@ def test_hud_stats_concurrent_with_carve_does_not_raise():
 
 def test_try_mesh_and_emit_aborts_after_generation_bump():
     """Stale mesh emit must not callback once reset bumps generation."""
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-5, min_y=-5, min_z=-5, max_x=5, max_y=5, max_z=0)
     received: list[dict] = []
 
     sim = StockSimulator(on_meshes_ready=lambda meshes: received.append(meshes), mesh_throttle_s=0.05)
     try:
-        sim.reset(bounds, voxel_size_mm=1.0, enable=True)
+        sim.reset(bounds, cell_size_mm=1.0, enable=True, carver_mode="voxel")
         # Stop the worker so only our direct helper calls populate ``received``.
         sim.stop()
-        grid = sim.grid
-        assert grid is not None
+        backend = sim.backend
+        assert backend is not None
         gen = sim.generation
         received.clear()
 
         # Happy path: matching generation emits a replace of the stock shell.
-        dirty = sim._initial_surface_dirty_keys(grid)
-        assert sim._try_mesh_and_emit(grid, dirty, gen, replace=True) is True
+        dirty = sim._initial_surface_dirty_keys(backend)
+        assert sim._try_mesh_and_emit(backend, dirty, gen, replace=True) is True
         assert received and "__replace__" in received[-1]
 
         # Bump generation as reset/disable/recarve would.
@@ -933,7 +978,7 @@ def test_try_mesh_and_emit_aborts_after_generation_bump():
             sim._generation += 1
 
         received.clear()
-        assert sim._try_mesh_and_emit(grid, set(), gen, replace=True) is False
+        assert sim._try_mesh_and_emit(backend, set(), gen, replace=True) is False
         assert received == []
     finally:
         sim.stop()
@@ -941,33 +986,33 @@ def test_try_mesh_and_emit_aborts_after_generation_bump():
 
 def test_try_mesh_and_emit_aborts_when_grid_replaced():
     """Meshing must not emit if the live grid object was swapped out."""
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-5, min_y=-5, min_z=-5, max_x=5, max_y=5, max_z=0)
     received: list[dict] = []
 
     sim = StockSimulator(on_meshes_ready=lambda meshes: received.append(meshes), mesh_throttle_s=0.05)
     try:
-        sim.reset(bounds, voxel_size_mm=1.0, enable=True)
+        sim.reset(bounds, cell_size_mm=1.0, enable=True, carver_mode="voxel")
         sim.stop()
-        stale_grid = sim.grid
+        stale = sim.backend
         gen = sim.generation
-        assert stale_grid is not None
+        assert stale is not None
         received.clear()
 
-        # Simulate reset replacing the grid and bumping generation.
+        # Simulate reset replacing the backend and bumping generation.
         with sim._lock:
             sim._generation += 1
-            sim._grid = ChunkedVoxelGrid(bounds, voxel_size_mm=1.0)
+            sim._backend = type(stale)(bounds, 1.0)
 
-        assert sim._try_mesh_and_emit(stale_grid, {(0, 0, 0)}, gen, replace=False) is False
+        assert sim._try_mesh_and_emit(stale, {(0, 0, 0)}, gen, replace=False) is False
         assert received == []
     finally:
         sim.stop()
 
 
 def test_copy_chunks_deep_copies_arrays_and_keeps_empty():
-    from carveracontroller.addons.stock.voxel.voxel_grid import CHUNK_EMPTY, ChunkCoord
+    from carveracontroller.addons.stock.simulator.carvers.voxel.grid import CHUNK_EMPTY, ChunkCoord
 
     grid = _small_grid(voxel=1.0)
     coord = ChunkCoord(0, 0, 0)
@@ -995,9 +1040,9 @@ def test_mesh_copy_2ring_required_for_face_culling():
     face culling on N toward F needs F in the copy set. A 1-ring-only copy treats
     missing F as FULL and over-culls that wall.
     """
-    from carveracontroller.addons.stock.voxel.stock_simulator import _expand_dirty_with_neighbors
-    from carveracontroller.addons.stock.voxel.voxel_grid import CHUNK_EMPTY, CHUNK_FULL, ChunkCoord
-    from carveracontroller.addons.stock.voxel.voxel_mesher import mesh_dirty_chunks
+    from carveracontroller.addons.stock.simulator import _expand_dirty_with_neighbors
+    from carveracontroller.addons.stock.simulator.carvers.voxel.grid import CHUNK_EMPTY, CHUNK_FULL, ChunkCoord
+    from carveracontroller.addons.stock.simulator.carvers.voxel.mesher import mesh_dirty_chunks
 
     bounds = StockBounds(min_x=0, min_y=0, min_z=0, max_x=48, max_y=16, max_z=16)
     grid = ChunkedVoxelGrid(bounds, voxel_size_mm=1.0, chunk_size=8)
@@ -1033,8 +1078,8 @@ def test_mesh_copy_2ring_required_for_face_culling():
 
 def test_partial_mesh_copy_matches_live_dirty_meshes():
     """2-ring copy + 1-ring mesh matches meshing the live grid for a multi-chunk carve."""
-    from carveracontroller.addons.stock.voxel.stock_simulator import _expand_dirty_with_neighbors
-    from carveracontroller.addons.stock.voxel.voxel_mesher import mesh_dirty_chunks
+    from carveracontroller.addons.stock.simulator import _expand_dirty_with_neighbors
+    from carveracontroller.addons.stock.simulator.carvers.voxel.mesher import mesh_dirty_chunks
 
     bounds = StockBounds(min_x=-10, min_y=-10, min_z=-8, max_x=10, max_y=10, max_z=0)
     grid = ChunkedVoxelGrid(bounds, voxel_size_mm=1.0, chunk_size=8)
@@ -1057,20 +1102,21 @@ def test_partial_mesh_copy_matches_live_dirty_meshes():
 
 def test_try_mesh_and_emit_uses_partial_copy_result():
     """Worker emit path returns the same chunk meshes as a live 1-ring remesh."""
-    from carveracontroller.addons.stock.voxel.stock_simulator import (
+    from carveracontroller.addons.stock.simulator import (
         StockSimulator,
         _expand_dirty_with_neighbors,
     )
-    from carveracontroller.addons.stock.voxel.voxel_mesher import mesh_dirty_chunks
+    from carveracontroller.addons.stock.simulator.carvers.voxel.mesher import mesh_dirty_chunks
 
     bounds = StockBounds(min_x=-10, min_y=-10, min_z=-8, max_x=10, max_y=10, max_z=0)
     received: list[dict] = []
     sim = StockSimulator(on_meshes_ready=lambda meshes: received.append(meshes), mesh_throttle_s=0.05)
     try:
-        sim.reset(bounds, voxel_size_mm=1.0, enable=True)
+        sim.reset(bounds, cell_size_mm=1.0, enable=True, carver_mode="voxel")
         sim.stop()
+        backend = sim.backend
         grid = sim.grid
-        assert grid is not None
+        assert backend is not None and grid is not None
         tool = ToolDefinition(
             number=1,
             tool_type=ToolType.FLAT_END_MILL,
@@ -1083,7 +1129,7 @@ def test_try_mesh_and_emit_uses_partial_copy_result():
         expected = mesh_dirty_chunks(grid, mesh_keys)
 
         received.clear()
-        assert sim._try_mesh_and_emit(grid, dirty, sim.generation, replace=False) is True
+        assert sim._try_mesh_and_emit(backend, dirty, sim.generation, replace=False) is True
         assert len(received) == 1
         assert received[0] == expected
     finally:
@@ -1092,7 +1138,7 @@ def test_try_mesh_and_emit_uses_partial_copy_result():
 
 def test_inch_tool_unit_scale_matches_mm_kerf():
     """Inch tool tables stay in file units; carve must multiply (z,r) by 25.4."""
-    from carveracontroller.addons.stock.voxel.stock_simulator import _resolve_profile
+    from carveracontroller.addons.stock.simulator import _resolve_profile
 
     inch_tool = ToolDefinition(
         number=1,
@@ -1137,7 +1183,7 @@ def test_inch_tool_unit_scale_matches_mm_kerf():
 def test_set_toolpath_tool_scale_reaches_carve():
     """StockSimulator.set_toolpath(tool_scale=) must scale kerf end-to-end."""
 
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-10, min_y=-10, min_z=-5, max_x=10, max_y=10, max_z=0)
     inch_tool = ToolDefinition(
@@ -1153,7 +1199,7 @@ def test_set_toolpath_tool_scale_reaches_carve():
 
     sim = StockSimulator(mesh_throttle_s=0.01)
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True, checkpoint_slots=4)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, checkpoint_slots=4, carver_mode="voxel")
         _wait_until(lambda: not sim.resimulating, timeout=2.0)
         sim.set_toolpath(positions, vertex_types, tools, {1: inch_tool}, tool_scale=25.4)
         sim.submit_range(0, 1)
@@ -1170,8 +1216,8 @@ def test_idle_then_idle_preserves_delta_checkpoint_integrity():
     """
     import threading
 
-    import carveracontroller.addons.stock.voxel.stock_simulator as sim_module
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    import carveracontroller.addons.stock.simulator.worker as sim_module
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-25, min_y=-5, min_z=-5, max_x=25, max_y=5, max_z=0)
     tool = ToolDefinition(
@@ -1220,7 +1266,7 @@ def test_idle_then_idle_preserves_delta_checkpoint_integrity():
     sim_module.StockSimulator._iter_cut_jobs = gated_iter
     try:
         # Four slots → targets near 50/100/150/200; second CP is a delta P-frame.
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True, checkpoint_slots=4)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, checkpoint_slots=4, carver_mode="voxel")
         _wait_until(lambda: not sim.resimulating, timeout=2.0)
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
         sim.set_idle_ahead_allowed(True)
@@ -1277,7 +1323,7 @@ def test_idle_then_idle_preserves_delta_checkpoint_integrity():
 
 
 def test_next_unrecorded_target_peeks_maybe_record_gate():
-    from carveracontroller.addons.stock.voxel.stock_simulator import CheckpointStore
+    from carveracontroller.addons.stock.simulator import CheckpointStore
 
     store = CheckpointStore(slot_count=4)
     store.set_path_vertex_count(101)  # targets 25, 50, 75, 100
@@ -1296,7 +1342,7 @@ def test_clamp_collinear_run_end_binary_searches_longest_valid_prefix():
     # With voxel=1 → tol=0.25, the full chord must be clamped.
     import math
 
-    from carveracontroller.addons.stock.voxel.stock_simulator import (
+    from carveracontroller.addons.stock.simulator import (
         _MERGE_TOL_VOXEL_FRAC,
         _clamp_collinear_run_end,
         _point_to_segment_dist_sq,
@@ -1329,7 +1375,7 @@ def test_iter_cut_jobs_clamps_greedy_arc_drift():
     """Gentle arc: local extend may accept a long run; final chord clamp splits it."""
     import math
 
-    from carveracontroller.addons.stock.voxel.stock_simulator import (
+    from carveracontroller.addons.stock.simulator import (
         _MERGE_TOL_VOXEL_FRAC,
         CheckpointStore,
         PathSnapshot,
@@ -1367,7 +1413,7 @@ def test_iter_cut_jobs_clamps_greedy_arc_drift():
 
 
 def test_iter_cut_jobs_merges_collinear_and_breaks_on_rules():
-    from carveracontroller.addons.stock.voxel.stock_simulator import (
+    from carveracontroller.addons.stock.simulator import (
         CheckpointStore,
         PathSnapshot,
         StockSimulator,
@@ -1441,7 +1487,7 @@ def test_iter_cut_jobs_merges_collinear_and_breaks_on_rules():
 
 
 def test_iter_cut_jobs_breaks_at_next_unrecorded_checkpoint_target():
-    from carveracontroller.addons.stock.voxel.stock_simulator import (
+    from carveracontroller.addons.stock.simulator import (
         CheckpointStore,
         PathSnapshot,
         StockSimulator,
@@ -1481,8 +1527,8 @@ def test_iter_cut_jobs_breaks_at_next_unrecorded_checkpoint_target():
 
 
 def test_iter_cut_jobs_respects_max_span_cap(monkeypatch):
-    import carveracontroller.addons.stock.voxel.stock_simulator as sim_module
-    from carveracontroller.addons.stock.voxel.stock_simulator import (
+    import carveracontroller.addons.stock.simulator.worker as sim_module
+    from carveracontroller.addons.stock.simulator import (
         CheckpointStore,
         PathSnapshot,
         StockSimulator,
@@ -1538,7 +1584,7 @@ def test_merged_exact_collinear_matches_polyline_carve():
 
 
 def test_carve_early_out_leaves_far_full_chunks_unallocated():
-    from carveracontroller.addons.stock.voxel.voxel_grid import CHUNK_FULL, ChunkCoord
+    from carveracontroller.addons.stock.simulator.carvers.voxel.grid import CHUNK_FULL, ChunkCoord
 
     tool = ToolDefinition(
         number=1,
@@ -1623,7 +1669,7 @@ def test_constant_radius_mask_matches_interpolator():
     """Flat-mill shortcut must match searchsorted on stationary, plunge, and XY moves."""
     from unittest.mock import patch
 
-    from carveracontroller.addons.stock.voxel.stock_simulator import (
+    from carveracontroller.addons.stock.simulator import (
         _constant_profile_radius,
         _max_profile_radius,
         _resolve_profile,
@@ -1674,7 +1720,7 @@ def test_constant_radius_mask_matches_interpolator():
     for p0, p1 in cases:
         fast = _mask(p0, p1)
         with patch(
-            "carveracontroller.addons.stock.voxel.stock_simulator._constant_profile_radius",
+            "carveracontroller.addons.stock.simulator.carvers.voxel.carve._constant_profile_radius",
             return_value=None,
         ):
             interpolated = _mask(p0, p1)
@@ -1685,7 +1731,7 @@ def test_constant_radius_mask_matches_interpolator():
 def test_mesh_updates_can_be_suppressed_while_carving_continues():
     """Playback should keep carving on the worker but defer mesh callbacks."""
 
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-10, min_y=-5, min_z=-5, max_x=10, max_y=5, max_z=0)
     tool = ToolDefinition(
@@ -1712,7 +1758,7 @@ def test_mesh_updates_can_be_suppressed_while_carving_continues():
 
     sim = StockSimulator(on_meshes_ready=on_meshes, mesh_throttle_s=0.05)
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True, checkpoint_slots=8)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, checkpoint_slots=8, carver_mode="voxel")
         assert _wait_until(lambda: not sim.resimulating, timeout=2.0)
         assert _wait_until(lambda: any("__replace__" in m for m in meshes_received), timeout=2.0)
         sim.set_mesh_updates_enabled(False)
@@ -1736,14 +1782,14 @@ def test_mesh_updates_can_be_suppressed_while_carving_continues():
 
 
 def test_reset_and_disable_reenable_mesh_updates():
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-5, min_y=-5, min_z=-5, max_x=5, max_y=5, max_z=0)
     sim = StockSimulator()
     try:
         sim.set_mesh_updates_enabled(False)
         assert sim._mesh_updates_enabled is False
-        sim.reset(bounds, voxel_size_mm=1.0, enable=True, checkpoint_slots=2)
+        sim.reset(bounds, cell_size_mm=1.0, enable=True, checkpoint_slots=2, carver_mode="voxel")
         assert sim._mesh_updates_enabled is True
         sim.set_mesh_updates_enabled(False)
         sim.disable()
@@ -1755,7 +1801,7 @@ def test_reset_and_disable_reenable_mesh_updates():
 def test_idle_with_mesh_updates_on_still_bakes_checkpoints():
     """Idle bake records checkpoints without moving display occupancy or emitting meshes."""
 
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-10, min_y=-5, min_z=-5, max_x=10, max_y=5, max_z=0)
     tool = ToolDefinition(
@@ -1790,7 +1836,7 @@ def test_idle_with_mesh_updates_on_still_bakes_checkpoints():
         mesh_throttle_s=0.05,
     )
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True, checkpoint_slots=8)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, checkpoint_slots=8, carver_mode="voxel")
         _wait_until(lambda: not sim.resimulating, timeout=2.0)
         meshes_received.clear()
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
@@ -1813,7 +1859,7 @@ def test_idle_with_mesh_updates_on_still_bakes_checkpoints():
 def test_recarve_does_not_rearm_idle_bake():
     """Recarve must not start bake on its own; pause/tests submit idle explicitly."""
 
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-10, min_y=-5, min_z=-5, max_x=10, max_y=5, max_z=0)
     tool = _flat_tool()
@@ -1823,7 +1869,7 @@ def test_recarve_does_not_rearm_idle_bake():
 
     sim = StockSimulator(mesh_throttle_s=0.05)
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True, checkpoint_slots=8)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, checkpoint_slots=8, carver_mode="voxel")
         _wait_until(lambda: not sim.resimulating, timeout=2.0)
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
         sim.set_idle_ahead_allowed(True)
@@ -1838,22 +1884,22 @@ def test_recarve_does_not_rearm_idle_bake():
 
 
 def test_stop_clears_worker_when_idle():
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=0, min_y=0, min_z=-5, max_x=10, max_y=10, max_z=0)
     sim = StockSimulator(mesh_throttle_s=0.01)
-    sim.reset(bounds, voxel_size_mm=1.0, enable=False)
+    sim.reset(bounds, cell_size_mm=1.0, enable=False, carver_mode="voxel")
     assert sim._worker is not None and sim._worker.is_alive()
     sim.stop()
     assert sim._worker is None
 
 
 def test_stop_retains_worker_handle_when_join_times_out(monkeypatch):
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=0, min_y=0, min_z=-5, max_x=10, max_y=10, max_z=0)
     sim = StockSimulator(mesh_throttle_s=0.01)
-    sim.reset(bounds, voxel_size_mm=1.0, enable=False)
+    sim.reset(bounds, cell_size_mm=1.0, enable=False, carver_mode="voxel")
     worker = sim._worker
     assert worker is not None and worker.is_alive()
 
@@ -1870,7 +1916,7 @@ def test_stop_retains_worker_handle_when_join_times_out(monkeypatch):
 
 
 def test_set_display_vertex_latest_wins_reaches_last_target():
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-10, min_y=-5, min_z=-5, max_x=10, max_y=5, max_z=0)
     tool = _flat_tool()
@@ -1879,7 +1925,7 @@ def test_set_display_vertex_latest_wins_reaches_last_target():
 
     sim = StockSimulator(mesh_throttle_s=0.01)
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, carver_mode="voxel")
         _wait_until(lambda: not sim.resimulating, timeout=2.0)
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
         for v in range(1, n_steps + 1):
@@ -1891,7 +1937,7 @@ def test_set_display_vertex_latest_wins_reaches_last_target():
 
 
 def test_set_display_vertex_emits_patches_not_replace():
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-10, min_y=-5, min_z=-5, max_x=10, max_y=5, max_z=0)
     tool = _flat_tool()
@@ -1902,7 +1948,7 @@ def test_set_display_vertex_emits_patches_not_replace():
 
     sim = StockSimulator(on_meshes_ready=lambda m: meshes_received.append(m), mesh_throttle_s=0.02)
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, carver_mode="voxel")
         assert _wait_until(lambda: any("__replace__" in m for m in meshes_received), timeout=2.0)
         meshes_received.clear()
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
@@ -1916,7 +1962,7 @@ def test_set_display_vertex_emits_patches_not_replace():
 
 
 def test_request_mesh_flush_does_not_replace_after_forward_session():
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-10, min_y=-5, min_z=-5, max_x=10, max_y=5, max_z=0)
     tool = _flat_tool()
@@ -1927,7 +1973,7 @@ def test_request_mesh_flush_does_not_replace_after_forward_session():
 
     sim = StockSimulator(on_meshes_ready=lambda m: meshes_received.append(m), mesh_throttle_s=0.05)
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, carver_mode="voxel")
         _wait_until(lambda: not sim.resimulating, timeout=2.0)
         meshes_received.clear()
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
@@ -1943,14 +1989,14 @@ def test_request_mesh_flush_does_not_replace_after_forward_session():
 
 def test_request_mesh_flush_emits_when_nothing_is_dirty():
     """Pause-with-AABB needs a callback even if there is nothing new to remesh."""
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-5, min_y=-5, min_z=-5, max_x=5, max_y=5, max_z=0)
     meshes_received: list[dict] = []
 
     sim = StockSimulator(on_meshes_ready=lambda m: meshes_received.append(m), mesh_throttle_s=0.05)
     try:
-        sim.reset(bounds, voxel_size_mm=1.0, enable=True)
+        sim.reset(bounds, cell_size_mm=1.0, enable=True, carver_mode="voxel")
         assert _wait_until(lambda: not sim.resimulating, timeout=2.0)
         assert _wait_until(lambda: any("__replace__" in m for m in meshes_received), timeout=2.0)
         meshes_received.clear()
@@ -1962,7 +2008,7 @@ def test_request_mesh_flush_emits_when_nothing_is_dirty():
 
 
 def test_set_display_vertex_backward_restores_stock_ahead_of_playhead():
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-20, min_y=-5, min_z=-5, max_x=20, max_y=5, max_z=0)
     tool = _flat_tool()
@@ -1971,7 +2017,7 @@ def test_set_display_vertex_backward_restores_stock_ahead_of_playhead():
 
     sim = StockSimulator(mesh_throttle_s=0.01)
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True, checkpoint_slots=8)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, checkpoint_slots=8, carver_mode="voxel")
         _wait_until(lambda: not sim.resimulating, timeout=2.0)
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
         sim.set_display_vertex(n_steps)
@@ -1987,7 +2033,7 @@ def test_set_display_vertex_backward_restores_stock_ahead_of_playhead():
 
 
 def test_idle_bake_does_not_advance_display_when_mesh_updates_enabled():
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-10, min_y=-5, min_z=-5, max_x=10, max_y=5, max_z=0)
     tool = _flat_tool()
@@ -1996,7 +2042,7 @@ def test_idle_bake_does_not_advance_display_when_mesh_updates_enabled():
 
     sim = StockSimulator(mesh_throttle_s=0.01)
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, carver_mode="voxel")
         _wait_until(lambda: not sim.resimulating, timeout=2.0)
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
         assert sim._mesh_updates_enabled
@@ -2012,7 +2058,7 @@ def test_idle_bake_does_not_advance_display_when_mesh_updates_enabled():
 
 
 def test_idle_does_not_advance_when_idle_ahead_disallowed():
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-10, min_y=-5, min_z=-5, max_x=10, max_y=5, max_z=0)
     tool = _flat_tool()
@@ -2021,7 +2067,7 @@ def test_idle_does_not_advance_when_idle_ahead_disallowed():
 
     sim = StockSimulator(mesh_throttle_s=0.01)
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, carver_mode="voxel")
         _wait_until(lambda: not sim.resimulating, timeout=2.0)
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
         sim.set_mesh_updates_enabled(False)
@@ -2037,8 +2083,8 @@ def test_idle_does_not_advance_when_idle_ahead_disallowed():
 
 def test_display_follow_jumps_checkpoints_recorded_by_bake():
     """Bake-ahead bookmarks let the display grid skip the unplayed tail."""
-    from carveracontroller.addons.stock.voxel import stock_simulator as sim_module
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator.carvers.voxel import backend as voxel_backend
 
     bounds = StockBounds(min_x=-20, min_y=-5, min_z=-5, max_x=20, max_y=5, max_z=0)
     tool = _flat_tool()
@@ -2047,14 +2093,14 @@ def test_display_follow_jumps_checkpoints_recorded_by_bake():
 
     sim = StockSimulator(mesh_throttle_s=0.01)
     call_count = {"n": 0}
-    original_carve = sim_module.carve_segment_into_grid
+    original_carve = voxel_backend.carve_segment_into_grid
 
-    def counting_carve(grid, p0, p1, tool_def, tool_unit_scale=1.0):
+    def counting_carve(grid, p0, p1, tool_def, tool_unit_scale=1.0, **kwargs):
         call_count["n"] += 1
-        return original_carve(grid, p0, p1, tool_def, tool_unit_scale=tool_unit_scale)
+        return original_carve(grid, p0, p1, tool_def, tool_unit_scale=tool_unit_scale, **kwargs)
 
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True, checkpoint_slots=8)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, checkpoint_slots=8, carver_mode="voxel")
         _wait_until(lambda: not sim.resimulating, timeout=2.0)
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
         sim.set_idle_ahead_allowed(True)
@@ -2065,18 +2111,18 @@ def test_display_follow_jumps_checkpoints_recorded_by_bake():
         assert cp is not None and cp.vertex > 50
         assert sim.carved_vertex == 0
 
-        sim_module.carve_segment_into_grid = counting_carve
+        voxel_backend.carve_segment_into_grid = counting_carve
         try:
             sim.set_display_vertex(n_steps)
             assert _wait_until(lambda: sim.carved_vertex >= n_steps, timeout=5.0)
         finally:
-            sim_module.carve_segment_into_grid = original_carve
+            voxel_backend.carve_segment_into_grid = original_carve
 
         assert call_count["n"] < n_steps // 4
         far_x = -10.0 + 150 * 0.1
         assert not sim.grid.is_solid_at_world(far_x, 0.0, -0.5)
     finally:
-        sim_module.carve_segment_into_grid = original_carve
+        voxel_backend.carve_segment_into_grid = original_carve
         sim.stop()
 
 
@@ -2084,8 +2130,8 @@ def test_display_seek_back_rearms_idle_bake():
     """Scrubbing the playhead back must not leave bake stopped."""
     import threading
 
-    import carveracontroller.addons.stock.voxel.stock_simulator as sim_module
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
+    import carveracontroller.addons.stock.simulator.worker as sim_module
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-20, min_y=-5, min_z=-5, max_x=20, max_y=5, max_z=0)
     tool = _flat_tool()
@@ -2108,7 +2154,7 @@ def test_display_seek_back_rearms_idle_bake():
     sim = StockSimulator(mesh_throttle_s=0.01)
     sim_module.StockSimulator._iter_cut_jobs = gated_iter
     try:
-        sim.reset(bounds, voxel_size_mm=0.5, enable=True, checkpoint_slots=8)
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, checkpoint_slots=8, carver_mode="voxel")
         _wait_until(lambda: not sim.resimulating, timeout=2.0)
         sim.set_toolpath(positions, vertex_types, tools, {1: tool})
         sim.set_idle_ahead_allowed(True)
@@ -2161,7 +2207,7 @@ def test_wrapping_a_clears_arc():
 
 
 def test_iter_cut_jobs_merges_a_only_wrap():
-    from carveracontroller.addons.stock.voxel.stock_simulator import CheckpointStore, PathSnapshot, StockSimulator
+    from carveracontroller.addons.stock.simulator import CheckpointStore, PathSnapshot, StockSimulator
 
     tool = _flat_tool()
     n = 10
@@ -2194,16 +2240,16 @@ def test_iter_cut_jobs_merges_a_only_wrap():
 
 def test_reset_seeds_rotary_cylindrical_occupancy():
     from carveracontroller.addons.facing.stock_geometry import CORNER_BL
+    from carveracontroller.addons.stock.simulator import StockSimulator
     from carveracontroller.addons.stock.stock_geometry import compute_wcs_bounds
     from carveracontroller.addons.stock.stock_origin import Z_CENTER, StockOrigin
     from carveracontroller.addons.stock.stock_shape import RotaryCylindricalStock
-    from carveracontroller.addons.stock.voxel.stock_simulator import StockSimulator
 
     shape = RotaryCylindricalStock(diameter_mm=40, length_mm=80)
     bounds = compute_wcs_bounds(shape, StockOrigin(xy_corner=CORNER_BL, z_reference=Z_CENTER))
     sim = StockSimulator()
     try:
-        sim.reset(bounds, enable=True, voxel_size_mm=2.0, shape=shape)
+        sim.reset(bounds, enable=True, cell_size_mm=2.0, shape=shape, carver_mode="voxel")
         assert sim.grid is not None
         assert sim.grid.is_solid_at_world(40.0, 0.0, 0.0)
         assert not sim.grid.is_solid_at_world(40.0, 19.0, 19.0)

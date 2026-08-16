@@ -48,11 +48,18 @@ from kivy.input.motionevent import MotionEvent
 # input
 from kivy.input.provider import MotionEventProvider
 
-from .addons.stock.simulation_quality import (
+from .addons.stock.simulator import (
+    DEFAULT_MESH_THROTTLE_S,
+    PLAY_MESH_THROTTLE_S,
+    StockSimulator,
+)
+from .addons.stock.simulator.carver_select import DEFAULT_CARVER_MODE, normalize_carver_mode
+from .addons.stock.simulator.mesh_format import VERTEX_FORMAT as CARVED_VERTEX_FORMAT
+from .addons.stock.simulator.simulation_quality import (
     CHECKPOINT_SLOTS_BY_LEVEL,
     DEFAULT_CHECKPOINT_LEVEL,
     DEFAULT_VOXEL_RESOLUTION,
-    VOXEL_TARGET_BY_LEVEL,
+    format_cell_size_mm,
     normalize_checkpoint_level,
     normalize_voxel_resolution,
 )
@@ -70,12 +77,6 @@ from .addons.stock.stock_aabb_mesh import (
 from .addons.stock.stock_defaults import default_bounds, default_shape
 from .addons.stock.stock_geometry import StockBounds
 from .addons.stock.stock_shape import CylindricalStock, RectangularStock, RotaryCylindricalStock, StockShape
-from .addons.stock.voxel.stock_simulator import (
-    DEFAULT_MESH_THROTTLE_S,
-    PLAY_MESH_THROTTLE_S,
-    StockSimulator,
-)
-from .addons.stock.voxel.voxel_mesher import VERTEX_FORMAT as VOXEL_VERTEX_FORMAT
 from .addons.tool_visualization.mesh_builder import build_tool_meshes
 from .arcball_from_cpp import *
 from .Objloader import ObjFile
@@ -711,16 +712,16 @@ class GCodeViewer(Widget):
         self.stockmesh = RenderContext()
         self.stockmesh.shader.source = os.path.join(shader_dir, "stock.glsl")
 
-        self.voxelmesh = RenderContext()
-        self.voxelmesh.shader.source = os.path.join(shader_dir, "voxel.glsl")
-        self.voxelmesh["vertex_scale"] = 1.0
-        self._voxel_chunk_meshes: dict[tuple[int, int, int], Mesh] = {}
-        self._voxel_mesh_anchor = None
-        with self.voxelmesh:
+        self.carvedmesh = RenderContext()
+        self.carvedmesh.shader.source = os.path.join(shader_dir, "carved_stock.glsl")
+        self.carvedmesh["vertex_scale"] = 1.0
+        self._carved_meshes: dict[tuple[int, int, int], Mesh] = {}
+        self._carved_mesh_anchor = None
+        with self.carvedmesh:
             Callback(self.setup_gl_context)
-            Callback(self._setup_voxel_gl)
-            self._voxel_mesh_anchor = Callback(None)
-            Callback(self._reset_voxel_gl)
+            Callback(self._setup_carved_gl)
+            self._carved_mesh_anchor = Callback(None)
+            Callback(self._reset_carved_gl)
             Callback(self.reset_gl_context)
 
         self.pointermesh = RenderContext()
@@ -792,6 +793,7 @@ class GCodeViewer(Widget):
         self._defer_carved_stock = False
         self.stock_voxel_resolution = DEFAULT_VOXEL_RESOLUTION
         self.stock_checkpoint_level = DEFAULT_CHECKPOINT_LEVEL
+        self.stock_carver_mode = DEFAULT_CARVER_MODE
         self._sim_carved_vertex = 0
         self._sim_progress_vertex = 0
         self._sim_progress_trigger = Clock.create_trigger(self._flush_sim_progress, 0)
@@ -962,7 +964,7 @@ class GCodeViewer(Widget):
         self.canvas.add(self.gridmesh)
         if self.stock_visible or self.simulate_cut:
             self.canvas.add(self.stockmesh)
-            self.canvas.add(self.voxelmesh)
+            self.canvas.add(self.carvedmesh)
         self.canvas.add(self.linemesh)
         self.canvas.add(self.pointermesh)
         self.canvas.add(self.axisxmesh)
@@ -972,7 +974,7 @@ class GCodeViewer(Widget):
         self._update_view_cube_uniforms()
         self._viewer_meshes_active = True
         self._update_stock_uniforms()
-        self._update_voxel_uniforms()
+        self._update_carved_uniforms()
 
     def _grid_quad_extent(self):
         """World-space quad width so the plane covers the viewport when orbiting."""
@@ -1012,9 +1014,9 @@ class GCodeViewer(Widget):
         self.canvas.remove(self.gridmesh)
         if self.stockmesh in self.canvas.children:
             self.canvas.remove(self.stockmesh)
-        if self.voxelmesh in self.canvas.children:
-            self.canvas.remove(self.voxelmesh)
-        self._clear_voxel_chunk_meshes()
+        if self.carvedmesh in self.canvas.children:
+            self.canvas.remove(self.carvedmesh)
+        self._clear_carved_meshes()
         self.canvas.remove(self.pointermesh)
         self.pointermesh.clear()
         self.canvas.remove(self.axisxmesh)
@@ -1297,10 +1299,10 @@ class GCodeViewer(Widget):
         self.linemesh["proj_mat"] = proj
         self.gridmesh["proj_mat"] = proj
         self.stockmesh["proj_mat"] = proj
-        self.voxelmesh["proj_mat"] = proj
+        self.carvedmesh["proj_mat"] = proj
         self._update_grid_uniforms()
         self._update_stock_uniforms()
-        self._update_voxel_uniforms()
+        self._update_carved_uniforms()
         self.pointermesh["projection_mat"] = proj
         self.axisxmesh["projection_mat"] = proj
         self.axisymesh["projection_mat"] = proj
@@ -1329,7 +1331,7 @@ class GCodeViewer(Widget):
         )
         self._update_grid_uniforms()
         self._update_stock_uniforms()
-        self._update_voxel_uniforms()
+        self._update_carved_uniforms()
         self._update_view_cube_uniforms()
 
     def setup_gl_context(self, *args):
@@ -1337,7 +1339,7 @@ class GCodeViewer(Widget):
         glEnable(GL_DEPTH_TEST)
 
     def reset_gl_context(self, *args):
-        # Depth mask is global GL state shared with voxelmesh / linemesh — always
+        # Depth mask is global GL state shared with carvedmesh / linemesh — always
         # restore writes after stock (translucent fill may have disabled them).
         glDepthMask(GL_TRUE)
         glDisable(GL_DEPTH_TEST)
@@ -1819,6 +1821,7 @@ class GCodeViewer(Widget):
         voxel_resolution: str = DEFAULT_VOXEL_RESOLUTION,
         checkpoint_level: str = DEFAULT_CHECKPOINT_LEVEL,
         mesh_while_playing: bool = False,
+        carver_mode: str = DEFAULT_CARVER_MODE,
         shape: StockShape | None = None,
     ) -> None:
         """Configure stock display and optional cut simulation."""
@@ -1838,6 +1841,7 @@ class GCodeViewer(Widget):
         self.stock_mesh_while_playing = bool(mesh_while_playing)
         self.stock_voxel_resolution = normalize_voxel_resolution(voxel_resolution)
         self.stock_checkpoint_level = normalize_checkpoint_level(checkpoint_level)
+        self.stock_carver_mode = normalize_carver_mode(carver_mode)
         self._defer_carved_stock = False
 
         self._rebuild_stock_mesh()
@@ -1853,26 +1857,38 @@ class GCodeViewer(Widget):
         if not stats:
             return ""
 
-        voxel_mm = stats["voxel_size_mm"]
-        if voxel_mm >= 1.0 or abs(voxel_mm - round(voxel_mm)) < 1e-6:
-            voxel_txt = f"{voxel_mm:.1f}" if voxel_mm < 10 else f"{voxel_mm:.0f}"
-        else:
-            voxel_txt = f"{voxel_mm:.2f}"
+        cell_mm = stats["cell_size_mm"]
+        cell_txt = format_cell_size_mm(cell_mm)
 
         # Furthest checkpoint as path-distance percent (same basis as the scrubber ticks).
         head_pct = 0.0
         if int(stats["checkpoint_count"]) > 0:
             head_pct = self._vertex_to_path_percent(stats["checkpoint_head_vertex"])
 
+        carver = str(stats.get("carver") or "voxel")
+        if carver == "heightmap":
+            grid_line = tr._("Heightmap: %dx%d - %smm/cell") % (
+                int(stats.get("grid_nx", 0)),
+                int(stats.get("grid_ny", 0)),
+                cell_txt,
+            )
+        elif carver == "cylindrical":
+            grid_line = tr._("Cylindrical: %dx%d - %smm/cell") % (
+                int(stats.get("grid_nx", 0)),
+                int(stats.get("grid_ny", 0)),
+                cell_txt,
+            )
+        else:
+            grid_line = tr._("Grid: %dx%dx%d - %smm/voxel") % (
+                int(stats["grid_nx"]),
+                int(stats["grid_ny"]),
+                int(stats["grid_nz"]),
+                cell_txt,
+            )
+
         return "\n".join(
             [
-                tr._("Grid: %dx%dx%d - %smm/voxel")
-                % (
-                    int(stats["grid_nx"]),
-                    int(stats["grid_ny"]),
-                    int(stats["grid_nz"]),
-                    voxel_txt,
-                ),
+                grid_line,
                 tr._("Checkpoints: %.0f%% - %d/%d slots")
                 % (
                     head_pct,
@@ -1897,21 +1913,21 @@ class GCodeViewer(Widget):
             return
         show_stock = self.stock_visible or self.simulate_cut
         show_voxels = self._carved_stock_visible()
-        for mesh in (self.stockmesh, self.voxelmesh):
+        for mesh in (self.stockmesh, self.carvedmesh):
             if mesh in self.canvas.children:
                 self.canvas.remove(mesh)
         if not show_stock:
-            self._clear_voxel_chunk_meshes()
+            self._clear_carved_meshes()
             return
         try:
             idx = self.canvas.children.index(self.gridmesh) + 1
             self.canvas.insert(idx, self.stockmesh)
             if show_voxels:
-                self.canvas.insert(idx + 1, self.voxelmesh)
+                self.canvas.insert(idx + 1, self.carvedmesh)
         except ValueError:
             self.canvas.add(self.stockmesh)
             if show_voxels:
-                self.canvas.add(self.voxelmesh)
+                self.canvas.add(self.carvedmesh)
         self._raise_view_cube_to_top()
 
     def _stock_scale(self) -> float:
@@ -2003,7 +2019,7 @@ class GCodeViewer(Widget):
         """Keep preview and voxel stock spinning with 4-axis playback."""
         self._stock_rotation_mat = mat
         self.stockmesh["rotation_mat"] = mat
-        self.voxelmesh["rotation_mat"] = mat
+        self.carvedmesh["rotation_mat"] = mat
 
     def _update_stock_uniforms(self) -> None:
         center = getattr(self, "lines_center", [0.0, 0.0, 0.0])
@@ -2013,35 +2029,35 @@ class GCodeViewer(Widget):
         self.stockmesh["rotation_mat"] = self._stock_rotation_mat
         self.stockmesh["use_lighting"] = 1.0
 
-    def _update_voxel_uniforms(self) -> None:
+    def _update_carved_uniforms(self) -> None:
         center = getattr(self, "lines_center", [0.0, 0.0, 0.0])
-        self.voxelmesh["center_offset"] = Matrix().translate(-center[0], -center[1], -center[2])
-        self.voxelmesh["view_mat"] = self.m_viewMatrix
-        self.voxelmesh["proj_mat"] = self._proj_matrix
-        self.voxelmesh["rotation_mat"] = self._stock_rotation_mat
-        self.voxelmesh["vertex_scale"] = self._stock_scale()
+        self.carvedmesh["center_offset"] = Matrix().translate(-center[0], -center[1], -center[2])
+        self.carvedmesh["view_mat"] = self.m_viewMatrix
+        self.carvedmesh["proj_mat"] = self._proj_matrix
+        self.carvedmesh["rotation_mat"] = self._stock_rotation_mat
+        self.carvedmesh["vertex_scale"] = self._stock_scale()
         # Height tint range in the same viewer-scaled space as mesh vertex Z.
         bounds = self.stock_bounds_mm
         if bounds is not None:
             scale = self._stock_scale()
-            self.voxelmesh["stock_z_min"] = float(bounds.min_z) * scale
-            self.voxelmesh["stock_z_max"] = float(bounds.max_z) * scale
+            self.carvedmesh["stock_z_min"] = float(bounds.min_z) * scale
+            self.carvedmesh["stock_z_max"] = float(bounds.max_z) * scale
         else:
-            self.voxelmesh["stock_z_min"] = 0.0
-            self.voxelmesh["stock_z_max"] = 1.0
+            self.carvedmesh["stock_z_min"] = 0.0
+            self.carvedmesh["stock_z_max"] = 1.0
 
-    def _clear_voxel_chunk_meshes(self) -> None:
-        self.voxelmesh.clear()
-        self._voxel_chunk_meshes = {}
+    def _clear_carved_meshes(self) -> None:
+        self.carvedmesh.clear()
+        self._carved_meshes = {}
         # Keep GL setup/teardown callbacks so subsequent Mesh children render correctly.
-        with self.voxelmesh:
+        with self.carvedmesh:
             Callback(self.setup_gl_context)
-            Callback(self._setup_voxel_gl)
-            self._voxel_mesh_anchor = Callback(None)
-            Callback(self._reset_voxel_gl)
+            Callback(self._setup_carved_gl)
+            self._carved_mesh_anchor = Callback(None)
+            Callback(self._reset_carved_gl)
             Callback(self.reset_gl_context)
 
-    def _setup_voxel_gl(self, *_args):
+    def _setup_carved_gl(self, *_args):
         # Opaque remaining-stock surfaces: depth writes so pocket floors are visible
         # instead of stacking translucent brown layers.
         glEnable(GL_DEPTH_TEST)
@@ -2049,7 +2065,7 @@ class GCodeViewer(Widget):
         glEnable(GL_CULL_FACE)
         glCullFace(GL_BACK)
 
-    def _reset_voxel_gl(self, *_args):
+    def _reset_carved_gl(self, *_args):
         glDisable(GL_CULL_FACE)
         glEnable(GL_BLEND)
 
@@ -2068,37 +2084,37 @@ class GCodeViewer(Widget):
     def _apply_stock_meshes(self, meshes: dict) -> None:
         # Special sentinels from disable / seek-back.
         if meshes and "__clear_all__" in meshes:
-            self._clear_voxel_chunk_meshes()
+            self._clear_carved_meshes()
             self._defer_carved_stock = False
             self._scene_dirty = True
             return
         reveal = self._defer_carved_stock
-        # Keep GPU buffers in sync even when voxelmesh is off-canvas (play with
+        # Keep GPU buffers in sync even when carvedmesh is off-canvas (play with
         # live mesh off). Hide by not drawing, not by dropping patches.
         if meshes and "__replace__" in meshes:
-            self._clear_voxel_chunk_meshes()
+            self._clear_carved_meshes()
             meshes = meshes.get("__replace__") or {}
         for key, packed in meshes.items():
-            existing = self._voxel_chunk_meshes.get(key)
+            existing = self._carved_meshes.get(key)
             if packed is None:
                 if existing is not None:
-                    self.voxelmesh.remove(existing)
-                    del self._voxel_chunk_meshes[key]
+                    self.carvedmesh.remove(existing)
+                    del self._carved_meshes[key]
                 continue
             vertices_mm, indices, fmt = packed
             if existing is not None:
                 existing.vertices = vertices_mm
                 existing.indices = indices
             else:
-                mesh = Mesh(fmt=fmt or VOXEL_VERTEX_FORMAT, vertices=vertices_mm, indices=indices, mode="triangles")
+                mesh = Mesh(fmt=fmt or CARVED_VERTEX_FORMAT, vertices=vertices_mm, indices=indices, mode="triangles")
                 # Insert before the reset callbacks (after the anchor).
                 try:
-                    anchor_idx = self.voxelmesh.children.index(self._voxel_mesh_anchor)
-                    self.voxelmesh.insert(anchor_idx + 1, mesh)
+                    anchor_idx = self.carvedmesh.children.index(self._carved_mesh_anchor)
+                    self.carvedmesh.insert(anchor_idx + 1, mesh)
                 except (ValueError, AttributeError):
-                    self.voxelmesh.add(mesh)
-                self._voxel_chunk_meshes[key] = mesh
-        self._update_voxel_uniforms()
+                    self.carvedmesh.add(mesh)
+                self._carved_meshes[key] = mesh
+        self._update_carved_uniforms()
         if reveal:
             self._reveal_carved_stock_if_deferred()
         self._scene_dirty = True
@@ -2117,7 +2133,7 @@ class GCodeViewer(Widget):
         self.sim_progress = 0.0
         self.sim_checkpoints = []
         self._defer_carved_stock = False
-        self._clear_voxel_chunk_meshes()
+        self._clear_carved_meshes()
         if not self.simulate_cut or self.stock_bounds_mm is None:
             self._stock_simulator.disable()
             self._sim_hud_trigger()
@@ -2126,9 +2142,10 @@ class GCodeViewer(Widget):
         self._stock_simulator.reset(
             self.stock_bounds_mm,
             enable=True,
-            voxel_target=VOXEL_TARGET_BY_LEVEL[self.stock_voxel_resolution],
+            resolution_level=self.stock_voxel_resolution,
             checkpoint_slots=CHECKPOINT_SLOTS_BY_LEVEL[self.stock_checkpoint_level],
             shape=self.stock_shape,
+            carver_mode=self.stock_carver_mode,
         )
         self._sync_play_mesh_policy(rebuild=False)
         if self.lengths and self.raw_positions:
@@ -2219,6 +2236,8 @@ class GCodeViewer(Widget):
         if self._stock_simulator is None:
             return
         # tool_unit_scale only (not move_scale_by_positon): carving is mm WCS.
+        app = App.get_running_app()
+        has_4axis = bool(app is not None and getattr(app, "has_4axis", False))
         self._stock_simulator.set_toolpath(
             self.raw_positions,
             self.vertex_types,
@@ -2226,6 +2245,7 @@ class GCodeViewer(Widget):
             self.tool_table,
             tool_scale=float(self.tool_unit_scale or 1.0),
             angles=self.angles_of_vertices,
+            has_4axis=has_4axis,
         )
 
     def _sync_stock_simulation(self, current_vertex: int) -> None:
@@ -2296,7 +2316,7 @@ class GCodeViewer(Widget):
         self.linemesh["view_mat"] = self.m_viewMatrix
         self._update_grid_uniforms()
         self._update_stock_uniforms()
-        self._update_voxel_uniforms()
+        self._update_carved_uniforms()
 
         pointer_updated_pos = 3 * int(line_index_withratio)
 

@@ -6,7 +6,8 @@ from typing import Any
 
 from carveracontroller.addons.facing.stock_geometry import CORNER_BL
 
-from .simulation_quality import (
+from .simulator.carver_select import DEFAULT_CARVER_MODE, normalize_carver_mode
+from .simulator.simulation_quality import (
     DEFAULT_CHECKPOINT_LEVEL,
     DEFAULT_VOXEL_RESOLUTION,
     normalize_checkpoint_level,
@@ -55,6 +56,7 @@ def default_settings() -> dict[str, Any]:
         "mesh_while_playing": False,
         "voxel_resolution": DEFAULT_VOXEL_RESOLUTION,
         "checkpoint_level": DEFAULT_CHECKPOINT_LEVEL,
+        "carver_mode": DEFAULT_CARVER_MODE,
     }
 
 
@@ -80,3 +82,7 @@ def checkpoint_level_from_settings(settings: dict[str, Any]) -> str:
 
 def mesh_while_playing_from_settings(settings: dict[str, Any]) -> bool:
     return bool(settings.get("mesh_while_playing", False))
+
+
+def carver_mode_from_settings(settings: dict[str, Any]) -> str:
+    return normalize_carver_mode(settings.get("carver_mode"))

@@ -254,7 +254,25 @@
                         height: dp(40)
                         spacing: dp(8)
                         Label:
-                            text: tr._('Voxel resolution')
+                            text: tr._('Carver')
+                            size_hint_x: LABEL_W
+                            text_size: self.size
+                            halign: 'left'
+                            valign: 'middle'
+                            disabled: not chk_simulate.active or not root.simulation_available or not chk_show_stock.active
+                        Spinner:
+                            id: spn_carver_mode
+                            values: ['']
+                            text: ''
+                            size_hint_x: FIELD_W
+                            disabled: not chk_simulate.active or not root.simulation_available or not chk_show_stock.active
+
+                    BoxLayout:
+                        size_hint_y: None
+                        height: dp(40)
+                        spacing: dp(8)
+                        Label:
+                            text: tr._('Simulation resolution')
                             size_hint_x: LABEL_W
                             text_size: self.size
                             halign: 'left'

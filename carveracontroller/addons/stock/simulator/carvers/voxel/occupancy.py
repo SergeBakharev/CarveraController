@@ -12,7 +12,16 @@ from carveracontroller.addons.stock.stock_shape import (
     StockShape,
 )
 
-from .voxel_grid import ChunkCoord, ChunkedVoxelGrid
+from .grid import CHUNK_FULL, ChunkCoord, ChunkedVoxelGrid
+
+_NEIGHBOR_OFFSETS = (
+    (1, 0, 0),
+    (-1, 0, 0),
+    (0, 1, 0),
+    (0, -1, 0),
+    (0, 0, 1),
+    (0, 0, -1),
+)
 
 
 def seed_shape_occupancy(grid: ChunkedVoxelGrid, shape: StockShape | None) -> set[tuple[int, int, int]]:
@@ -145,11 +154,40 @@ def _all_chunk_coords(grid: ChunkedVoxelGrid):
 
 def non_full_chunk_keys(grid: ChunkedVoxelGrid) -> set[tuple[int, int, int]]:
     """Keys stored in the grid that are not implicit/explicit FULL."""
-    from .voxel_grid import CHUNK_FULL
-
     keys: set[tuple[int, int, int]] = set()
     for key, state in grid._chunks.items():
         if state is CHUNK_FULL:
             continue
         keys.add(key)
     return keys
+
+
+def exterior_chunk_keys(grid: ChunkedVoxelGrid) -> set[tuple[int, int, int]]:
+    """Chunk coords on the outer shell of the grid (have at least one stock face)."""
+    keys: set[tuple[int, int, int]] = set()
+    nx, ny, nz = grid.n_chunks_x, grid.n_chunks_y, grid.n_chunks_z
+    for cx in range(nx):
+        for cy in range(ny):
+            for cz in range(nz):
+                if cx in (0, nx - 1) or cy in (0, ny - 1) or cz in (0, nz - 1):
+                    keys.add((cx, cy, cz))
+    return keys
+
+
+def expand_dirty_with_neighbors(
+    grid: ChunkedVoxelGrid,
+    dirty: set[tuple[int, int, int]],
+) -> set[tuple[int, int, int]]:
+    """Include 6-connected neighbours so pocket walls on FULL chunks are remeshed."""
+    expanded = set(dirty)
+    nx, ny, nz = grid.n_chunks_x, grid.n_chunks_y, grid.n_chunks_z
+    for cx, cy, cz in dirty:
+        for dx, dy, dz in _NEIGHBOR_OFFSETS:
+            x, y, z = cx + dx, cy + dy, cz + dz
+            if 0 <= x < nx and 0 <= y < ny and 0 <= z < nz:
+                expanded.add((x, y, z))
+    return expanded
+
+
+# Test alias kept from the former simulator module.
+_expand_dirty_with_neighbors = expand_dirty_with_neighbors

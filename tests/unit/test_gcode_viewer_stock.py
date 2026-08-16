@@ -69,11 +69,11 @@ def test_play_clears_deferred_carved_stock():
 
 def test_mesh_apply_reveals_carved_stock_after_deferred_pause():
     viewer = _viewer(_defer_carved_stock=True)
-    viewer._voxel_chunk_meshes = {}
-    viewer.voxelmesh = MagicMock()
-    viewer.voxelmesh.children = []
-    viewer._voxel_mesh_anchor = object()
-    viewer._update_voxel_uniforms = MagicMock()
+    viewer._carved_meshes = {}
+    viewer.carvedmesh = MagicMock()
+    viewer.carvedmesh.children = []
+    viewer._carved_mesh_anchor = object()
+    viewer._update_carved_uniforms = MagicMock()
     viewer._rebuild_stock_mesh = MagicMock()
     viewer._ensure_stock_on_canvas = MagicMock()
 
@@ -86,14 +86,14 @@ def test_mesh_apply_reveals_carved_stock_after_deferred_pause():
 
 def test_clear_all_does_not_reveal_deferred_carved_stock():
     viewer = _viewer(_defer_carved_stock=True)
-    viewer._clear_voxel_chunk_meshes = MagicMock()
+    viewer._clear_carved_meshes = MagicMock()
     viewer._rebuild_stock_mesh = MagicMock()
     viewer._ensure_stock_on_canvas = MagicMock()
 
     viewer._apply_stock_meshes({"__clear_all__": None})
 
     assert viewer._defer_carved_stock is False
-    viewer._clear_voxel_chunk_meshes.assert_called_once()
+    viewer._clear_carved_meshes.assert_called_once()
     viewer._rebuild_stock_mesh.assert_not_called()
     viewer._ensure_stock_on_canvas.assert_not_called()
 
@@ -111,14 +111,14 @@ def test_stock_uniforms_keep_a_axis_rotation():
         stock_bounds_mm=None,
     )
     viewer.stockmesh = {}
-    viewer.voxelmesh = {}
+    viewer.carvedmesh = {}
     viewer._stock_scale = lambda: 1.0
 
     GCodeViewer._update_stock_uniforms(viewer)
-    GCodeViewer._update_voxel_uniforms(viewer)
+    GCodeViewer._update_carved_uniforms(viewer)
 
     assert viewer.stockmesh["rotation_mat"] is rot
-    assert viewer.voxelmesh["rotation_mat"] is rot
+    assert viewer.carvedmesh["rotation_mat"] is rot
 
 
 def test_raw_feed_z_max_uses_unrotated_wcs_z():
