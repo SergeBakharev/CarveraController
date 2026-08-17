@@ -76,9 +76,28 @@ def test_estimate_degenerate_xy_uses_padding_and_epsilon():
     shape, origin = estimate_rectangular_stock(5.0, 5.0, 0.0, 5.0, 5.0, 0.0, pad_xy_mm=3.0)
     assert shape.width_mm == pytest.approx(6.0)
     assert shape.length_mm == pytest.approx(6.0)
-    assert shape.height_mm > 0.0
+    assert shape.height_mm == pytest.approx(1.0)
     assert origin.offset_x_mm == pytest.approx(2.0)
     assert origin.offset_y_mm == pytest.approx(2.0)
+
+
+def test_estimate_planar_job_uses_minimum_one_mm_height():
+    # Laser / engraving at Z=0: no vertical span, still guess 1 mm stock.
+    shape, origin = estimate_rectangular_stock(0.0, 0.0, 0.0, 50.0, 30.0, 0.0, pad_xy_mm=0.0)
+    assert shape.width_mm == pytest.approx(50.0)
+    assert shape.length_mm == pytest.approx(30.0)
+    assert shape.height_mm == pytest.approx(1.0)
+    assert origin.offset_z_mm == pytest.approx(0.0)
+    bounds = compute_wcs_bounds(shape, origin)
+    assert bounds.min_z == pytest.approx(-1.0)
+    assert bounds.max_z == pytest.approx(0.0)
+
+
+def test_estimate_zero_span_uses_minimum_one_mm():
+    shape, origin = estimate_rectangular_stock(5.0, 5.0, 0.0, 5.0, 5.0, 0.0, pad_xy_mm=0.0)
+    assert shape.width_mm == pytest.approx(1.0)
+    assert shape.length_mm == pytest.approx(1.0)
+    assert shape.height_mm == pytest.approx(1.0)
 
 
 def test_estimate_negative_pad_is_treated_as_zero():

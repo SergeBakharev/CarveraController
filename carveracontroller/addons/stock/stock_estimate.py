@@ -16,8 +16,10 @@ from .stock_defaults import default_origin, default_rotary_origin, default_rotar
 from .stock_origin import Z_CENTER, Z_TOP, StockOrigin
 from .stock_shape import RectangularStock, RotaryCylindricalStock, StockShape, shape_from_dict
 
-# RectangularStock requires strictly positive extents.
-_MIN_EXTENT_MM = 1e-6
+# Guessed extents snap to whole millimetres
+# Keep at least 1 mm for planar jobs (eg. laser engraving)
+_MIN_EXTENT_MM = 1.0
+_NEAR_ZERO_MM = 1e-6
 
 
 def _is_cutting_tool_number(number: int) -> bool:
@@ -124,7 +126,7 @@ def estimate_rotary_stock(
 
     height = max(2.0 * math.ceil(max_abs_z + pad), _MIN_EXTENT_MM)
     width_y = max(2.0 * math.ceil(max_abs_y + pad), _MIN_EXTENT_MM)
-    if max_abs_y < _MIN_EXTENT_MM:
+    if max_abs_y < _NEAR_ZERO_MM:
         width_y = height
 
     origin = StockOrigin(
