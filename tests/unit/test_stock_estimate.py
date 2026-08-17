@@ -164,6 +164,15 @@ def test_auto_stock_prefers_cam_header():
     assert origin.offset_x_mm == pytest.approx(1.0)
 
 
+def test_auto_stock_does_not_rescale_header_already_in_mm():
+    cam = CamStock(kind="rectangular", width_mm=120.0, length_mm=80.0, height_mm=12.0, offset_x_mm=1.0)
+    shape, origin = auto_stock_for_loaded_file(
+        cam, 0.0, 0.0, -1.0, 10.0, 10.0, 0.0, tool_table={}, unit_scale=25.4
+    )
+    assert shape.width_mm == pytest.approx(120.0)
+    assert origin.offset_x_mm == pytest.approx(1.0)
+
+
 def test_auto_stock_estimates_when_header_stock_missing():
     table = {1: ToolDefinition(number=1, diameter=6.0)}
     shape, origin = auto_stock_for_loaded_file(

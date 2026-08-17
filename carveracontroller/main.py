@@ -7885,7 +7885,9 @@ class Makera(RelativeLayout):
 
             # Detect tools/stock metadata and set document unit if available
             self.document_unit = detect_document_unit(self.lines)
-            self.cam_metadata = extract_cam_metadata(self.lines)
+            self.cam_metadata = extract_cam_metadata(
+                self.lines, unit_scale=unit_scale_to_mm(self.document_unit)
+            )
             self.tool_table = self.cam_metadata.tool_table
             self.gcode_viewer.tool_table = self.tool_table
             self.gcode_viewer.tool_unit_scale = unit_scale_to_mm(self.document_unit)

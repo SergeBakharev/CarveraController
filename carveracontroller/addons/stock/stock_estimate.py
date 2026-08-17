@@ -175,6 +175,8 @@ def auto_stock_for_loaded_file(
 ) -> tuple[StockShape, StockOrigin]:
     """Prefer CAM-header stock; otherwise estimate from cutting bounds.
 
+    Header stock is already in millimetres. ``unit_scale`` converts
+    document-unit tool diameters when estimating from the toolpath.
     ``feed_z_max_mm`` is P95 of feed-move Z (same idea as the colour-scheme
     panel). For rotary files it must be raw WCS Z, not A-baked display Z.
     If the dimension of the stock can't be guessed fallback to the default values.

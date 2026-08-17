@@ -34,11 +34,14 @@ class CamHeaderParser(ABC):
         """
         raise NotImplementedError
 
-    def parse_metadata(self, lines) -> CamMetadata:
+    def parse_metadata(self, lines, unit_scale=1.0) -> CamMetadata:
         """Parse tools and stock from the same header scan.
 
         Default wraps :meth:`parse` with ``stock=None``. Override when a
         post processor also emits stock comments so both are read in one pass.
+
+        ``unit_scale`` converts document-unit stock sizes/offsets to millimetres
+        (1.0 for mm files, 25.4 for inch files). Tools are left in document units.
         """
         return CamMetadata(parser_name=self.name, tool_table=self.parse(lines) or {}, stock=None)
 

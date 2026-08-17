@@ -201,7 +201,7 @@ def parse_origin_type_name(type_name):
     return xy_corner, z_ref
 
 
-def _named_origin_relative_to_center(dx, dy, dz, xy_corner, z_reference):
+def named_origin_relative_to_center(dx, dy, dz, xy_corner, z_reference):
     """WCS origin relative to the stock AABB centre for a named corner/Z."""
     half_x = dx / 2.0
     half_y = dy / 2.0
@@ -289,7 +289,7 @@ def _build_cam_stock(stock_fields, origin_fields):
             mkr_y = 0.0
         if mkr_z is None:
             mkr_z = 0.0
-        geo_x, geo_y, geo_z = _named_origin_relative_to_center(dx, dy, dz, xy_corner, z_reference)
+        geo_x, geo_y, geo_z = named_origin_relative_to_center(dx, dy, dz, xy_corner, z_reference)
         offset_x_mm = geo_x - mkr_x
         offset_y_mm = geo_y - mkr_y
         offset_z_mm = geo_z - mkr_z
@@ -318,7 +318,7 @@ class MakeraStudioParser(CamHeaderParser):
     def parse(self, lines):
         return self.parse_metadata(lines).tool_table
 
-    def parse_metadata(self, lines) -> CamMetadata:
+    def parse_metadata(self, lines, unit_scale=1.0) -> CamMetadata:
         tool_table = {}
         stock_fields = None
         origin_fields = None
@@ -361,6 +361,7 @@ class MakeraStudioParser(CamHeaderParser):
         if stock_fields is not None:
             stock = _build_cam_stock(stock_fields, origin_fields)
             if stock is not None:
+                stock = stock.scaled(unit_scale)
                 logger.info(
                     f"Detected Makera Studio stock: {stock.kind} "
                     f"origin {stock.xy_corner}/{stock.z_reference} "

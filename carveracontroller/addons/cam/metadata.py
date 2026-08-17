@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition
 
 
 @dataclass(frozen=True)
 class CamStock:
-    """Stock definition parsed from a CAM post-processor header."""
+    """Stock definition in millimetres, parsed from a CAM post-processor header."""
 
     kind: str
     width_mm: float | None = None
@@ -50,6 +50,30 @@ class CamStock:
             "offset_y_mm": float(self.offset_y_mm),
             "offset_z_mm": float(self.offset_z_mm),
         }
+
+    def scaled(self, factor: float) -> CamStock:
+        """Return a copy with sizes and offsets multiplied by ``factor``.
+
+        Posts emit stock in document units. Call this with ``unit_scale_to_mm``
+        before keeping the object so fields are in millimetres.
+        """
+        scale = float(factor) if factor else 1.0
+        if scale == 1.0:
+            return self
+
+        def _scale(value: float | None) -> float | None:
+            return None if value is None else value * scale
+
+        return replace(
+            self,
+            width_mm=_scale(self.width_mm),
+            length_mm=_scale(self.length_mm),
+            height_mm=_scale(self.height_mm),
+            diameter_mm=_scale(self.diameter_mm),
+            offset_x_mm=self.offset_x_mm * scale,
+            offset_y_mm=self.offset_y_mm * scale,
+            offset_z_mm=self.offset_z_mm * scale,
+        )
 
 
 @dataclass(frozen=True)

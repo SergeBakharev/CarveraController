@@ -10,12 +10,25 @@ T<number>  <description>  <vendor>  <productId>  D=<diameter>
 
 TAPER is Fusion's taperAngle in degrees: per-side from the tool axis for mills,
 or the included tip/point angle for drills (converted to per-side on parse).
+
+Stock and origin, when present:
+
+(@F360|STOCK|id=cuboid|length=<float>|width=<float>|height=<float>)
+(@F360|STOCK|id=cylinder|length=<float>|width=<float>|height=<float>|diameter=<float>)
+(@F360|ORIGIN|type_name=<camelCase>|x=<float>|y=<float>|z=<float>)
+
+``length`` is the X extent and ``width`` is the Y extent.
 """
 
 import logging
 import re
 
+from carveracontroller.addons.cam.metadata import CamMetadata, CamStock
 from carveracontroller.addons.cam.parsers.base import CamHeaderParser
+from carveracontroller.addons.cam.parsers.makera_studio import (
+    named_origin_relative_to_center,
+    parse_origin_type_name,
+)
 from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition, ToolType, resolve_tool_type
 
 logger = logging.getLogger(__name__)
@@ -51,6 +64,10 @@ TOOL_LINE_RE = re.compile(
 )
 
 _FIELD_SPLIT_RE = re.compile(r"\s{2,}")
+
+_F360_PREFIX = "@F360|"
+_STOCK_TAG = "STOCK"
+_ORIGIN_TAG = "ORIGIN"
 
 
 def _to_float(value):
@@ -105,11 +122,160 @@ def _extract_full_line_comment(line):
     return None
 
 
+def _parse_f360_fields(comment_text):
+    """Return (tag, fields_dict) for an `@F360|TAG|k=v|...` payload, or None."""
+    stripped = comment_text.strip()
+    if not stripped.startswith(_F360_PREFIX):
+        return None
+
+    parts = stripped[len(_F360_PREFIX) :].split("|")
+    if not parts:
+        return None
+
+    tag = parts[0]
+    fields = {}
+    for part in parts[1:]:
+        if not part:
+            continue
+        key, sep, value = part.partition("=")
+        if not sep:
+            continue
+        fields[key] = value
+    return tag, fields
+
+
+def _origin_corner_from_type_name(type_name):
+    """Return ``(xy_corner, z_reference)`` for a Fusion ORIGIN ``type_name``."""
+    parsed = parse_origin_type_name(type_name)
+    if parsed is not None:
+        return parsed
+    if (type_name or "").strip().lower() == "custom":
+        return "center", "top"
+    if type_name:
+        logger.warning(f"Unrecognised Fusion 360 origin type_name {type_name!r}; defaulting to bl/top")
+    return "bl", "top"
+
+
+def _infer_cylinder_axis(x_mm, y_mm, z_mm):
+    """Return ``x``, ``y``, or ``z`` when one axis is clearly the cylinder axis."""
+    if x_mm is None or y_mm is None or z_mm is None:
+        return None
+    xy = abs(x_mm - y_mm)
+    xz = abs(x_mm - z_mm)
+    yz = abs(y_mm - z_mm)
+    if xy == xz == yz:
+        return None
+    if xy <= xz and xy <= yz:
+        return "z"
+    if xz <= yz:
+        return "y"
+    return "x"
+
+
+def _build_cam_stock(stock_fields, origin_fields):
+    """Build a CamStock from Fusion STOCK/ORIGIN field dicts, or None."""
+    stock_id = (stock_fields.get("id") or "").strip().lower()
+    origin_type = (origin_fields or {}).get("type_name") or ""
+    xy_corner, z_reference = _origin_corner_from_type_name(origin_type)
+
+    if stock_id == "cuboid":
+        # /!\ length -> X (our width_mm), width -> Y (our length_mm) /!\
+        width_mm = _positive_or_none(_to_float(stock_fields.get("length")))
+        length_mm = _positive_or_none(_to_float(stock_fields.get("width")))
+        height_mm = _positive_or_none(_to_float(stock_fields.get("height")))
+        if width_mm is None or length_mm is None or height_mm is None:
+            logger.warning("Ignoring Fusion 360 cuboid STOCK with missing or non-positive length/width/height")
+            return None
+        kind = "rectangular"
+        diameter_mm = None
+        dx, dy, dz = width_mm, length_mm, height_mm
+    elif stock_id == "cylinder":
+        diameter_mm = _positive_or_none(_to_float(stock_fields.get("diameter")))
+        if diameter_mm is None:
+            logger.warning("Ignoring Fusion 360 cylinder STOCK with missing or non-positive diameter")
+            return None
+        x_mm = _positive_or_none(_to_float(stock_fields.get("length")))
+        y_mm = _positive_or_none(_to_float(stock_fields.get("width")))
+        z_mm = _positive_or_none(_to_float(stock_fields.get("height")))
+        axis = _infer_cylinder_axis(x_mm, y_mm, z_mm)
+        if axis == "y":
+            logger.warning("Ignoring Fusion 360 cylinder STOCK with unsupported Y-axis orientation")
+            return None
+        if axis == "x":
+            is_rotary = True
+        elif axis == "z":
+            is_rotary = False
+        else:
+            is_rotary = z_reference == "center"
+        if is_rotary:
+            length_mm = x_mm
+            if length_mm is None:
+                logger.warning("Ignoring Fusion 360 rotary cylinder STOCK with missing or non-positive length")
+                return None
+            if (origin_type or "").strip().lower() == "custom":
+                xy_corner, z_reference = "center", "center"
+            kind = "rotary_cylindrical"
+            width_mm = None
+            height_mm = None
+            dx, dy, dz = length_mm, diameter_mm, diameter_mm
+        else:
+            height_mm = z_mm
+            if height_mm is None:
+                logger.warning("Ignoring Fusion 360 mill cylinder STOCK with missing or non-positive height")
+                return None
+            kind = "cylindrical"
+            width_mm = None
+            length_mm = None
+            dx, dy, dz = diameter_mm, diameter_mm, height_mm
+    else:
+        if stock_id:
+            logger.warning(f"Ignoring unrecognised Fusion 360 STOCK id {stock_id!r}")
+        return None
+
+    if origin_fields:
+        origin_x = _to_float(origin_fields.get("x"))
+        origin_y = _to_float(origin_fields.get("y"))
+        origin_z = _to_float(origin_fields.get("z"))
+        if origin_x is None:
+            origin_x = 0.0
+        if origin_y is None:
+            origin_y = 0.0
+        if origin_z is None:
+            origin_z = 0.0
+        geo_x, geo_y, geo_z = named_origin_relative_to_center(dx, dy, dz, xy_corner, z_reference)
+        offset_x_mm = geo_x - origin_x
+        offset_y_mm = geo_y - origin_y
+        offset_z_mm = geo_z - origin_z
+    else:
+        offset_x_mm = 0.0
+        offset_y_mm = 0.0
+        offset_z_mm = 0.0
+
+    return CamStock(
+        kind=kind,
+        width_mm=width_mm,
+        length_mm=length_mm,
+        height_mm=height_mm,
+        diameter_mm=diameter_mm,
+        xy_corner=xy_corner,
+        z_reference=z_reference,
+        offset_x_mm=offset_x_mm,
+        offset_y_mm=offset_y_mm,
+        offset_z_mm=offset_z_mm,
+    )
+
+
 class Fusion360MakeraParser(CamHeaderParser):
     name = "fusion360_makera"
 
     def parse(self, lines):
+        return self.parse_metadata(lines).tool_table
+
+    def parse_metadata(self, lines, unit_scale=1.0) -> CamMetadata:
         tool_table = {}
+        stock_fields = None
+        origin_fields = None
+
         for raw_line in self.iter_header_lines(lines):
             line = raw_line.strip()
             if not line:
@@ -117,6 +283,17 @@ class Fusion360MakeraParser(CamHeaderParser):
 
             comment_text = _extract_full_line_comment(line)
             if comment_text is None:
+                continue
+
+            parsed = _parse_f360_fields(comment_text)
+            if parsed is not None:
+                tag, fields = parsed
+                if tag == _STOCK_TAG:
+                    if stock_fields is None:
+                        stock_fields = fields
+                elif tag == _ORIGIN_TAG:
+                    if origin_fields is None:
+                        origin_fields = fields
                 continue
 
             match = TOOL_LINE_RE.match(comment_text.strip())
@@ -143,7 +320,18 @@ class Fusion360MakeraParser(CamHeaderParser):
                     dims += f", TAPER={tool_def.taper_angle_deg}"
                 logger.info(f"Detected T{number}: {tool_def.tool_type.value} ({dims}) - {tool_def.description!r}")
 
-        return tool_table
+        stock = None
+        if stock_fields is not None:
+            stock = _build_cam_stock(stock_fields, origin_fields)
+            if stock is not None:
+                stock = stock.scaled(unit_scale)
+                logger.info(
+                    f"Detected Fusion 360 stock: {stock.kind} "
+                    f"origin {stock.xy_corner}/{stock.z_reference} "
+                    f"offset=({stock.offset_x_mm:g}, {stock.offset_y_mm:g}, {stock.offset_z_mm:g})"
+                )
+
+        return CamMetadata(parser_name=self.name, tool_table=tool_table, stock=stock)
 
     @staticmethod
     def _build_tool_definition(number, match):
