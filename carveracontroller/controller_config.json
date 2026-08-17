@@ -121,8 +121,8 @@
     },
     {
         "type": "bool",
-        "title": "Allow Jogging When Spindle Is On",
-        "desc": "Allow jogging while the spindle is enabled. Use this functionality with caution.",
+        "title": "Allow Jogging When Spindle or Laser Is On",
+        "desc": "Allow jogging while the spindle is spinning or the laser is firing. Use this functionality with caution.",
         "section": "carvera",
         "key": "allow_jogging_while_spindle_on",
         "default": "false"

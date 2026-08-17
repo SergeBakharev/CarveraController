@@ -6109,10 +6109,9 @@ class Makera(RelativeLayout):
                 else:
                     v.minr_text = "Vac: {}".format("On" if CNC.vars["vacuummode"] else "Off")
 
-            app.spindle_on = (
-                app.state not in (NOT_CONNECTED, CONNECTED)
-                and not CNC.vars["lasermode"]
-                and CNC.vars["curspindle"] > 0.0
+            app.spindle_or_laser_is_on = app.state not in (NOT_CONNECTED, CONNECTED) and (
+                (not CNC.vars["lasermode"] and CNC.vars["curspindle"] > 0.0)
+                or (CNC.vars["lasermode"] and CNC.vars["laserpower"] > 0.0)
             )
 
             elapsed = now - self.control_list["vacuum_mode"][0]
@@ -6809,7 +6808,7 @@ class Makera(RelativeLayout):
             app.bind(
                 state=self.update_jog_controls_enabled,
                 playing=self.update_jog_controls_enabled,
-                spindle_on=self.update_jog_controls_enabled,
+                spindle_or_laser_is_on=self.update_jog_controls_enabled,
             )
         self.update_jog_controls_enabled()
 
@@ -6827,7 +6826,7 @@ class Makera(RelativeLayout):
                 app.state in ["Idle", "Pause"]
                 or (app.state == "Run" and self.allow_jogging_while_machine_running == "1")
             )
-            and (not app.spindle_on or self.allow_jogging_while_spindle_on == "1")
+            and (not app.spindle_or_laser_is_on or self.allow_jogging_while_spindle_on == "1")
         )
 
     def is_jogging_enabled(self):
@@ -7904,7 +7903,7 @@ class Makera(RelativeLayout):
 class MakeraApp(App):
     state = StringProperty(NOT_CONNECTED)
     playing = BooleanProperty(False)
-    spindle_on = BooleanProperty(False)
+    spindle_or_laser_is_on = BooleanProperty(False)
     jog_controls_enabled = BooleanProperty(False)
     has_4axis = BooleanProperty(False)
     has_atc = BooleanProperty(False)
