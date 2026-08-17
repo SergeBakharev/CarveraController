@@ -1,6 +1,14 @@
 [
     {
         "type": "bool",
+        "title": "Automatically display stock when available",
+        "desc": "Show the stock model in the 3D viewer when stock dimensions are parsed from the G-code header. You can still toggle stock from the viewer toolbar.",
+        "section": "carvera",
+        "key": "gcode_auto_show_stock",
+        "default": "true"
+    },
+    {
+        "type": "bool",
         "title": "Enable Syntax Highlighting",
         "desc": "Colorize G-code tokens in the file viewer. Disable on low-end machines for better scroll performance.",
         "section": "carvera",

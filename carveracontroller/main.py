@@ -3628,6 +3628,17 @@ class Makera(RelativeLayout):
             settings["simulate_cut"] = False
         return self._apply_stock_settings_impl(settings)
 
+    def _should_auto_show_header_stock(self, cam_stock) -> bool:
+        """True when header stock exists and the viewer setting allows auto-display."""
+        if not header_stock_usable(cam_stock):
+            return False
+        raw = (
+            Config.get("carvera", "gcode_auto_show_stock")
+            if Config.has_option("carvera", "gcode_auto_show_stock")
+            else "1"
+        )
+        return raw not in ("0", "false", "False")
+
     def _auto_stock_shape_origin(self):
         """CAM-header stock if present, otherwise toolpath AABB estimate."""
         metadata = getattr(self, "cam_metadata", None) or CamMetadata.empty()
@@ -7810,7 +7821,7 @@ class Makera(RelativeLayout):
         self._reset_stock_settings(
             shape=shape,
             origin=origin,
-            show_stock=header_stock_usable(metadata.stock),
+            show_stock=self._should_auto_show_header_stock(metadata.stock),
         )
         self.coord_popup.load_config()
 
@@ -7885,9 +7896,7 @@ class Makera(RelativeLayout):
 
             # Detect tools/stock metadata and set document unit if available
             self.document_unit = detect_document_unit(self.lines)
-            self.cam_metadata = extract_cam_metadata(
-                self.lines, unit_scale=unit_scale_to_mm(self.document_unit)
-            )
+            self.cam_metadata = extract_cam_metadata(self.lines, unit_scale=unit_scale_to_mm(self.document_unit))
             self.tool_table = self.cam_metadata.tool_table
             self.gcode_viewer.tool_table = self.tool_table
             self.gcode_viewer.tool_unit_scale = unit_scale_to_mm(self.document_unit)
@@ -8411,7 +8420,9 @@ def set_config_defaults(default_lang):
     if not Config.has_option("carvera", "show_playbar_tool_change_markers"):
         Config.set("carvera", "show_playbar_tool_change_markers", "1")
 
-    # G-code viewer syntax highlighting defaults
+    # G-code viewer defaults
+    if not Config.has_option("carvera", "gcode_auto_show_stock"):
+        Config.set("carvera", "gcode_auto_show_stock", "1")
     if not Config.has_option("carvera", "gcode_highlight_enabled"):
         Config.set("carvera", "gcode_highlight_enabled", "1")
     if not Config.has_option("carvera", "gcode_color_comment"):
