@@ -9,11 +9,7 @@ from carveracontroller.addons.tool_visualization.tool_definition import ToolDefi
 
 @dataclass(frozen=True)
 class CamStock:
-    """Stock definition parsed from a CAM post-processor header (millimetres).
-
-    Parsers should leave this unset until a real header example exists.
-    ``kind`` is ``"rectangular"`` or ``"cylindrical"``.
-    """
+    """Stock definition parsed from a CAM post-processor header."""
 
     kind: str
     width_mm: float | None = None
@@ -27,6 +23,12 @@ class CamStock:
     offset_z_mm: float = 0.0
 
     def to_shape_dict(self) -> dict:
+        if self.kind == "rotary_cylindrical":
+            return {
+                "kind": "rotary_cylindrical",
+                "diameter_mm": float(self.diameter_mm),
+                "length_mm": float(self.length_mm),
+            }
         if self.kind == "cylindrical":
             return {
                 "kind": "cylindrical",

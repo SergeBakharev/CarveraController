@@ -13,6 +13,7 @@ from carveracontroller.addons.stock.stock_estimate import (
     auto_stock_for_loaded_file,
     estimate_rectangular_stock,
     estimate_rotary_stock,
+    header_stock_usable,
     max_cutting_tool_diameter_mm,
     shape_and_origin_from_cam_stock,
 )
@@ -128,6 +129,13 @@ def test_max_cutting_tool_diameter_empty_or_missing():
     assert max_cutting_tool_diameter_mm({1: ToolDefinition(number=1, diameter=-3.0)}) == 0.0
 
 
+def test_header_stock_usable():
+    assert header_stock_usable(None) is False
+    assert header_stock_usable(CamStock(kind="rectangular")) is False
+    cam = CamStock(kind="rectangular", width_mm=120.0, length_mm=80.0, height_mm=12.0)
+    assert header_stock_usable(cam) is True
+
+
 def test_auto_stock_prefers_cam_header():
     cam = CamStock(kind="rectangular", width_mm=120.0, length_mm=80.0, height_mm=12.0, offset_x_mm=1.0)
     shape, origin = auto_stock_for_loaded_file(cam, 0.0, 0.0, -1.0, 10.0, 10.0, 0.0, tool_table={})
@@ -203,6 +211,22 @@ def test_shape_and_origin_from_cam_cylindrical():
     assert shape.diameter_mm == pytest.approx(50.0)
     assert origin.xy_corner == "center"
     assert origin.z_reference == "bottom"
+
+
+def test_shape_and_origin_from_cam_rotary_cylindrical():
+    cam = CamStock(
+        kind="rotary_cylindrical",
+        diameter_mm=30.0,
+        length_mm=100.0,
+        xy_corner="bl",
+        z_reference="center",
+    )
+    shape, origin = shape_and_origin_from_cam_stock(cam)
+    assert isinstance(shape, RotaryCylindricalStock)
+    assert shape.diameter_mm == pytest.approx(30.0)
+    assert shape.length_mm == pytest.approx(100.0)
+    assert origin.xy_corner == "bl"
+    assert origin.z_reference == "center"
 
 
 def test_estimate_rotary_cylinder_mirrors_about_axis():

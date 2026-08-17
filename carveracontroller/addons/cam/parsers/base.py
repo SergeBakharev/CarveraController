@@ -35,7 +35,7 @@ class CamHeaderParser(ABC):
         raise NotImplementedError
 
     def parse_metadata(self, lines) -> CamMetadata:
-        """Parse tools and (later) stock from the same header scan.
+        """Parse tools and stock from the same header scan.
 
         Default wraps :meth:`parse` with ``stock=None``. Override when a
         post processor also emits stock comments so both are read in one pass.

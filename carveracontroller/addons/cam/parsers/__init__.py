@@ -7,6 +7,6 @@ Add new parsers here and register them in
 
 Available parsers:
 - fusion360_makera: Fusion 360 Makera post processor tool comments
-- makera_studio: Makera Studio `;@MKR|TOOL|...` metadata block
+- makera_studio: Makera Studio `;@MKR|TOOL|...` / `STOCK` / `ORIGIN` metadata block
 - freecad_makera: FreeCAD Makera post processor `(@FC|TOOL|...)` metadata block
 """

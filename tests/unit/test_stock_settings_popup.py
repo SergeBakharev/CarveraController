@@ -229,6 +229,34 @@ def test_reset_for_loaded_file_overwrites_shape_and_origin():
     assert popup._settings_snapshot == out
 
 
+def test_reset_for_loaded_file_can_show_stock_without_simulation():
+    from carveracontroller.addons.stock.stock_origin import StockOrigin
+    from carveracontroller.addons.stock.stock_shape import RectangularStock
+
+    popup = StockSettingsPopup.__new__(StockSettingsPopup)
+    custom = {
+        "shape": {"kind": "cylindrical", "diameter_mm": 75, "height_mm": 15},
+        "origin": {"xy_corner": "center", "z_reference": "bottom", "offset_x_mm": 9.0},
+        "show_stock": False,
+        "simulate_cut": True,
+        "mesh_while_playing": True,
+        "voxel_resolution": "high",
+        "checkpoint_level": "medium",
+    }
+    popup._settings_snapshot = dict(custom)
+    written = []
+    popup._write_settings_to_ui = lambda s: written.append(dict(s))
+
+    shape = RectangularStock(width_mm=100.0, length_mm=50.0, height_mm=10.0)
+    origin = StockOrigin(xy_corner="bl", z_reference="top")
+    out = popup.reset_for_loaded_file(shape=shape, origin=origin, show_stock=True)
+
+    assert out["show_stock"] is True
+    assert out["simulate_cut"] is False
+    assert written == [out]
+    assert popup._settings_snapshot == out
+
+
 @pytest.mark.parametrize("text", ["nan", "NaN", "inf", "Infinity", "1e999"])
 def test_parse_positive_float_rejects_non_finite(text):
     with pytest.raises(ValueError, match="finite positive"):

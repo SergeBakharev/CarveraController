@@ -146,6 +146,17 @@ def shape_and_origin_from_cam_stock(cam_stock: CamStock) -> tuple[StockShape, St
     return shape_from_dict(cam_stock.to_shape_dict()), StockOrigin.from_dict(cam_stock.to_origin_dict())
 
 
+def header_stock_usable(cam_stock: CamStock | None) -> bool:
+    """True when a CAM-header stock can be converted into a viewer shape/origin."""
+    if cam_stock is None:
+        return False
+    try:
+        shape_and_origin_from_cam_stock(cam_stock)
+        return True
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
 def auto_stock_for_loaded_file(
     cam_stock: CamStock | None,
     xmin: float,
@@ -166,11 +177,8 @@ def auto_stock_for_loaded_file(
     panel). For rotary files it must be raw WCS Z, not A-baked display Z.
     If the dimension of the stock can't be guessed fallback to the default values.
     """
-    if cam_stock is not None:
-        try:
-            return shape_and_origin_from_cam_stock(cam_stock)
-        except (TypeError, ValueError, KeyError):
-            pass
+    if header_stock_usable(cam_stock):
+        return shape_and_origin_from_cam_stock(cam_stock)
 
     zmax_use = zmax
     if feed_z_max_mm is not None:

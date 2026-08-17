@@ -130,7 +130,7 @@ from carveracontroller.addons.stock.stock_defaults import (
     shape_from_settings,
     voxel_resolution_from_settings,
 )
-from carveracontroller.addons.stock.stock_estimate import auto_stock_for_loaded_file
+from carveracontroller.addons.stock.stock_estimate import auto_stock_for_loaded_file, header_stock_usable
 from carveracontroller.addons.stock.ui.StockSettingsPopup import StockSettingsPopup
 from carveracontroller.serial_listeners import dispatch_serial_line
 
@@ -3613,17 +3613,19 @@ class Makera(RelativeLayout):
             return False
         return True
 
-    def _reset_stock_settings(self, shape=None, origin=None):
+    def _reset_stock_settings(self, shape=None, origin=None, show_stock=False):
         """Push a stock reset into the popup and viewer. Must already be main thread."""
         popup = getattr(self, "stock_settings_popup", None)
         if popup is not None:
-            settings = popup.reset_for_loaded_file(shape=shape, origin=origin)
+            settings = popup.reset_for_loaded_file(shape=shape, origin=origin, show_stock=show_stock)
         else:
             settings = default_settings()
             if shape is not None:
                 settings["shape"] = shape.to_dict()
             if origin is not None:
                 settings["origin"] = origin.to_dict()
+            settings["show_stock"] = bool(show_stock)
+            settings["simulate_cut"] = False
         return self._apply_stock_settings_impl(settings)
 
     def _auto_stock_shape_origin(self):
@@ -7804,7 +7806,12 @@ class Makera(RelativeLayout):
         popup = getattr(self, "stock_settings_popup", None)
         if popup is not None:
             popup.rotary_mode = bool(app.has_4axis)
-        self._reset_stock_settings(shape=shape, origin=origin)
+        metadata = getattr(self, "cam_metadata", None) or CamMetadata.empty()
+        self._reset_stock_settings(
+            shape=shape,
+            origin=origin,
+            show_stock=header_stock_usable(metadata.stock),
+        )
         self.coord_popup.load_config()
 
         self.file_popup.dismiss()

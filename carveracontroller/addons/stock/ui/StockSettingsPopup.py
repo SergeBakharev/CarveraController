@@ -533,8 +533,11 @@ class StockSettingsPopup(ModalView):
         self._update_rotary_origin_visibility()
         self._schedule_fit_popup_height()
 
-    def reset_for_loaded_file(self, shape=None, origin=None) -> dict:
-        """Force show/sim off; optionally replace shape/origin; rewrite UI.
+    def reset_for_loaded_file(self, shape=None, origin=None, show_stock: bool = False) -> dict:
+        """Reset session toggles for a newly loaded file; optionally replace shape/origin.
+
+        Cut simulation is always forced off. Stock preview is off unless
+        *show_stock* is true (CAM-header stock was applied).
 
         Used when a new G-code file loads. Must not read the live form — dirty
         or invalid mid-edit fields would otherwise be committed (or wipe the
@@ -545,7 +548,7 @@ class StockSettingsPopup(ModalView):
         previous file's dimensions; otherwise those fields are left as-is.
         """
         settings = dict(self._settings_snapshot)
-        settings["show_stock"] = False
+        settings["show_stock"] = bool(show_stock)
         settings["simulate_cut"] = False
         if shape is not None:
             settings["shape"] = shape.to_dict()
