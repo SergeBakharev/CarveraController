@@ -275,11 +275,13 @@ def mesh_heightmap_region(backend, x0: int, y0: int, x1: int, y1: int):
 
     patch = backend._read_patch(x0 - 1, y0 - 1, x1 + 1, y1 + 1)
     core = patch[1:-1, 1:-1]
-    valid = core > _OUTSIDE * 0.5
+    bottom = float(backend.bounds.min_z)
+    # Through-cuts clamp remaining Z to min_z. A zero-thickness cell is empty:
+    # keeping a +Z quad there shows leftover stock from above, while back-face
+    # culling hides it from below (no bottom faces are emitted either).
+    valid = (core > _OUTSIDE * 0.5) & (core > bottom + _MERGE_Z)
     if not valid.any():
         return []
-
-    bottom = float(backend.bounds.min_z)
     vs = float(backend.cell_size)
     ox = float(backend.bounds.min_x)
     oy = float(backend.bounds.min_y)

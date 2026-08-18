@@ -258,6 +258,16 @@ def test_heightmap_ramp_clears_uphill_footprint():
     assert untouched is not None and abs(untouched - 10.0) < 1e-3
 
 
+def _packed_vertex_rows(meshes: dict) -> np.ndarray:
+    rows = []
+    for packed in meshes.values():
+        if not packed:
+            continue
+        rows.append(np.asarray(packed[0], dtype=np.float32).reshape(-1, 12))
+    assert rows
+    return np.concatenate(rows, axis=0)
+
+
 def test_heightmap_through_cut_clamps_to_min_z():
     """CAM overshoot past stock bottom must not invert exterior mesh skirts."""
     bounds = StockBounds(-10, -10, 0, 10, 10, 5)
@@ -271,11 +281,37 @@ def test_heightmap_through_cut_clamps_to_min_z():
     assert np.all(hm.heights[valid] >= bounds.min_z - 1e-6)
 
     meshes = hm.mesh_tiles(hm.expand_dirty(hm.all_non_full_keys()))
-    zs = []
-    for packed in meshes.values():
-        if not packed:
-            continue
-        verts = np.asarray(packed[0], dtype=np.float32).reshape(-1, 12)
-        zs.append(verts[:, 2])
-    assert zs
-    assert np.all(np.concatenate(zs) >= bounds.min_z - 1e-4)
+    verts = _packed_vertex_rows(meshes)
+    assert np.all(verts[:, 2] >= bounds.min_z - 1e-4)
+    # Zero-thickness cells must not keep a +Z floor film.
+    at_floor = verts[:, 2] <= bounds.min_z + 1e-3
+    facing_up = verts[:, 5] > 0.5
+    assert not np.any(at_floor & facing_up)
+    # Uncut stock around the slot still has a top; hole walls still exist.
+    assert np.any((verts[:, 5] > 0.5) & (verts[:, 2] >= bounds.max_z - 1e-3))
+    assert np.any(np.abs(verts[:, 5]) < 0.5)
+
+
+def test_heightmap_through_cut_top_origin_opens_hole():
+    """Z=0 on top of 5 mm stock: overshoot past Z=-5 must punch through."""
+    bounds = StockBounds(-10, -10, -5, 10, 10, 0)
+    hm = HeightmapBackend(bounds, 0.5, RectangularStock(20, 20, 5))
+    hm.carve_segment((-3.0, 0.0, -5.3), (3.0, 0.0, -5.3), _flat_tool(4.0))
+    h = hm.height_at_world(0.0, 0.0)
+    assert h is not None and h <= bounds.min_z + 1e-3
+
+    meshes = hm.mesh_tiles(hm.expand_dirty(hm.all_non_full_keys()))
+    verts = _packed_vertex_rows(meshes)
+    at_floor = verts[:, 2] <= bounds.min_z + 1e-3
+    facing_up = verts[:, 5] > 0.5
+    assert not np.any(at_floor & facing_up)
+
+
+def test_heightmap_full_tile_through_cut_has_no_top():
+    """Uniform-tile fast path must not emit a min_z film over a cleared tile."""
+    bounds = StockBounds(0, 0, 0, 8, 8, 4)
+    hm = HeightmapBackend(bounds, 1.0, RectangularStock(8, 8, 4), tile_size=16)
+    hm.carve_segment((4.0, 4.0, -0.5), (4.0, 4.0, -0.5), _flat_tool(20.0))
+    assert np.all(hm.heights <= bounds.min_z + 1e-3)
+    meshes = hm.mesh_tiles(hm.initial_surface_keys())
+    assert all(v is None for v in meshes.values())
