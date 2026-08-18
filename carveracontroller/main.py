@@ -5872,11 +5872,12 @@ class Makera(RelativeLayout):
         app = App.get_running_app()
         if (
             not app.playing
+            or app.state == NOT_CONNECTED
             or (not app.selected_remote_filename and not app.selected_local_filename)
             or not self.selected_file_line_count
             or app.state in self._PROGRESS_TIMER_PAUSED_STATES
         ):
-            # While held/paused, leave the last progress_info unchanged so both timers freeze.
+            # While held/paused/disconnected, leave the last progress_info unchanged so both timers freeze.
             return
         remaining_display = self._current_remaining_sec()
         filename = os.path.basename(app.selected_remote_filename or app.selected_local_filename)
@@ -6268,7 +6269,12 @@ class Makera(RelativeLayout):
             use_cf_playing_flag = app.is_community_firmware and app.fw_version_digitized >= Utils.digitize_v(
                 "2.1.0"
             )  # in community firmware > 2.1.0 the machine state has a is_playing attribute
-            machine_not_playing = CNC.vars["is_playing"] == 0 if use_cf_playing_flag else CNC.vars["playedlines"] <= 0
+            if CNC.vars["state"] == NOT_CONNECTED:
+                machine_not_playing = True
+            elif use_cf_playing_flag:
+                machine_not_playing = CNC.vars["is_playing"] == 0
+            else:
+                machine_not_playing = CNC.vars["playedlines"] <= 0
 
             # update progress bar and set selected
             if machine_not_playing:
