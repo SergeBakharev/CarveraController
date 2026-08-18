@@ -203,8 +203,6 @@ from .addons.tool_visualization import (
     extract_tool_table,
     format_tool_tooltip,
 )
-from .addons.tool_visualization.icon_builder import build_tool_tooltip_icon
-from .addons.tool_visualization.icon_geometry import build_icon_geometry
 from .addons.tooltips.Tooltips import Tooltip, ToolTipButton, ToolTipDropDown
 from .CNC import (
     CNC,
@@ -235,7 +233,15 @@ from .Controller import (
     STATECOLORDEF,
     Controller,
 )
-from .GcodeViewer import GCodeViewer
+from .GcodeViewer import (
+    COLOR_SCHEME_BY_SPEED,
+    COLOR_SCHEME_BY_TOOL,
+    COLOR_SCHEME_BY_TYPE,
+    COLOR_SCHEME_BY_Z,
+    VISIBILITY_ALL_BUCKET_BITS,
+    VISIBILITY_MAX_TOOLS,
+    GCodeViewer,
+)
 from .ui import widget_helpers
 from .ui.PlayProgressBar import play_percent_from_line, tool_change_markers_to_percents
 from .ui.popups.adv_calibrate import AdvCalibratePopup
@@ -435,9 +441,12 @@ class FloatBox(FloatLayout):
     touch_interval = 0
     color_scheme_panel = ObjectProperty(None)
     camera_controls = ObjectProperty(None)
+    tool_bar = ObjectProperty(None)
 
     def _viewer_chrome_hit(self, touch):
         if self.gcode_ctl_bar.collide_point(*touch.pos):
+            return True
+        if self.tool_bar is not None and self.tool_bar.collide_point(*touch.pos):
             return True
         return any(
             panel is not None and panel.collide_point(*touch.pos)
@@ -1867,10 +1876,12 @@ class IconButton(BoxLayout, ToolTipButton):
 
 class TransparentButton(BoxLayout, ToolTipButton):
     icon = StringProperty("fresk.png")
+    active = BooleanProperty(False)
 
 
 class TransparentGrayButton(BoxLayout, ToolTipButton):
     icon = StringProperty("fresk.png")
+    active = BooleanProperty(True)
 
 
 class WiFiButton(BoxLayout, ToolTipButton):
@@ -2967,7 +2978,12 @@ class Makera(RelativeLayout):
     tool_change_markers = []
     tool_table = {}
     document_unit = "mm"
-    show_tool_button_icons = BooleanProperty(False)
+
+    # Path visibility filters for the G-code viewer color-scheme panel.
+    path_show_rapid = True
+    path_show_feed = True
+    path_speed_bits = VISIBILITY_ALL_BUCKET_BITS
+    path_z_bits = VISIBILITY_ALL_BUCKET_BITS
 
     # Custom property to monitor CNC light state
     light_state = LightProperty(False)
@@ -3145,12 +3161,7 @@ class Makera(RelativeLayout):
         self.gcode_viewer.set_error_popup_callback(self._on_gcode_cannot_visualise)
         self.gcode_viewer.time_estimate_progress_callback = self._on_time_estimate_progress
         self.float_layout.tool_bar.show_grid = self.gcode_viewer.is_grid_visible()
-
-        # Handle tool button icons visibility when the window is resized
-        self.bind(show_tool_button_icons=self._refresh_tool_filter_buttons)
-        self.float_layout.tool_bar.bind(width=self._update_tool_button_icon_visibility)
-        Window.bind(on_resize=self._update_tool_button_icon_visibility)
-        Clock.schedule_once(lambda _dt: self._refresh_tool_filter_buttons(), 0)
+        self.path_hidden_tools = set()
 
         # init camera live view
         self.camera_checked = False
@@ -5847,6 +5858,8 @@ class Makera(RelativeLayout):
             self.progressUpdate(percent, "", True)
         elif state == "done":
             self.progressFinish()
+            # Legend row durations become available once line_times are applied.
+            self.refresh_gcode_color_legend()
 
     # --------------------------------------------------------------`---------
     _PROGRESS_TIMER_PAUSED_STATES = frozenset({"Hold", "Pause", "Wait", "Tool"})
@@ -7178,9 +7191,22 @@ class Makera(RelativeLayout):
             self.controller.log_sent_receive = self.controller_setting_change_list.get("log_sent_receive")
 
         if "high_precision_reamining_time_estimate" in self.controller_setting_change_list:
-            self.gcode_viewer.high_precision_time_estimate = self.controller_setting_change_list.get(
-                "high_precision_reamining_time_estimate"
-            )
+            raw_enabled = self.controller_setting_change_list.get("high_precision_reamining_time_estimate")
+            if isinstance(raw_enabled, str):
+                enabled = raw_enabled not in ("0", "false", "False", "")
+            else:
+                enabled = bool(raw_enabled)
+            self.gcode_viewer.high_precision_time_estimate = enabled
+            if enabled:
+                if self.gcode_viewer.raw_linenumbers and self.gcode_viewer.raw_feed_rates:
+                    self.gcode_viewer._compute_line_times_async()
+                else:
+                    self.refresh_gcode_color_legend()
+            else:
+                self.gcode_viewer.line_times = []
+                self.gcode_viewer.total_time = 0.0
+                self.gcode_viewer._invalidate_legend_durations()
+                self.refresh_gcode_color_legend()
 
         gcode_hl_changed = False
         if "gcode_highlight_enabled" in self.controller_setting_change_list:
@@ -7453,7 +7479,7 @@ class Makera(RelativeLayout):
         self.document_unit = "mm"
         self.gcode_viewer.tool_table = {}
         self.gcode_viewer.tool_unit_scale = 1.0
-        self._refresh_tool_filter_buttons()
+        self.init_path_visibility()
         self._clear_tool_change_markers()
         app = App.get_running_app()
         app.curr_page = 1
@@ -7486,7 +7512,7 @@ class Makera(RelativeLayout):
         self.cmd_manager.transition.direction = "right"
         self.cmd_manager.current = "gcode_cmd_page"
         self.gcode_rv.data = []
-        self.init_tool_filter()
+        self.init_path_visibility()
         self.gcode_viewer.clearDisplay()
         self.gcode_viewer.set_display_offset(self.content.x, self.content.y)
         self.gcode_viewer.set_move_speed(GCODE_VIEW_SPEED)
@@ -7585,6 +7611,7 @@ class Makera(RelativeLayout):
             self.gcode_viewer_distance = self.gcode_viewer.get_total_distance()
             self.gcode_viewer.show_all()
 
+        self._push_path_visibility()
         self.refresh_gcode_color_legend()
 
         app = App.get_running_app()
@@ -7681,7 +7708,6 @@ class Makera(RelativeLayout):
             self.tool_table = extract_tool_table(self.lines)
             self.gcode_viewer.tool_table = self.tool_table
             self.gcode_viewer.tool_unit_scale = unit_scale_to_mm(self.document_unit)
-            self._refresh_tool_filter_buttons()
             app = App.get_running_app()
             app.total_pages = int(self.selected_file_line_count / MAX_LOAD_LINES) + (
                 0 if self.selected_file_line_count % MAX_LOAD_LINES == 0 else 1
@@ -7750,119 +7776,197 @@ class Makera(RelativeLayout):
         Clock.schedule_once(self.load_end, 0)
 
     # -----------------------------------------------------------------------
-    def _update_tool_button_icon_visibility(self, *_args):
-        tool_bar = self.float_layout.tool_bar
-        # Keep in sync with the '74dp' width on the six T buttons in makera.kv.
-        tool_bar_icons_required_width = dp(438 + 6 * 74)
-        if tool_bar.width <= 0:
+    def init_path_visibility(self):
+        """Reset all path visibility filters to show everything."""
+        self.path_show_rapid = True
+        self.path_show_feed = True
+        self.path_speed_bits = VISIBILITY_ALL_BUCKET_BITS
+        self.path_z_bits = VISIBILITY_ALL_BUCKET_BITS
+        self.path_hidden_tools = set()
+        if getattr(self, "gcode_viewer", None) is not None:
+            self._push_path_visibility()
+
+    def _tool_filter_ids(self):
+        return sorted({int(t) for t in (self.used_tools or []) if int(t) >= 0})[:VISIBILITY_MAX_TOOLS]
+
+    def _hidden_tools(self):
+        hidden = getattr(self, "path_hidden_tools", None)
+        if hidden is None:
+            hidden = set()
+            self.path_hidden_tools = hidden
+        return hidden
+
+    def _push_path_visibility(self):
+        if getattr(self, "gcode_viewer", None) is None:
             return
-        has_parsed_tools = bool(self.tool_table)
-        show_icons = has_parsed_tools and tool_bar.width >= tool_bar_icons_required_width
-        if show_icons != self.show_tool_button_icons:
-            self.show_tool_button_icons = show_icons
+        tools = self._tool_filter_ids()
+        hidden = self._hidden_tools()
+        # Drop stale hidden ids when the file's tool list changes.
+        if tools:
+            allowed = set(tools)
+            self.path_hidden_tools = {t for t in hidden if t in allowed}
+            hidden = self.path_hidden_tools
+        bits = 0
+        for index, tool in enumerate(tools):
+            if tool not in hidden:
+                bits |= 1 << index
+        self.gcode_viewer.set_visibility_filters(
+            show_rapid=self.path_show_rapid,
+            show_feed=self.path_show_feed,
+            speed_bucket_bits=self.path_speed_bits,
+            z_bucket_bits=self.path_z_bits,
+            tool_ids=tools,
+            tool_bits=bits,
+        )
 
-    @mainthread
-    def _refresh_tool_filter_buttons(self, *_args):
-        """Update T1..T6 toolbar icons and tooltips from the current tool table."""
-        tool_buttons = [
-            self.float_layout.t1,
-            self.float_layout.t2,
-            self.float_layout.t3,
-            self.float_layout.t4,
-            self.float_layout.t5,
-            self.float_layout.t6,
-        ]
-        self._update_tool_button_icon_visibility()
-        for number, tool_button in enumerate(tool_buttons, start=1):
-            tool_def = self.tool_table.get(number)
-            if self.show_tool_button_icons:
-                tool_button.tool_icon_geometry = build_icon_geometry(tool_def)
+    def is_legend_entry_visible(self, kind, key):
+        if kind == "rapid":
+            return bool(self.path_show_rapid)
+        if kind == "feed":
+            return bool(self.path_show_feed)
+        if kind == "tool":
+            return int(key) not in self._hidden_tools()
+        if kind == "speed_bucket":
+            return bool(self.path_speed_bits & (1 << int(key)))
+        if kind == "z_bucket":
+            return bool(self.path_z_bits & (1 << int(key)))
+        return True
+
+    def _current_scheme_any_visible(self):
+        viewer = getattr(self, "gcode_viewer", None)
+        scheme = getattr(viewer, "color_scheme", COLOR_SCHEME_BY_TYPE) if viewer else COLOR_SCHEME_BY_TYPE
+        if scheme == COLOR_SCHEME_BY_TYPE:
+            return self.path_show_rapid or self.path_show_feed
+        if scheme == COLOR_SCHEME_BY_TOOL:
+            tools = self._tool_filter_ids()
+            if not tools:
+                return True
+            hidden = self._hidden_tools()
+            return any(t not in hidden for t in tools)
+        if scheme == COLOR_SCHEME_BY_SPEED:
+            return self.path_show_rapid or bool(self.path_speed_bits)
+        if scheme == COLOR_SCHEME_BY_Z:
+            return bool(self.path_z_bits)
+        return True
+
+    def toggle_gcode_visibility_entry(self, kind, key):
+        if kind == "rapid":
+            self.path_show_rapid = not self.path_show_rapid
+        elif kind == "feed":
+            self.path_show_feed = not self.path_show_feed
+        elif kind == "tool":
+            tool = int(key)
+            hidden = self._hidden_tools()
+            if tool in hidden:
+                hidden.discard(tool)
             else:
-                tool_button.tool_icon_geometry = None
+                hidden.add(tool)
+        elif kind == "speed_bucket":
+            bit = 1 << int(key)
+            self.path_speed_bits ^= bit
+            self.path_speed_bits &= VISIBILITY_ALL_BUCKET_BITS
+        elif kind == "z_bucket":
+            bit = 1 << int(key)
+            self.path_z_bits ^= bit
+            self.path_z_bits &= VISIBILITY_ALL_BUCKET_BITS
+        else:
+            return
+        self._push_path_visibility()
+        self.refresh_gcode_visibility_legend()
 
-            if tool_def:
-                tool_button.tooltip_markup = True
-                tool_button.tooltip_horizontal = True
-                tool_button.tooltip_image = ""
-                tool_button.tooltip_texture = None
-                tool_button.tooltip_image_size = None
-                tool_button.tooltip_texture_provider = partial(build_tool_tooltip_icon, tool_def)
-                tool_button.tooltip_txt = format_tool_tooltip(tool_def, unit=self.document_unit)
+    def toggle_gcode_visibility_all(self):
+        viewer = getattr(self, "gcode_viewer", None)
+        if viewer is None:
+            return
+        show = not self._current_scheme_any_visible()
+        scheme = getattr(viewer, "color_scheme", COLOR_SCHEME_BY_TYPE)
+        if scheme == COLOR_SCHEME_BY_TYPE:
+            self.path_show_rapid = show
+            self.path_show_feed = show
+        elif scheme == COLOR_SCHEME_BY_TOOL:
+            if show:
+                self.path_hidden_tools = set()
             else:
-                tool_button.tooltip_txt = ""
-                tool_button.tooltip_image = ""
-                tool_button.tooltip_texture = None
-                tool_button.tooltip_texture_provider = None
-                tool_button.tooltip_image_size = None
-                tool_button.tooltip_horizontal = False
-                tool_button.tooltip_markup = False
+                self.path_hidden_tools = set(self._tool_filter_ids())
+        elif scheme == COLOR_SCHEME_BY_SPEED:
+            self.path_speed_bits = VISIBILITY_ALL_BUCKET_BITS if show else 0
+            self.path_show_rapid = show
+        elif scheme == COLOR_SCHEME_BY_Z:
+            self.path_z_bits = VISIBILITY_ALL_BUCKET_BITS if show else 0
+        self._push_path_visibility()
+        self.refresh_gcode_visibility_legend()
 
-    # -----------------------------------------------------------------------
-    def init_tool_filter(self):
-        tool_buttons = [
-            self.float_layout.t1,
-            self.float_layout.t2,
-            self.float_layout.t3,
-            self.float_layout.t4,
-            self.float_layout.t5,
-            self.float_layout.t6,
-            self.float_layout.laser,
-        ]
-        for tool_button in tool_buttons:
-            tool_button.min_active = True
-        self.show_other_tools = True
-        self.float_layout.hide_all.active = True
+    def refresh_gcode_visibility_legend(self):
+        """Update legend eye states without rebuilding rows (preserves scroll)."""
+        panel = self.ids.get("color_scheme_panel")
+        if panel is not None:
+            panel.apply_visibility(self)
 
     def refresh_gcode_color_legend(self, *_args):
         panel = self.ids.get("color_scheme_panel")
         if panel is not None:
             panel.refresh(self)
 
+    def _scheme_visibility_modified(self, scheme):
+        """True when that scheme's visibility filters differ from all-visible defaults."""
+        if scheme == COLOR_SCHEME_BY_TYPE:
+            return not (self.path_show_rapid and self.path_show_feed)
+        if scheme == COLOR_SCHEME_BY_TOOL:
+            hidden = self._hidden_tools()
+            if not hidden:
+                return False
+            return any(t in hidden for t in self._tool_filter_ids())
+        if scheme == COLOR_SCHEME_BY_SPEED:
+            # Rapid is shared with Move type but also listed under Speed.
+            return (self.path_speed_bits != VISIBILITY_ALL_BUCKET_BITS) or (not self.path_show_rapid)
+        if scheme == COLOR_SCHEME_BY_Z:
+            return self.path_z_bits != VISIBILITY_ALL_BUCKET_BITS
+        return False
+
+    def gcode_scheme_spinner_label(self, scheme):
+        if scheme == COLOR_SCHEME_BY_TOOL:
+            base = tr._("Tool")
+        elif scheme == COLOR_SCHEME_BY_SPEED:
+            base = tr._("Speed")
+        elif scheme == COLOR_SCHEME_BY_Z:
+            base = tr._("Height")
+        else:
+            base = tr._("Move type")
+        if self._scheme_visibility_modified(scheme):
+            return f"{base} *"
+        return base
+
+    def gcode_scheme_spinner_labels(self):
+        return [
+            self.gcode_scheme_spinner_label(COLOR_SCHEME_BY_TOOL),
+            self.gcode_scheme_spinner_label(COLOR_SCHEME_BY_TYPE),
+            self.gcode_scheme_spinner_label(COLOR_SCHEME_BY_SPEED),
+            self.gcode_scheme_spinner_label(COLOR_SCHEME_BY_Z),
+        ]
+
+    def _scheme_from_spinner_text(self, text):
+        base = text[:-2].rstrip() if text.endswith(" *") else text
+        if base == tr._("Tool"):
+            return COLOR_SCHEME_BY_TOOL
+        if base == tr._("Speed"):
+            return COLOR_SCHEME_BY_SPEED
+        if base == tr._("Height"):
+            return COLOR_SCHEME_BY_Z
+        return COLOR_SCHEME_BY_TYPE
+
     def on_gcode_color_scheme_changed(self, text):
-        if text == tr._("Tool"):
+        scheme = self._scheme_from_spinner_text(text)
+        if getattr(self.gcode_viewer, "color_scheme", None) == scheme:
+            return
+        if scheme == COLOR_SCHEME_BY_TOOL:
             self.gcode_viewer.set_color_scheme("by_tool")
-        elif text == tr._("Speed"):
+        elif scheme == COLOR_SCHEME_BY_SPEED:
             self.gcode_viewer.set_color_scheme("by_speed")
-        elif text == tr._("Height"):
+        elif scheme == COLOR_SCHEME_BY_Z:
             self.gcode_viewer.set_color_scheme("by_z")
         else:
             self.gcode_viewer.set_color_scheme("by_type")
         self.refresh_gcode_color_legend()
-
-    # -----------------------------------------------------------------------
-    def filter_tool(self):
-        # Build the mask for tool visibility
-        #   1..1_000_000 -> T1..T6 + laser (1 digit per tool)
-        #   10_000_000   -> Other tools without a button (T0, T7, T8, ...)
-        OTHER_TOOLS_FLAG = 10000000.0
-
-        tool_buttons = [
-            self.float_layout.t1,
-            self.float_layout.t2,
-            self.float_layout.t3,
-            self.float_layout.t4,
-            self.float_layout.t5,
-            self.float_layout.t6,
-            self.float_layout.laser,
-        ]
-        visible_tools = []
-        for index, tool_button in enumerate(tool_buttons, start=1):
-            if not tool_button.disabled and tool_button.min_active:
-                visible_tools.append(index)
-
-        show_other_tools = getattr(self, "show_other_tools", True)
-
-        # The show/hide-all button is "on" whenever anything is visible. Clicking
-        # it then hides everything, and shows everything when nothing is visible.
-        self.float_layout.hide_all.active = show_other_tools or len(visible_tools) > 0
-
-        mask = 0.0
-        for tool in visible_tools:
-            mask = mask + 10 ** (tool - 1)
-        if show_other_tools:
-            mask = mask + OTHER_TOOLS_FLAG
-
-        self.gcode_viewer.set_display_mask(mask)
 
     # -----------------------------------------------------------------------
     def send_cmd(self):

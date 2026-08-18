@@ -1,9 +1,11 @@
+[unreleased]
+- Change: Moved tools visibility controls to the color scheme panel
+
 [2.2.0-RC2]
 - Enhancement: Adds "Allow Jogging When Spindle or Laser Is On" option (disabled by default). "Allow Jogging When Machine Running" will now be enabled by default. Existing configs that already allowed jogging while the machine is running also enable the new spindle/laser option.
 - Fixed: Prevent a probing modal crash if E is not provided when using the angle operation
 - Fixed: Default Values on Probing screens caused probing to fail unexpectedly 
 - Changed: added help button to probing screen confirmation/error popup for clarity
-
 
 [2.2.0-RC1]
 - Enhancement: Read tool definitions from post-processor outputs and use them in the G-code viewer

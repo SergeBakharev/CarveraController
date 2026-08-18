@@ -217,6 +217,13 @@ COLOR_SCHEME_UI_BY_TOOL = "Tool"
 COLOR_SCHEME_UI_BY_SPEED = "Speed"
 COLOR_SCHEME_UI_BY_Z = "Height"
 
+# Legend / shader bucket counts for speed and height filters.
+VISIBILITY_BUCKET_COUNT = 11
+VISIBILITY_ALL_BUCKET_BITS = (1 << VISIBILITY_BUCKET_COUNT) - 1
+
+# Max tool ids that we can pass to the shader (6 x vec4).
+VISIBILITY_MAX_TOOLS = 24
+
 # Height colormap: range from feed-move Z percentiles (ignores G0 and outlier G1).
 Z_HEIGHT_PERCENTILE_LOW = 5.0
 Z_HEIGHT_PERCENTILE_HIGH = 95.0
@@ -585,6 +592,7 @@ class GCodeViewer(Widget):
 
     line_times = []
     total_time = 0.0
+    legend_durations_cache = None
     lengths = []
     raw_linenumbers = []
     raw_positions = []
@@ -640,7 +648,7 @@ class GCodeViewer(Widget):
     orbit = True
     _grid_visible = True
     _ortho_projection = False
-    color_scheme = COLOR_SCHEME_BY_TYPE
+    color_scheme = COLOR_SCHEME_BY_TOOL
     feed_min = 0.0
     feed_max = DEFAULT_FEED_MM_MIN
     z_min = 0.0
@@ -706,8 +714,16 @@ class GCodeViewer(Widget):
 
         self.bind(size=self._on_size_change, pos=self._on_size_change)
 
+        self.show_rapid = True
+        self.show_feed = True
+        self.speed_bucket_bits = VISIBILITY_ALL_BUCKET_BITS
+        self.z_bucket_bits = VISIBILITY_ALL_BUCKET_BITS
+        self._tool_filter_ids = []
+        self._tool_filter_bits = 0
+
         self._apply_color_scheme_uniform()
         self._update_feed_range_uniforms()
+        self._apply_visibility_uniforms()
         Clock.schedule_interval(self._on_frame_tick, 1 / 60)
 
     def _on_size_change(self, *args):
@@ -894,6 +910,7 @@ class GCodeViewer(Widget):
         self.positions = []
         self.line_times = []
         self.total_time = 0.0
+        self._invalidate_legend_durations()
         self.raw_feed_rates = []
         self.raw_tools = []
         self._tool_meshes = {}
@@ -1136,9 +1153,7 @@ class GCodeViewer(Widget):
 
             # rendering line meshes
             self.linemesh["display_count"] = -1.0
-
-            # Show all tools by default (T1-T6 + laser + other tools)
-            self.linemesh["vertex_type_display"] = 11111111.0
+            self.reset_visibility_filters()
 
             self.pointermesh["offset"] = (-self.lines_center[0], -self.lines_center[1], -self.lines_center[2])
 
@@ -1251,6 +1266,7 @@ class GCodeViewer(Widget):
         """Apply worker result on main thread."""
         self.line_times = line_times if line_times else []
         self.total_time = self.line_times[-1] if self.line_times else 0.0
+        self._invalidate_legend_durations()
         self._report_time_estimate_progress("done", 100)
 
     def _compute_line_times_async(self):
@@ -1261,6 +1277,7 @@ class GCodeViewer(Widget):
         """
         self.line_times = []
         self.total_time = 0.0
+        self._invalidate_legend_durations()
         n = len(self.raw_linenumbers) if self.raw_linenumbers else 0
         if n < 2 or not self.raw_positions or len(self.raw_positions) < n * 3:
             return
@@ -1292,6 +1309,7 @@ class GCodeViewer(Widget):
         """
         self.line_times = []
         self.total_time = 0.0
+        self._invalidate_legend_durations()
         n = len(self.raw_linenumbers) if self.raw_linenumbers else 0
         if n < 2 or not self.raw_positions or len(self.raw_positions) < n * 3:
             return
@@ -1300,6 +1318,7 @@ class GCodeViewer(Widget):
         result = _compute_line_times_worker(self.raw_positions, self.raw_linenumbers, self.raw_feed_rates, None, 0)
         self.line_times = result
         self.total_time = self.line_times[-1] if self.line_times else 0.0
+        self._invalidate_legend_durations()
 
     def get_elapsed_time_by_distance(self, distance):
         """
@@ -1340,6 +1359,94 @@ class GCodeViewer(Widget):
         if elapsed is None:
             return None
         return max(0.0, self.total_time - elapsed)
+
+    def _invalidate_legend_durations(self):
+        self.legend_durations_cache = None
+
+    def _compute_all_legend_durations(self):
+        """Return a dict of color_scheme -> {(kind, key): seconds}."""
+        n = len(self.line_times)
+        feeds = self.raw_feed_rates or []
+        tools = self.raw_tools or []
+        positions = self.positions or []
+
+        feed_min = float(getattr(self, "feed_min", 0.0) or 0.0)
+        feed_max = float(getattr(self, "feed_max", 0.0) or 0.0)
+        if feed_max <= feed_min:
+            feed_max = feed_min + 1.0
+
+        z_min_mm = float(getattr(self, "z_min_mm", 0.0) or 0.0)
+        z_max_mm = float(getattr(self, "z_max_mm", 0.0) or 0.0)
+        if z_max_mm <= z_min_mm:
+            z_max_mm = z_min_mm + 1.0
+
+        by_scheme = {
+            COLOR_SCHEME_BY_TYPE: {},
+            COLOR_SCHEME_BY_TOOL: {},
+            COLOR_SCHEME_BY_SPEED: {},
+            COLOR_SCHEME_BY_Z: {},
+        }
+
+        def add(scheme, kind, key, duration):
+            if duration <= 0.0:
+                return
+            entry_key = (kind, key)
+            bucket = by_scheme[scheme]
+            bucket[entry_key] = bucket.get(entry_key, 0.0) + duration
+
+        for i in range(1, n):
+            duration = float(self.line_times[i]) - float(self.line_times[i - 1])
+            if duration <= 0.0:
+                continue
+
+            feed = 0.0
+            if i < len(feeds):
+                try:
+                    feed = float(feeds[i])
+                except (TypeError, ValueError):
+                    feed = 0.0
+            is_rapid = feed < 0.5
+
+            tool = int(tools[i]) if i < len(tools) else -1
+            add(COLOR_SCHEME_BY_TOOL, "tool", tool, duration)
+
+            if is_rapid:
+                add(COLOR_SCHEME_BY_TYPE, "rapid", "rapid", duration)
+                add(COLOR_SCHEME_BY_SPEED, "rapid", "rapid", duration)
+            else:
+                add(COLOR_SCHEME_BY_TYPE, "feed", "feed", duration)
+                add(
+                    COLOR_SCHEME_BY_SPEED,
+                    "speed_bucket",
+                    _speed_bucket_index(feed, feed_min, feed_max),
+                    duration,
+                )
+                z_mm = 0.0
+                if len(positions) >= 3 * (i + 1):
+                    z_mm = float(positions[3 * i + 2])
+                add(
+                    COLOR_SCHEME_BY_Z,
+                    "z_bucket",
+                    _z_bucket_index(z_mm, z_min_mm, z_max_mm),
+                    duration,
+                )
+
+        return by_scheme
+
+    def get_legend_durations(self, color_scheme=None):
+        """
+        Return cached segment-duration totals for one color-scheme legend (dict of (kind, key) -> seconds).
+        If line_times are unavailable (eg high-precision estimate disabled / not finished / empty), returns None.
+        """
+        if not self.line_times or len(self.line_times) < 2:
+            return None
+
+        if self.legend_durations_cache is None:
+            self.legend_durations_cache = self._compute_all_legend_durations()
+
+        if color_scheme is None:
+            color_scheme = self.color_scheme
+        return self.legend_durations_cache.get(color_scheme, {})
 
     def get_distance_by_lineidx(self, lineidx, ratio):
         # Validate that we have the necessary data
@@ -1446,10 +1553,66 @@ class GCodeViewer(Widget):
     def set_move_speed(self, mov_speed):
         self.move_speed = mov_speed
 
-    def set_display_mask(self, mask_val):
-        """Filter visible segment types via decimal-encoded mask (see shaders/toolpath.glsl)."""
-        self.linemesh["vertex_type_display"] = mask_val
+    def reset_visibility_filters(self, used_tools=None):
+        """Show every path category; optionally seed the tool filter from used_tools."""
+        self.show_rapid = True
+        self.show_feed = True
+        self.speed_bucket_bits = VISIBILITY_ALL_BUCKET_BITS
+        self.z_bucket_bits = VISIBILITY_ALL_BUCKET_BITS
+        tools = []
+        if used_tools:
+            tools = sorted({int(t) for t in used_tools if int(t) >= 0})[:VISIBILITY_MAX_TOOLS]
+        self._tool_filter_ids = tools
+        self._tool_filter_bits = (1 << len(tools)) - 1 if tools else 0
+        self._apply_visibility_uniforms()
         self._scene_dirty = True
+
+    def set_visibility_filters(
+        self,
+        *,
+        show_rapid=None,
+        show_feed=None,
+        speed_bucket_bits=None,
+        z_bucket_bits=None,
+        tool_ids=None,
+        tool_bits=None,
+    ):
+        """Update path visibility uniforms. Omitted args keep their current value."""
+        if show_rapid is not None:
+            self.show_rapid = bool(show_rapid)
+        if show_feed is not None:
+            self.show_feed = bool(show_feed)
+        if speed_bucket_bits is not None:
+            self.speed_bucket_bits = int(speed_bucket_bits) & VISIBILITY_ALL_BUCKET_BITS
+        if z_bucket_bits is not None:
+            self.z_bucket_bits = int(z_bucket_bits) & VISIBILITY_ALL_BUCKET_BITS
+        if tool_ids is not None:
+            self._tool_filter_ids = [int(t) for t in tool_ids][:VISIBILITY_MAX_TOOLS]
+        if tool_bits is not None:
+            max_bits = (1 << max(len(self._tool_filter_ids), 1)) - 1 if self._tool_filter_ids else 0
+            self._tool_filter_bits = int(tool_bits) & max_bits if self._tool_filter_ids else 0
+        self._apply_visibility_uniforms()
+        self._scene_dirty = True
+
+    def _apply_visibility_uniforms(self):
+        mesh = self.linemesh
+        mesh["show_rapid"] = 1.0 if self.show_rapid else 0.0
+        mesh["show_feed"] = 1.0 if self.show_feed else 0.0
+        mesh["speed_bucket_bits"] = float(self.speed_bucket_bits)
+        mesh["z_bucket_bits"] = float(self.z_bucket_bits)
+
+        ids = list(self._tool_filter_ids)[:VISIBILITY_MAX_TOOLS]
+        packed = [0.0] * VISIBILITY_MAX_TOOLS
+        for i, tool_id in enumerate(ids):
+            packed[i] = float(tool_id)
+        mesh["tool_filter_count"] = float(len(ids))
+        mesh["tool_bits"] = float(self._tool_filter_bits if ids else 0)
+        mesh["tool_ids0"] = packed[0:4]
+        mesh["tool_ids1"] = packed[4:8]
+        mesh["tool_ids2"] = packed[8:12]
+        mesh["tool_ids3"] = packed[12:16]
+        mesh["tool_ids4"] = packed[16:20]
+        mesh["tool_ids5"] = packed[20:24]
 
     def _apply_color_scheme_uniform(self):
         self.linemesh["color_scheme"] = float(self.color_scheme)
@@ -1779,6 +1942,32 @@ class GCodeViewer(Widget):
         self._clamp_zoom()
         self.update_proj()
         self._scene_dirty = True
+
+
+def _clamp01(value):
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return float(value)
+
+
+def _speed_bucket_index(feed, feed_min, feed_max):
+    """Match toolpath.glsl speed-bucket indexing (0..10)."""
+    feed_span = max(float(feed_max) - float(feed_min), 1.0)
+    feed_t = _clamp01((float(feed) - float(feed_min)) / feed_span)
+    bucket = int(math.floor(feed_t * 10.0 + 0.5))
+    return min(max(bucket, 0), VISIBILITY_BUCKET_COUNT - 1)
+
+
+def _z_bucket_index(z_mm, z_min_mm, z_max_mm):
+    """Match toolpath.glsl height-bucket indexing (0=high Z .. 10=low Z)."""
+    z_span = float(z_max_mm) - float(z_min_mm)
+    if z_span < 1e-6:
+        z_span = 1e-6
+    z_t = _clamp01((float(z_mm) - float(z_min_mm)) / z_span)
+    bucket = int(math.floor((1.0 - z_t) * 10.0 + 0.5))
+    return min(max(bucket, 0), VISIBILITY_BUCKET_COUNT - 1)
 
 
 def _compute_line_times_worker(raw_positions, raw_linenumbers, raw_feed_rates, progress_callback, progress_interval):
