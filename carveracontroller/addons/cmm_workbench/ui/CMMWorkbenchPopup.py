@@ -237,9 +237,10 @@ class CMMWorkbenchPopup(ModalView):
             set_status_text=lambda v: setattr(self, "probing_status_text", v),
             on_is_probing_changed=self._on_probe_is_probing_changed,
             controller_abort=self.controller.abortCommand,
-            idle_ok=self._idle_ok,
+            get_machine_state=lambda: App.get_running_app().state,
+            on_timeout=self._on_probe_timeout_toast,
+            on_invalid_state=self._on_probe_invalid_state,
         )
-        self._runner.set_on_timeout(self._on_probe_timeout_toast)
 
     def on_kv_post(self, base_widget):
         super().on_kv_post(base_widget)
@@ -447,6 +448,11 @@ class CMMWorkbenchPopup(ModalView):
         if self._capture is not None:
             self._capture.reset()
         self._toast(tr._("Probe timed out."))
+
+    def _on_probe_invalid_state(self, state: str) -> None:
+        if self._capture is not None:
+            self._capture.reset()
+        self._toast(tr._('Probing failed: Unexpected machine state "%s".') % state)
 
     def _cancel_probe_run(self) -> None:
         if self._capture is not None:
