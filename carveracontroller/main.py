@@ -14,6 +14,14 @@ CONFIG_FILES_TO_BACK_UP = [
     "/sd/flex_compensation.dat",
 ]
 
+MACHINE_CONFIG_FILES = {
+    "C1": "config_c1.json",
+    "CA1": "config_ca1.json",
+    "Z1": "config_z1.json",
+}
+
+MAX_CONFIG_DOWNLOAD_ATTEMPTS = 3
+
 
 def is_android():
     return "ANDROID_ARGUMENT" in os.environ or "ANDROID_PRIVATE" in os.environ or "ANDROID_APP_PATH" in os.environ
@@ -3177,11 +3185,14 @@ class Makera(RelativeLayout):
         self.config_popup = ConfigPopup()
         self.config_loaded = False
         self.config_loading = False
+        self._config_apply_failed = False
+        self._config_download_failures = 0
         self.setting_list = {}
         self.setting_type_list = {}
         self.setting_default_list = {}
         self.machine_config_data = None
         self.machine_config_data_model = None
+        self.machine_settings_model = None
         self.controller_setting_change_list = {}
         self.load_controller_config()
         self.load_gcode_viewer_config()
@@ -4796,7 +4807,7 @@ class Makera(RelativeLayout):
         self.downloading_config = True
         remote_path = "/sd/config.txt"
         self.downloading_file = remote_path
-        local_path = os.path.join(self.temp_dir, "config.txt")
+        local_path = self._machine_config_cache_path()
         threading.Thread(target=self.doDownload, args=(remote_path, local_path)).start()
 
     # -----------------------------------------------------------------------
@@ -4807,7 +4818,7 @@ class Makera(RelativeLayout):
                 self.setting_list.clear()
                 self.load_machine_config_defaults()
                 # caching config file
-                config_path = os.path.join(self.temp_dir, "config.txt")
+                config_path = self._machine_config_cache_path()
                 if not os.path.exists(config_path):
                     raise FileNotFoundError(f"Cached config not found: {config_path}")
                 with open(config_path) as f:
@@ -4840,16 +4851,27 @@ class Makera(RelativeLayout):
                 self.setting_change_list = {}
 
                 self.config_loaded = self.load_machine_config()
+                self._config_download_failures = 0
+                if not self.config_loaded:
+                    # Applying settings failed; retrying the download cannot fix panel/schema mismatches.
+                    self._config_apply_failed = True
                 self.config_popup.btn_apply.disabled = len(self.setting_change_list) == 0
             except Exception as e:
                 logger.exception("Failed to load machine config")
                 self.config_loaded = False
+                self._config_apply_failed = True
                 self.controller.log.put((Controller.MSG_ERROR, tr._("Failed to load config file: {}").format(e)))
             finally:
                 self.config_loading = False
         else:
             self.config_loading = False
+            self._config_download_failures += 1
             self.controller.log.put((Controller.MSG_ERROR, tr._("Download config file error")))
+            if self._config_download_failures >= MAX_CONFIG_DOWNLOAD_ATTEMPTS:
+                logger.error(
+                    "Giving up config download after %s failed attempts",
+                    self._config_download_failures,
+                )
             # self.controller.close()
 
         # Preserve selected file only when reconnecting to the same machine.
@@ -4885,6 +4907,12 @@ class Makera(RelativeLayout):
         if conn_type == CONN_USB:
             return f"usb:{addr}" if addr else "usb"
         return str(conn_type)
+
+    def _machine_config_cache_path(self):
+        """Return a per-machine path for the cached /sd/config.txt copy."""
+        key = self._get_current_machine_connection_key() or "unknown"
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(key))
+        return os.path.join(self.temp_dir, f"config_{safe}.txt")
 
     # -----------------------------------------------------------------------
     def doDownload(self, remote_path, local_path, show_progress=True):
@@ -5168,7 +5196,15 @@ class Makera(RelativeLayout):
         app.has_atc = bool(CNC.vars["FuncSetting"] & 4)
         # The first machine config load must happen after /sd/config.txt is parsed.
         if model_changed and self.config_loaded:
-            Clock.schedule_once(lambda dt: self.load_machine_config(), 0.1)
+
+            def _reload_machine_config(_dt):
+                self.config_loading = True
+                try:
+                    self.load_machine_config()
+                finally:
+                    self.config_loading = False
+
+            Clock.schedule_once(_reload_machine_config, 0.1)
 
     # -----------------------------------------------------------------------
     def downloadCallback(self, remote_path, packet_size, success_count, error_count):
@@ -5310,11 +5346,7 @@ class Makera(RelativeLayout):
         if self.machine_config_data_model == app.model:
             return self.machine_config_data
 
-        config_files = {
-            "C1": "config_c1.json",
-            "CA1": "config_ca1.json",
-        }
-        config_file = config_files.get(app.model)
+        config_file = MACHINE_CONFIG_FILES.get(app.model)
         if config_file is None:
             return None
 
@@ -5942,6 +5974,8 @@ class Makera(RelativeLayout):
                     self.status_drop_down.btn_disconnect.disabled = True
                     self.config_loaded = False
                     self.config_loading = False
+                    self._config_apply_failed = False
+                    self._config_download_failures = 0
                     self.fw_version_checked = False
                     self.fw_version = ""
                     app.model = ""
@@ -6015,7 +6049,14 @@ class Makera(RelativeLayout):
                     self.status_drop_down.btn_unlock.text = "Unlock"
 
             # load config, only one time per connection
-            if not app.playing and not self.config_loaded and not self.config_loading and app.state == "Idle":
+            if (
+                not app.playing
+                and not self.config_loaded
+                and not self.config_loading
+                and not self._config_apply_failed
+                and self._config_download_failures < MAX_CONFIG_DOWNLOAD_ATTEMPTS
+                and app.state == "Idle"
+            ):
                 if not app.model or not self.fw_version:
                     if now - self.machine_metadata_query_time > 1:
                         self.check_model_metadata()
@@ -6642,13 +6683,62 @@ class Makera(RelativeLayout):
         self.updateStatus()
 
     # -----------------------------------------------------------------------
+    def _clear_machine_settings_panels(self):
+        """Remove Machine-* settings tabs from a previous model so they can be rebuilt."""
+        settings = self.config_popup.settings_panel
+        interface = getattr(settings, "interface", None)
+        content = getattr(interface, "content", None) if interface is not None else None
+        if content is None:
+            self.machine_settings_model = None
+            return
+
+        menu = getattr(interface, "menu", None)
+        machine_uids = [uid for uid, panel in list(content.panels.items()) if panel.config is self.config]
+        if not machine_uids:
+            self.machine_settings_model = None
+            return
+
+        remaining = next(
+            (uid for uid, panel in content.panels.items() if panel.config is not self.config),
+            None,
+        )
+        if getattr(content, "current_uid", None) in machine_uids:
+            if remaining is not None:
+                content.current_uid = remaining
+                if menu is not None:
+                    menu.selected_uid = remaining
+            else:
+                if content.current_panel is not None:
+                    try:
+                        content.remove_widget(content.current_panel)
+                    except Exception:
+                        pass
+                content.current_panel = None
+                content.current_uid = 0
+
+        for uid in machine_uids:
+            content.panels.pop(uid, None)
+            buttons_layout = getattr(menu, "buttons_layout", None) if menu is not None else None
+            if buttons_layout is not None:
+                for child in list(buttons_layout.children):
+                    if getattr(child, "uid", None) == uid:
+                        buttons_layout.remove_widget(child)
+
+        for section in list(self.config.sections()):
+            self.config.remove_section(section)
+        self.machine_settings_model = None
+        self.setting_type_list.clear()
+
+    # -----------------------------------------------------------------------
     def load_machine_config(self):
+        app = App.get_running_app()
         panels = self.config_popup.settings_panel.interface.content.panels
 
         # Filter panels that are bound to the machine config
         machine_panels = [panel for panel in panels.values() if panel.config is self.config]
+        same_model = bool(machine_panels) and self.machine_settings_model == getattr(app, "model", None)
 
-        if machine_panels:
+        if same_model:
             # already have panels, update data
             for panel in machine_panels:
                 children = panel.children
@@ -6694,6 +6784,9 @@ class Makera(RelativeLayout):
                             self.updateStatus()
                             return False
         else:
+            if machine_panels:
+                self._clear_machine_settings_panels()
+
             data = self.load_machine_config_data()
             if data is None:
                 return True
@@ -6777,10 +6870,11 @@ class Makera(RelativeLayout):
             self.config_popup.settings_panel.add_json_panel(
                 "Machine - Restore", self.config, data=json.dumps(restore_config)
             )
-            if kivy_platform not in ["android", "ios"]:
+            if backup_config and kivy_platform not in ["android", "ios"]:
                 self.config_popup.settings_panel.add_json_panel(
                     "Machine - Backup", self.config, data=json.dumps(backup_config)
                 )
+            self.machine_settings_model = getattr(app, "model", None)
         return True
 
     # -----------------------------------------------------------------------

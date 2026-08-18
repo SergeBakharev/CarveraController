@@ -6,6 +6,9 @@
 - Fixed: Prevent a probing modal crash if E is not provided when using the angle operation
 - Fixed: Default Values on Probing screens caused probing to fail unexpectedly 
 - Fixed: Remaining job time no longer resumes counting after aborting playback and disconnecting
+- Fixed: Z1 machine settings tabs now load
+- Fixed: Z1 machine config backup option added to settings matching other models
+- Fixed: Switching between different machines no longer reuses the previous machine's settings panels or cached config.txt
 - Changed: added help button to probing screen confirmation/error popup for clarity
 
 [2.2.0-RC1]

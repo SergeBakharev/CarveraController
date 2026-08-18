@@ -504,6 +504,17 @@ class XMODEM:
             return None
         return advertised
 
+    def _local_md5_matches_advertised(self, local_md5, advertised_md5):
+        """True when the local cache digest matches a real advertised hex MD5.
+
+        Placeholders such as the Z1 ``default_md5_hash_value_32_bytes_`` string
+        are not digests, so they must never short-circuit to the cached file.
+        """
+        advertised = self._normalize_advertised_md5(advertised_md5)
+        if not local_md5 or not advertised:
+            return False
+        return str(local_md5).strip().lower() == advertised
+
     def _finalize_download_integrity(self, expected_md5, received_md5, income_size, first_bytes=b""):
         """
         Apply download MD5 policy.
@@ -619,6 +630,7 @@ class XMODEM:
         first_bytes = bytearray()
         self.deferred_download_md5 = None
         self.download_md5_failed = False
+        self.FileRcvState = FileTransState.WAIT_MD5
         while True:
             if self.canceled:
                 self._send_file_trans_command(PTYPE_FILE_CAN, b"")
@@ -701,8 +713,8 @@ class XMODEM:
                     if self.packetData:
                         if cmd_type == PTYPE_FILE_MD5:
                             md5new = self.packetData[3 : len(self.packetData) - 2]
-                            expected_md5 = bytes(md5new).lower()
-                            if md5 and expected_md5 and md5.encode().lower() == expected_md5:
+                            expected_md5 = bytes(md5new)
+                            if self._local_md5_matches_advertised(md5, expected_md5):
                                 self._send_file_trans_command(PTYPE_FILE_CAN, b"")
                                 return 0
                             self._send_file_trans_command(PTYPE_FILE_VIEW, b"")
@@ -1207,8 +1219,8 @@ class XMODEM:
                     if sequence == 0 and not md5_received:
                         md5_received = True
                         data_len = data[0] << 8 | data[1] if is_stx else data[0]
-                        expected_md5 = data[1 + is_stx : (data_len + 1 + is_stx)].lower()
-                        if md5 and expected_md5 and md5.encode().lower() == expected_md5:
+                        expected_md5 = data[1 + is_stx : (data_len + 1 + is_stx)]
+                        if self._local_md5_matches_advertised(md5, expected_md5):
                             self.putc(CAN)
                             self.putc(CAN)
                             self.putc(CAN)
