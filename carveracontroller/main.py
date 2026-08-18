@@ -3047,7 +3047,8 @@ class Makera(RelativeLayout):
     status_index = 0
     past_machine_addr = None
     allow_mdi_while_machine_running = "0"
-    allow_jogging_while_machine_running = "0"
+    allow_jogging_while_machine_running = "1"
+    allow_jogging_while_spindle_on = "0"
     _selected_file_machine_key = None
     _last_loaded_file_key = None  # used to track if a different file is selected
 
@@ -3211,6 +3212,11 @@ class Makera(RelativeLayout):
 
         if Config.has_option("carvera", "allow_jogging_while_machine_running"):
             self.allow_jogging_while_machine_running = Config.get("carvera", "allow_jogging_while_machine_running")
+
+        if Config.has_option("carvera", "allow_jogging_while_spindle_on"):
+            self.allow_jogging_while_spindle_on = Config.get("carvera", "allow_jogging_while_spindle_on")
+
+        self._bind_jog_control_deps()
 
         # Setup pendant
         self.refresh_pendant_settings()
@@ -6116,6 +6122,11 @@ class Makera(RelativeLayout):
                 else:
                     v.minr_text = "Vac: {}".format("On" if CNC.vars["vacuummode"] else "Off")
 
+            app.spindle_or_laser_is_on = app.state not in (NOT_CONNECTED, CONNECTED) and (
+                (not CNC.vars["lasermode"] and CNC.vars["curspindle"] > 0.0)
+                or (CNC.vars["lasermode"] and CNC.vars["laserpower"] > 0.0)
+            )
+
             elapsed = now - self.control_list["vacuum_mode"][0]
             if elapsed < 2:
                 if elapsed > 0.5:
@@ -6804,21 +6815,37 @@ class Makera(RelativeLayout):
             modals.append(self.cmm_workbench_popup)
         return self._is_popup_open() and not any(m.allows_external_jog() for m in modals)
 
-    def is_jogging_enabled(self):
+    def _bind_jog_control_deps(self):
         app = App.get_running_app()
+        if app is not None:
+            app.bind(
+                state=self.update_jog_controls_enabled,
+                playing=self.update_jog_controls_enabled,
+                spindle_or_laser_is_on=self.update_jog_controls_enabled,
+            )
+        self.update_jog_controls_enabled()
 
-        # Keyboard/pendant jogging is normally blocked whenever a modal popup is open,
-        # except for probing and the probe-scan jog overlay (see allows_external_jog).
-        popup_prevents_jogging = self._popup_prevents_jogging()
+    def update_jog_controls_enabled(self, *args):
+        app = App.get_running_app()
+        if app is None:
+            return
+        app.jog_controls_enabled = self._machine_allows_jogging()
 
+    def _machine_allows_jogging(self):
+        app = App.get_running_app()
         return (
             (not app.playing or app.state == "Pause")
             and (
                 app.state in ["Idle", "Pause"]
                 or (app.state == "Run" and self.allow_jogging_while_machine_running == "1")
             )
-            and not popup_prevents_jogging
+            and (not app.spindle_or_laser_is_on or self.allow_jogging_while_spindle_on == "1")
         )
+
+    def is_jogging_enabled(self):
+        # Keyboard/pendant jogging is normally blocked whenever a modal popup is open,
+        # except for probing and the probe-scan jog overlay (see allows_external_jog).
+        return self._machine_allows_jogging() and not self._popup_prevents_jogging()
 
     def is_pendant_jogging_enabled(self):
         # If the user disabled pendant, respect it.
@@ -7105,13 +7132,19 @@ class Makera(RelativeLayout):
                 "allow_mdi_while_machine_running"
             )
 
-        if (
-            self.controller_setting_change_list.get("allow_jogging_while_machine_running")
-            != self.allow_jogging_while_machine_running
-        ):
-            self.allow_jogging_while_machine_running = self.controller_setting_change_list.get(
+        if "allow_jogging_while_machine_running" in self.controller_setting_change_list:
+            self.allow_jogging_while_machine_running = self.controller_setting_change_list[
                 "allow_jogging_while_machine_running"
-            )
+            ]
+
+        if "allow_jogging_while_spindle_on" in self.controller_setting_change_list:
+            self.allow_jogging_while_spindle_on = self.controller_setting_change_list["allow_jogging_while_spindle_on"]
+
+        if (
+            "allow_jogging_while_machine_running" in self.controller_setting_change_list
+            or "allow_jogging_while_spindle_on" in self.controller_setting_change_list
+        ):
+            self.update_jog_controls_enabled()
 
         if self.controller_setting_change_list.get("invert_y_axis_jogging"):
             App.get_running_app().invert_y_axis_jogging = (
@@ -7974,6 +8007,8 @@ class Makera(RelativeLayout):
 class MakeraApp(App):
     state = StringProperty(NOT_CONNECTED)
     playing = BooleanProperty(False)
+    spindle_or_laser_is_on = BooleanProperty(False)
+    jog_controls_enabled = BooleanProperty(False)
     has_4axis = BooleanProperty(False)
     has_atc = BooleanProperty(False)
     lasering = BooleanProperty(False)
@@ -8152,6 +8187,14 @@ def set_config_defaults(default_lang):
         Config.set("carvera", "custom_bkg_img_dir", "")
     if not Config.has_option("carvera", "invert_y_axis_jogging"):
         Config.set("carvera", "invert_y_axis_jogging", "0")
+    had_jogging_while_running = Config.has_option("carvera", "allow_jogging_while_machine_running")
+    if not had_jogging_while_running:
+        Config.set("carvera", "allow_jogging_while_machine_running", "1")
+    if not Config.has_option("carvera", "allow_jogging_while_spindle_on"):
+        migrate_spindle_on = had_jogging_while_running and Config.getboolean(
+            "carvera", "allow_jogging_while_machine_running", fallback=False
+        )
+        Config.set("carvera", "allow_jogging_while_spindle_on", "1" if migrate_spindle_on else "0")
     if not Config.has_option("carvera", "allow_manual_usb_device"):
         Config.set("carvera", "allow_manual_usb_device", "0")
     if not Config.has_option("carvera", "manual_usb_device"):
