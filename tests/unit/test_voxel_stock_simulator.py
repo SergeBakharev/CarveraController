@@ -2281,14 +2281,13 @@ def test_iter_cut_jobs_merges_a_only_wrap():
 
 
 def test_reset_seeds_rotary_cylindrical_occupancy():
-    from carveracontroller.addons.facing.stock_geometry import CORNER_BL
     from carveracontroller.addons.stock.simulator import StockSimulator
     from carveracontroller.addons.stock.stock_geometry import compute_wcs_bounds
-    from carveracontroller.addons.stock.stock_origin import Z_CENTER, StockOrigin
+    from carveracontroller.addons.stock.stock_origin import CORNER_LC, Z_CENTER, StockOrigin
     from carveracontroller.addons.stock.stock_shape import RotaryCylindricalStock
 
     shape = RotaryCylindricalStock(diameter_mm=40, length_mm=80)
-    bounds = compute_wcs_bounds(shape, StockOrigin(xy_corner=CORNER_BL, z_reference=Z_CENTER))
+    bounds = compute_wcs_bounds(shape, StockOrigin(xy_corner=CORNER_LC, z_reference=Z_CENTER))
     sim = StockSimulator()
     try:
         sim.reset(bounds, enable=True, cell_size_mm=2.0, shape=shape, carver_mode="voxel")

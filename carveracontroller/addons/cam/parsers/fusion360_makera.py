@@ -25,10 +25,8 @@ import re
 
 from carveracontroller.addons.cam.metadata import CamMetadata, CamStock
 from carveracontroller.addons.cam.parsers.base import CamHeaderParser
-from carveracontroller.addons.cam.parsers.makera_studio import (
-    named_origin_relative_to_center,
-    parse_origin_type_name,
-)
+from carveracontroller.addons.cam.parsers.makera_studio import parse_origin_type_name
+from carveracontroller.addons.stock.stock_origin import named_origin_relative_to_center
 from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition, ToolType, resolve_tool_type
 
 logger = logging.getLogger(__name__)

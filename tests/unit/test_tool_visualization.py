@@ -250,7 +250,7 @@ class TestFusion360MakeraParser:
         lines = [
             "(T1  Flat  D=6 - flat end mill)\n",
             "(@F360|STOCK|id=cuboid|length=200.|width=35.|height=20.)\n",
-            "(@F360|ORIGIN|type_name=topFrontLeft|x=-100.|y=-17.5|z=10.|dx=0.|dy=0.|dz=0.)\n",
+            "(@F360|ORIGIN|type_name=topFrontLeft|x=-100.|y=-17.5|z=10.)\n",
             "G90\n",
         ]
         metadata = parser.parse_metadata(lines)
@@ -282,7 +282,7 @@ class TestFusion360MakeraParser:
     def test_parses_cuboid_top_center_stock(self, parser):
         lines = [
             "(@F360|STOCK|id=cuboid|length=32.6|width=32.6|height=4.)\n",
-            "(@F360|ORIGIN|type_name=topCenter|x=0.|y=0.|z=2.|dx=0.|dy=0.|dz=0.)\n",
+            "(@F360|ORIGIN|type_name=topCenter|x=0.|y=0.|z=2.)\n",
         ]
         stock = parser.parse_metadata(lines).stock
 
@@ -303,6 +303,33 @@ class TestFusion360MakeraParser:
         assert bounds.max_y == pytest.approx(16.3)
         assert bounds.min_z == pytest.approx(-4.0)
         assert bounds.max_z == pytest.approx(0.0)
+
+    def test_parses_cuboid_left_center_stock(self, parser):
+        lines = [
+            "(@F360|STOCK|id=cuboid|length=220.|width=30.|height=20.)\n",
+            "(@F360|ORIGIN|type_name=leftCenter|x=-110.|y=0.|z=0.)\n",
+        ]
+        stock = parser.parse_metadata(lines).stock
+
+        assert stock.kind == "rectangular"
+        assert stock.width_mm == 220.0
+        assert stock.length_mm == 30.0
+        assert stock.height_mm == 20.0
+        assert stock.xy_corner == "lc"
+        assert stock.z_reference == "center"
+        assert stock.offset_x_mm == pytest.approx(0.0)
+        assert stock.offset_y_mm == pytest.approx(0.0)
+        assert stock.offset_z_mm == pytest.approx(0.0)
+
+        shape, origin = shape_and_origin_from_cam_stock(stock)
+        assert isinstance(shape, RectangularStock)
+        bounds = compute_wcs_bounds(shape, origin)
+        assert bounds.min_x == pytest.approx(0.0)
+        assert bounds.max_x == pytest.approx(220.0)
+        assert bounds.min_y == pytest.approx(-15.0)
+        assert bounds.max_y == pytest.approx(15.0)
+        assert bounds.min_z == pytest.approx(-10.0)
+        assert bounds.max_z == pytest.approx(10.0)
 
     def test_parses_custom_origin_from_center_relative_xyz(self, parser):
         lines = [
@@ -333,13 +360,13 @@ class TestFusion360MakeraParser:
     def test_parses_cuboid_origin_residual_offset(self, parser):
         lines = [
             "(@F360|STOCK|id=cuboid|length=40|width=40|height=3)\n",
-            "(@F360|ORIGIN|type_name=topFrontLeft|x=-18|y=-20|z=1.5|dx=2.|dy=0.|dz=0.)\n",
+            "(@F360|ORIGIN|type_name=topFrontLeft|x=-18|y=-20|z=1.5)\n",
         ]
         stock = parser.parse_metadata(lines).stock
 
         assert stock.xy_corner == "bl"
         assert stock.z_reference == "top"
-        # Fusion dx/dy/dz are ignored; residual comes from x/y/z vs the named point.
+        # Residual is x/y/z vs the named point (topFrontLeft is at -20, -20, 1.5).
         assert stock.offset_x_mm == pytest.approx(-2.0)
         assert stock.offset_y_mm == pytest.approx(0.0)
         assert stock.offset_z_mm == pytest.approx(0.0)
@@ -347,7 +374,7 @@ class TestFusion360MakeraParser:
     def test_parses_bottom_origin(self, parser):
         lines = [
             "(@F360|STOCK|id=cuboid|length=40|width=40|height=3)\n",
-            "(@F360|ORIGIN|type_name=bottomFrontLeft|x=-20|y=-20|z=-1.5|dx=0.|dy=0.|dz=0.)\n",
+            "(@F360|ORIGIN|type_name=bottomFrontLeft|x=-20|y=-20|z=-1.5)\n",
         ]
         stock = parser.parse_metadata(lines).stock
 
@@ -372,7 +399,7 @@ class TestFusion360MakeraParser:
     def test_parses_mill_cylinder_from_top_origin(self, parser):
         lines = [
             "(@F360|STOCK|id=cylinder|length=70|width=70|height=50|diameter=70)\n",
-            "(@F360|ORIGIN|type_name=topCenter|x=0.|y=0.|z=25.|dx=0.|dy=0.|dz=0.)\n",
+            "(@F360|ORIGIN|type_name=topCenter|x=0.|y=0.|z=25.)\n",
         ]
         stock = parser.parse_metadata(lines).stock
 
@@ -397,7 +424,7 @@ class TestFusion360MakeraParser:
     def test_parses_rotary_cylinder_left_center(self, parser):
         lines = [
             "(@F360|STOCK|id=cylinder|length=100|width=30|height=30|diameter=30)\n",
-            "(@F360|ORIGIN|type_name=leftCenter|x=-50|y=0|z=0|dx=0.|dy=0.|dz=0.)\n",
+            "(@F360|ORIGIN|type_name=leftCenter|x=-50|y=0|z=0)\n",
         ]
         stock = parser.parse_metadata(lines).stock
 
@@ -406,7 +433,7 @@ class TestFusion360MakeraParser:
         assert stock.length_mm == 100.0
         assert stock.width_mm is None
         assert stock.height_mm is None
-        assert stock.xy_corner == "bl"
+        assert stock.xy_corner == "lc"
         assert stock.z_reference == "center"
         assert stock.offset_x_mm == pytest.approx(0.0)
         assert stock.offset_y_mm == pytest.approx(0.0)
@@ -661,9 +688,13 @@ class TestMakeraStudioParser:
             ("topBackLeft", "tl", "top"),
             ("topBackRight", "tr", "top"),
             ("topCenter", "center", "top"),
+            ("topFrontCenter", "fc", "top"),
             ("bottomFrontLeft", "bl", "bottom"),
-            ("leftCenter", "bl", "center"),
-            ("rightCenter", "br", "center"),
+            ("leftCenter", "lc", "center"),
+            ("rightCenter", "rc", "center"),
+            ("frontCenter", "fc", "center"),
+            ("backCenter", "bc", "center"),
+            ("center", "center", "center"),
         ],
     )
     def test_parses_origin_type_names(self, type_name, xy_corner, z_reference):
@@ -778,7 +809,7 @@ class TestMakeraStudioParser:
         assert stock.width_mm == 100.0
         assert stock.length_mm == 35.0
         assert stock.height_mm == 35.0
-        assert stock.xy_corner == "bl"
+        assert stock.xy_corner == "lc"
         assert stock.z_reference == "center"
         assert stock.offset_x_mm == pytest.approx(0.0)
         assert stock.offset_y_mm == pytest.approx(0.0)
@@ -805,7 +836,7 @@ class TestMakeraStudioParser:
         assert stock.length_mm == 100.0
         assert stock.width_mm is None
         assert stock.height_mm is None
-        assert stock.xy_corner == "bl"
+        assert stock.xy_corner == "lc"
         assert stock.z_reference == "center"
         assert stock.offset_x_mm == pytest.approx(0.0)
         assert stock.offset_y_mm == pytest.approx(0.0)
@@ -2244,7 +2275,7 @@ class TestExtractor:
         lines = [
             "(T1  End mill  D=6 CR=0 - flat end mill)\n",
             "(@F360|STOCK|id=cuboid|length=200.|width=35.|height=20.)\n",
-            "(@F360|ORIGIN|type_name=topFrontLeft|x=-100.|y=-17.5|z=10.|dx=0.|dy=0.|dz=0.)\n",
+            "(@F360|ORIGIN|type_name=topFrontLeft|x=-100.|y=-17.5|z=10.)\n",
             "G90\n",
         ]
         metadata = extract_cam_metadata(lines)
@@ -2259,7 +2290,7 @@ class TestExtractor:
     def test_extract_fusion360_stock_without_tools(self):
         lines = [
             "(@F360|STOCK|id=cuboid|length=32.6|width=32.6|height=4.)\n",
-            "(@F360|ORIGIN|type_name=topCenter|x=0.|y=0.|z=2.|dx=0.|dy=0.|dz=0.)\n",
+            "(@F360|ORIGIN|type_name=topCenter|x=0.|y=0.|z=2.)\n",
             "G90\n",
         ]
         metadata = extract_cam_metadata(lines)

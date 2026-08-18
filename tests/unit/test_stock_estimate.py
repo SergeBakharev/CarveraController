@@ -3,7 +3,6 @@
 import pytest
 
 from carveracontroller.addons.cam.metadata import CamStock
-from carveracontroller.addons.facing.stock_geometry import CORNER_BL
 from carveracontroller.addons.stock.stock_defaults import (
     DEFAULT_HEIGHT_MM,
     DEFAULT_LENGTH_MM,
@@ -18,7 +17,7 @@ from carveracontroller.addons.stock.stock_estimate import (
     shape_and_origin_from_cam_stock,
 )
 from carveracontroller.addons.stock.stock_geometry import compute_wcs_bounds
-from carveracontroller.addons.stock.stock_origin import Z_CENTER, Z_TOP
+from carveracontroller.addons.stock.stock_origin import CORNER_BL, CORNER_LC, Z_CENTER, Z_TOP
 from carveracontroller.addons.stock.stock_shape import CylindricalStock, RectangularStock, RotaryCylindricalStock
 from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition
 from carveracontroller.CNC import LASER_TOOL_NUMBER, PROBE_TOOLS_RANGE_START, ZPROBE_TOOL_NUMBER
@@ -244,14 +243,14 @@ def test_shape_and_origin_from_cam_rotary_cylindrical():
         kind="rotary_cylindrical",
         diameter_mm=30.0,
         length_mm=100.0,
-        xy_corner="bl",
+        xy_corner="lc",
         z_reference="center",
     )
     shape, origin = shape_and_origin_from_cam_stock(cam)
     assert isinstance(shape, RotaryCylindricalStock)
     assert shape.diameter_mm == pytest.approx(30.0)
     assert shape.length_mm == pytest.approx(100.0)
-    assert origin.xy_corner == "bl"
+    assert origin.xy_corner == "lc"
     assert origin.z_reference == "center"
 
 
@@ -262,7 +261,7 @@ def test_estimate_rotary_cylinder_mirrors_about_axis():
     shape, origin = result
     assert isinstance(shape, RotaryCylindricalStock)
     assert origin.z_reference == Z_CENTER
-    assert origin.xy_corner == CORNER_BL
+    assert origin.xy_corner == CORNER_LC
     assert origin.offset_x_mm == pytest.approx(6.0)
     assert origin.offset_y_mm == pytest.approx(0.0)
     assert origin.offset_z_mm == pytest.approx(0.0)

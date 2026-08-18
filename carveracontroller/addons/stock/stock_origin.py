@@ -6,19 +6,34 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from carveracontroller.addons.facing.stock_geometry import (
-    CORNER_BL,
-    CORNER_BR,
-    CORNER_CENTER,
-    CORNER_TL,
-    CORNER_TR,
-)
+# Front = Y min, Back = Y max (Fusion / Makera), independent of Z.
+CORNER_BL = "bl"  # Front-left
+CORNER_BR = "br"  # Front-right
+CORNER_TL = "tl"  # Back-left
+CORNER_TR = "tr"  # Back-right
+CORNER_CENTER = "center"
+CORNER_LC = "lc"  # Center-left
+CORNER_RC = "rc"  # Center-right
+CORNER_FC = "fc"  # Front-center
+CORNER_BC = "bc"  # Back-center
 
 Z_TOP = "top"
 Z_BOTTOM = "bottom"
 Z_CENTER = "center"
 
-XY_CORNERS = frozenset({CORNER_BL, CORNER_BR, CORNER_TL, CORNER_TR, CORNER_CENTER})
+XY_CORNERS = frozenset(
+    {
+        CORNER_BL,
+        CORNER_BR,
+        CORNER_TL,
+        CORNER_TR,
+        CORNER_CENTER,
+        CORNER_LC,
+        CORNER_RC,
+        CORNER_FC,
+        CORNER_BC,
+    }
+)
 Z_REFERENCES = frozenset({Z_TOP, Z_BOTTOM, Z_CENTER})
 
 
@@ -30,6 +45,43 @@ def _finite_offset(value: Any, name: str) -> float:
     if not math.isfinite(offset):
         raise ValueError(f"{name} must be a finite number, got {value!r}")
     return offset
+
+
+def named_origin_relative_to_center(dx, dy, dz, xy_corner, z_reference):
+    """WCS origin relative to the stock AABB centre for a named XY point and Z.
+
+    X, Y, and Z are independent: ``z_reference=center`` only zeroes Z.
+    """
+    half_x = dx / 2.0
+    half_y = dy / 2.0
+    half_z = dz / 2.0
+    corner = (xy_corner or "").strip().lower()
+    z_ref = (z_reference or "").strip().lower()
+
+    xy_from_center = {
+        CORNER_BL: (-half_x, -half_y),
+        CORNER_BR: (half_x, -half_y),
+        CORNER_TL: (-half_x, half_y),
+        CORNER_TR: (half_x, half_y),
+        CORNER_FC: (0.0, -half_y),
+        CORNER_BC: (0.0, half_y),
+        CORNER_LC: (-half_x, 0.0),
+        CORNER_RC: (half_x, 0.0),
+        CORNER_CENTER: (0.0, 0.0),
+    }
+    if corner not in xy_from_center:
+        raise ValueError(f"xy_corner must be one of {sorted(XY_CORNERS)}, got {xy_corner!r}")
+    x, y = xy_from_center[corner]
+
+    if z_ref == Z_CENTER:
+        z = 0.0
+    elif z_ref == Z_BOTTOM:
+        z = -half_z
+    elif z_ref == Z_TOP:
+        z = half_z
+    else:
+        raise ValueError(f"z_reference must be one of {sorted(Z_REFERENCES)}, got {z_reference!r}")
+    return x, y, z
 
 
 @dataclass(frozen=True)

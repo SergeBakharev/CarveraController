@@ -11,13 +11,6 @@ from kivy.metrics import dp
 from kivy.properties import BooleanProperty, StringProperty
 from kivy.uix.modalview import ModalView
 
-from carveracontroller.addons.facing.stock_geometry import (
-    CORNER_BL,
-    CORNER_BR,
-    CORNER_CENTER,
-    CORNER_TL,
-    CORNER_TR,
-)
 from carveracontroller.addons.stock.simulator.carver_select import (
     BACKEND_CYLINDRICAL,
     BACKEND_HEIGHTMAP,
@@ -45,25 +38,43 @@ from carveracontroller.addons.stock.stock_defaults import (
     default_settings,
 )
 from carveracontroller.addons.stock.stock_geometry import StockBounds
-from carveracontroller.addons.stock.stock_origin import Z_BOTTOM, Z_CENTER, Z_TOP, StockOrigin
+from carveracontroller.addons.stock.stock_origin import (
+    CORNER_BC,
+    CORNER_BL,
+    CORNER_BR,
+    CORNER_CENTER,
+    CORNER_FC,
+    CORNER_LC,
+    CORNER_RC,
+    CORNER_TL,
+    CORNER_TR,
+    Z_BOTTOM,
+    Z_CENTER,
+    Z_TOP,
+    StockOrigin,
+)
 from carveracontroller.addons.stock.stock_shape import CylindricalStock, RectangularStock, RotaryCylindricalStock
 from carveracontroller.translation import tr
 
 
 def _stock_corner_pairs():
     return [
-        (tr._("Bottom-left (+X / +Y extents)"), CORNER_BL),
-        (tr._("Bottom-right (-X / +Y extents)"), CORNER_BR),
-        (tr._("Top-left (+X / -Y extents)"), CORNER_TL),
-        (tr._("Top-right (-X / -Y extents)"), CORNER_TR),
-        (tr._("Center (±½ X / ±½ Y extents)"), CORNER_CENTER),
+        (tr._("Front-left"), CORNER_BL),
+        (tr._("Front-center"), CORNER_FC),
+        (tr._("Front-right"), CORNER_BR),
+        (tr._("Center-left"), CORNER_LC),
+        (tr._("Center"), CORNER_CENTER),
+        (tr._("Center-right"), CORNER_RC),
+        (tr._("Back-left"), CORNER_TL),
+        (tr._("Back-center"), CORNER_BC),
+        (tr._("Back-right"), CORNER_TR),
     ]
 
 
 def _rotary_x_end_pairs():
     return [
-        (tr._("X min (left end)"), CORNER_BL),
-        (tr._("X max (right end)"), CORNER_BR),
+        (tr._("X min (left end)"), CORNER_LC),
+        (tr._("X max (right end)"), CORNER_RC),
         (tr._("X center"), CORNER_CENTER),
     ]
 
@@ -71,6 +82,7 @@ def _rotary_x_end_pairs():
 def _z_reference_pairs():
     return [
         (tr._("Top of stock (Z0 = top)"), Z_TOP),
+        (tr._("Center of stock (Z0 = mid-height)"), Z_CENTER),
         (tr._("Bottom of stock (Z0 = bottom)"), Z_BOTTOM),
     ]
 
@@ -630,7 +642,7 @@ class StockSettingsPopup(ModalView):
         for lab, val in self._corner_pairs:
             if lab == text:
                 return val
-        return CORNER_BL
+        return CORNER_LC if getattr(self, "rotary_mode", False) else CORNER_BL
 
     def _z_from_ui(self) -> str:
         text = self.ids.spn_z_ref.text

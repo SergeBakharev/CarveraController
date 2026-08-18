@@ -7,7 +7,10 @@ from carveracontroller.addons.stock.ui.StockSettingsPopup import (
     _deref_widget,
     _parse_finite_float,
     _parse_positive_float,
+    _rotary_x_end_pairs,
     _shape_kind_pairs,
+    _stock_corner_pairs,
+    _z_reference_pairs,
 )
 
 
@@ -774,3 +777,71 @@ def test_bounds_for_resolution_preview_from_form():
 
     popup.ids["txt_width"].text = ""
     assert popup._bounds_for_resolution_preview() is None
+
+
+def test_mill_origin_pairs_cover_twenty_seven_points():
+    from carveracontroller.addons.stock.stock_origin import (
+        CORNER_BC,
+        CORNER_BL,
+        CORNER_FC,
+        CORNER_LC,
+        CORNER_RC,
+        Z_BOTTOM,
+        Z_CENTER,
+        Z_TOP,
+    )
+
+    corners = {val: lab for lab, val in _stock_corner_pairs()}
+    assert corners[CORNER_BL] == "Front-left"
+    assert corners[CORNER_LC] == "Center-left"
+    assert corners[CORNER_FC] == "Front-center"
+    assert corners[CORNER_RC] == "Center-right"
+    assert corners[CORNER_BC] == "Back-center"
+    assert len(corners) == 9
+
+    z_vals = {val: lab for lab, val in _z_reference_pairs()}
+    assert z_vals[Z_TOP]
+    assert "Center of stock" in z_vals[Z_CENTER]
+    assert z_vals[Z_BOTTOM]
+
+
+def test_rotary_x_end_pairs_use_left_and_right_center():
+    from carveracontroller.addons.stock.stock_origin import CORNER_CENTER, CORNER_LC, CORNER_RC
+
+    values = [val for _lab, val in _rotary_x_end_pairs()]
+    assert values == [CORNER_LC, CORNER_RC, CORNER_CENTER]
+
+
+def test_corner_from_ui_mismatch_falls_back_mill_bl_rotary_lc():
+    from carveracontroller.addons.stock.stock_origin import CORNER_BL, CORNER_LC
+
+    popup = StockSettingsPopup.__new__(StockSettingsPopup)
+    popup.ids = {"spn_corner": type("S", (), {"text": "not-a-label"})()}
+
+    popup.rotary_mode = False
+    popup._corner_pairs = _stock_corner_pairs()
+    assert popup._corner_from_ui() == CORNER_BL
+
+    popup.rotary_mode = True
+    popup._corner_pairs = _rotary_x_end_pairs()
+    assert popup._corner_from_ui() == CORNER_LC
+
+
+def test_label_for_value_round_trips_left_center_and_z_center():
+    from carveracontroller.addons.stock.stock_origin import CORNER_LC, Z_CENTER
+
+    popup = StockSettingsPopup.__new__(StockSettingsPopup)
+    popup._corner_pairs = _stock_corner_pairs()
+    popup._z_pairs = _z_reference_pairs()
+
+    corner_label = popup._label_for_value(popup._corner_pairs, CORNER_LC)
+    z_label = popup._label_for_value(popup._z_pairs, Z_CENTER)
+    assert corner_label == "Center-left"
+    assert "Center of stock" in z_label
+
+    popup.ids = {"spn_corner": type("S", (), {"text": corner_label})()}
+    popup.rotary_mode = False
+    assert popup._corner_from_ui() == CORNER_LC
+
+    popup.ids["spn_z_ref"] = type("S", (), {"text": z_label})()
+    assert popup._z_from_ui() == Z_CENTER

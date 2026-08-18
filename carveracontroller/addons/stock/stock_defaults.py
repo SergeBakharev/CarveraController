@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from carveracontroller.addons.facing.stock_geometry import CORNER_BL
-
 from .simulator.carver_select import DEFAULT_CARVER_MODE, normalize_carver_mode
 from .simulator.simulation_quality import (
     DEFAULT_CHECKPOINT_LEVEL,
@@ -14,7 +12,7 @@ from .simulator.simulation_quality import (
     normalize_voxel_resolution,
 )
 from .stock_geometry import StockBounds, compute_wcs_bounds
-from .stock_origin import Z_CENTER, Z_TOP, StockOrigin
+from .stock_origin import CORNER_BL, CORNER_LC, Z_CENTER, Z_TOP, StockOrigin
 from .stock_shape import RectangularStock, RotaryCylindricalStock, StockShape, shape_from_dict
 
 DEFAULT_WIDTH_MM = 100.0
@@ -40,7 +38,7 @@ def default_rotary_shape() -> RotaryCylindricalStock:
 
 
 def default_rotary_origin() -> StockOrigin:
-    return StockOrigin(xy_corner=CORNER_BL, z_reference=Z_CENTER)
+    return StockOrigin(xy_corner=CORNER_LC, z_reference=Z_CENTER)
 
 
 def default_bounds() -> StockBounds:

@@ -7,9 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from carveracontroller.addons.facing.stock_geometry import stock_rect_from_origin_corner
-
-from .stock_origin import Z_BOTTOM, Z_CENTER, Z_TOP, StockOrigin
+from .stock_origin import StockOrigin, named_origin_relative_to_center
 from .stock_shape import StockShape
 
 
@@ -63,35 +61,21 @@ def rotate_yz_np(y: np.ndarray, z: np.ndarray, angle_deg: float) -> tuple[np.nda
 def compute_wcs_bounds(shape: StockShape, origin: StockOrigin) -> StockBounds:
     """Map a local stock shape into WCS using the given origin placement."""
     (_min_local, (dx, dy, dz)) = shape.local_bounds()
-    min_x, min_y, max_x, max_y = stock_rect_from_origin_corner(dx, dy, origin.xy_corner)
-
-    if origin.z_reference == Z_TOP:
-        # Z0 at top surface; material extends downward (negative Z), matching CAM convention.
-        min_z = -dz
-        max_z = 0.0
-    elif origin.z_reference == Z_BOTTOM:
-        min_z = 0.0
-        max_z = dz
-    elif origin.z_reference == Z_CENTER:
-        # Rotary: Z0 on the A axis; Y is also centered on the axis. xy_corner
-        # still places X (min / max / center).
-        min_y = -0.5 * dy
-        max_y = 0.5 * dy
-        min_z = -0.5 * dz
-        max_z = 0.5 * dz
-    else:
-        raise ValueError(f"unsupported z_reference: {origin.z_reference!r}")
-
-    ox = origin.offset_x_mm
-    oy = origin.offset_y_mm
-    oz = origin.offset_z_mm
+    ox_rel, oy_rel, oz_rel = named_origin_relative_to_center(dx, dy, dz, origin.xy_corner, origin.z_reference)
+    # Named point sits at WCS origin; offsets then translate the whole AABB.
+    cx = -ox_rel + origin.offset_x_mm
+    cy = -oy_rel + origin.offset_y_mm
+    cz = -oz_rel + origin.offset_z_mm
+    half_x = 0.5 * dx
+    half_y = 0.5 * dy
+    half_z = 0.5 * dz
     return StockBounds(
-        min_x=min_x + ox,
-        min_y=min_y + oy,
-        min_z=min_z + oz,
-        max_x=max_x + ox,
-        max_y=max_y + oy,
-        max_z=max_z + oz,
+        min_x=cx - half_x,
+        min_y=cy - half_y,
+        min_z=cz - half_z,
+        max_x=cx + half_x,
+        max_y=cy + half_y,
+        max_z=cz + half_z,
     )
 
 

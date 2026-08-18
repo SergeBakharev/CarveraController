@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 
 from carveracontroller.addons.cam.metadata import CamStock
-from carveracontroller.addons.facing.stock_geometry import CORNER_BL
 from carveracontroller.CNC import (
     LASER_TOOL_NUMBER,
     ZPROBE_TOOL_NUMBER,
@@ -13,7 +12,7 @@ from carveracontroller.CNC import (
 )
 
 from .stock_defaults import default_origin, default_rotary_origin, default_rotary_shape, default_shape
-from .stock_origin import Z_CENTER, Z_TOP, StockOrigin
+from .stock_origin import CORNER_BL, CORNER_LC, Z_CENTER, Z_TOP, StockOrigin
 from .stock_shape import RectangularStock, RotaryCylindricalStock, StockShape, shape_from_dict
 
 # Guessed extents snap to whole millimetres
@@ -130,7 +129,7 @@ def estimate_rotary_stock(
         width_y = height
 
     origin = StockOrigin(
-        xy_corner=CORNER_BL,
+        xy_corner=CORNER_LC,
         z_reference=Z_CENTER,
         offset_x_mm=min_x,
         offset_y_mm=0.0,

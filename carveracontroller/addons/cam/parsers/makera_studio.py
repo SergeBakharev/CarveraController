@@ -21,6 +21,18 @@ import logging
 
 from carveracontroller.addons.cam.metadata import CamMetadata, CamStock
 from carveracontroller.addons.cam.parsers.base import CamHeaderParser
+from carveracontroller.addons.stock.stock_origin import (
+    CORNER_BC,
+    CORNER_BL,
+    CORNER_BR,
+    CORNER_CENTER,
+    CORNER_FC,
+    CORNER_LC,
+    CORNER_RC,
+    CORNER_TL,
+    CORNER_TR,
+    named_origin_relative_to_center,
+)
 from carveracontroller.addons.tool_visualization.tool_definition import (
     ToolDefinition,
     ToolType,
@@ -143,25 +155,23 @@ def _origin_tokens(type_name):
 
 def _xy_corner_from_positions(x_pos, y_pos):
     if x_pos == "center" and y_pos == "center":
-        return "center"
+        return CORNER_CENTER
     if x_pos == "min" and y_pos == "min":
-        return "bl"
+        return CORNER_BL
     if x_pos == "max" and y_pos == "min":
-        return "br"
+        return CORNER_BR
     if x_pos == "min" and y_pos == "max":
-        return "tl"
+        return CORNER_TL
     if x_pos == "max" and y_pos == "max":
-        return "tr"
-    # X-end with Y centred (4-axis leftCenter / rightCenter): xy_corner only
-    # places X; z_reference=center centres Y in compute_wcs_bounds.
+        return CORNER_TR
     if x_pos == "min" and y_pos == "center":
-        return "bl"
+        return CORNER_LC
     if x_pos == "max" and y_pos == "center":
-        return "br"
-    # Edge midpoints we cannot name (front/back centre): keep XY at centre and
-    # let the residual offset capture the edge.
-    if x_pos == "center" and y_pos in ("min", "max"):
-        return "center"
+        return CORNER_RC
+    if x_pos == "center" and y_pos == "min":
+        return CORNER_FC
+    if x_pos == "center" and y_pos == "max":
+        return CORNER_BC
     return None
 
 
@@ -199,31 +209,6 @@ def parse_origin_type_name(type_name):
     if xy_corner is None:
         return None
     return xy_corner, z_ref
-
-
-def named_origin_relative_to_center(dx, dy, dz, xy_corner, z_reference):
-    """WCS origin relative to the stock AABB centre for a named corner/Z."""
-    half_x = dx / 2.0
-    half_y = dy / 2.0
-    half_z = dz / 2.0
-
-    if xy_corner == "bl":
-        x, y = -half_x, -half_y
-    elif xy_corner == "br":
-        x, y = half_x, -half_y
-    elif xy_corner == "tl":
-        x, y = -half_x, half_y
-    elif xy_corner == "tr":
-        x, y = half_x, half_y
-    else:
-        x, y = 0.0, 0.0
-
-    if z_reference == "center":
-        # Matches compute_wcs_bounds: Y is also centred on the A axis.
-        return x, 0.0, 0.0
-    if z_reference == "bottom":
-        return x, y, -half_z
-    return x, y, half_z
 
 
 def _build_cam_stock(stock_fields, origin_fields):
