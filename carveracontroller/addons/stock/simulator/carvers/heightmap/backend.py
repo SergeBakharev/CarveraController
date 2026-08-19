@@ -23,6 +23,14 @@ from carveracontroller.addons.stock.simulator.carvers.heightmap.mesh import (
 from carveracontroller.addons.stock.simulator.carvers.heightmap.mesh import (
     mesh_heightmap_region as _mesh_heightmap_region,
 )
+from carveracontroller.addons.stock.simulator.carvers.laser_map import (
+    LaserDecalMixin,
+    LaserMap,
+    laser_burn_uint8,
+    pick_laser_cell_size_mm,
+    split_laser_snapshot,
+    stroke_radius_mm,
+)
 from carveracontroller.addons.stock.stock_geometry import StockBounds
 from carveracontroller.addons.stock.stock_shape import (
     CylindricalStock,
@@ -123,7 +131,7 @@ def _cut_z_along_segment(
     return (p0[2] + t * dz) + z_rel
 
 
-class HeightmapBackend:
+class HeightmapBackend(LaserDecalMixin):
     """Single remaining top-Z per XY cell."""
 
     kind = "heightmap"
@@ -138,9 +146,15 @@ class HeightmapBackend:
         heights: np.ndarray | None = None,
         seed: bool = True,
         index_origin: tuple[int, int] = (0, 0),
+        laser_cell_size_mm: float | None = None,
     ):
         self.bounds = bounds
         self.cell_size = float(cell_size_mm)
+        self._laser_cell_size = (
+            float(laser_cell_size_mm)
+            if laser_cell_size_mm is not None
+            else pick_laser_cell_size_mm(bounds, self.cell_size)
+        )
         self.tile_size = max(2, int(tile_size))
         self.shape: StockShape = shape or RectangularStock(
             width_mm=max(bounds.size[0], 1e-6),
@@ -159,6 +173,7 @@ class HeightmapBackend:
             self.heights = np.full((self.nx, self.ny), _OUTSIDE, dtype=np.float32)
             if seed:
                 self._seed_heights()
+        self._init_laser()
 
     def _world_xy(self, ix: np.ndarray, iy: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         wx = self.bounds.min_x + (ix.astype(np.float64) + 0.5) * self.cell_size
@@ -209,10 +224,18 @@ class HeightmapBackend:
         self._ox = self._oy = 0
         self._seed_heights()
         self._touched.clear()
+        self._drop_laser()
         return self.initial_surface_keys()
 
     def clone_empty(self) -> HeightmapBackend:
-        return HeightmapBackend(self.bounds, self.cell_size, self.shape, self.tile_size, seed=True)
+        return HeightmapBackend(
+            self.bounds,
+            self.cell_size,
+            self.shape,
+            self.tile_size,
+            seed=True,
+            laser_cell_size_mm=self._laser_cell_size,
+        )
 
     def carve_segment(
         self,
@@ -289,12 +312,88 @@ class HeightmapBackend:
         if not hit.any():
             return set()
         slab[hit] = np.minimum(slab[hit], cut_z[hit].astype(np.float32))
+        if self._laser is not None and self._laser.clear_from_coarse_mask(
+            hit,
+            ix0,
+            iy0,
+            self.cell_size,
+            self.cell_size,
+            self.bounds.min_x,
+            self.bounds.min_y,
+        ):
+            self._laser_dirty = True
         dirty = tile_keys_from_window_mask(hit, ix0, iy0, self.tile_size)
         self._touched |= dirty
         return dirty
 
+    def _make_laser_map(self) -> LaserMap:
+        nx, ny = pick_heightmap_size(self.bounds, self._laser_cell_size)
+        return LaserMap.planar(self.bounds, nx, ny, self._laser_cell_size)
+
+    def _laser_allow_from_heights(
+        self,
+        laser: LaserMap,
+        p0: tuple[float, float, float],
+        p1: tuple[float, float, float],
+        radius: float,
+        laser_z: float,
+    ) -> tuple[np.ndarray | None, tuple[int, int] | None]:
+        if self.heights.shape != (self.nx, self.ny):
+            return None, None
+        pad = radius + laser.cell_u
+        iu0 = max(0, int(math.floor((min(p0[0], p1[0]) - pad - laser.origin_u) / laser.cell_u)))
+        iv0 = max(0, int(math.floor((min(p0[1], p1[1]) - pad - laser.origin_v) / laser.cell_v)))
+        iu1 = min(laser.nx - 1, int(math.floor((max(p0[0], p1[0]) + pad - laser.origin_u) / laser.cell_u)))
+        iv1 = min(laser.nv - 1, int(math.floor((max(p0[1], p1[1]) + pad - laser.origin_v) / laser.cell_v)))
+        if iu0 > iu1 or iv0 > iv1:
+            return None, None
+        uu = laser.origin_u + (np.arange(iu0, iu1 + 1, dtype=np.float64) + 0.5) * laser.cell_u
+        vv = laser.origin_v + (np.arange(iv0, iv1 + 1, dtype=np.float64) + 0.5) * laser.cell_v
+        ix = np.clip(np.floor((uu - self.bounds.min_x) / self.cell_size).astype(np.int32), 0, self.nx - 1)
+        iy = np.clip(np.floor((vv - self.bounds.min_y) / self.cell_size).astype(np.int32), 0, self.ny - 1)
+        slab = self.heights[ix[:, None], iy[None, :]]
+        eps = max(self.cell_size, 0.2)
+        allow = (slab > _OUTSIDE * 0.5) & (slab >= np.float32(laser_z - eps))
+        return allow, (iu0, iv0)
+
+    def engrave_segment(
+        self,
+        p0: tuple[float, float, float],
+        p1: tuple[float, float, float],
+        tool_def=None,
+        tool_unit_scale: float = 1.0,
+        *,
+        a0: float = 0.0,
+        a1: float = 0.0,
+        power_s: float | None = None,
+    ) -> bool:
+        del tool_def, tool_unit_scale, a0, a1
+        burn = laser_burn_uint8(power_s)
+        if not burn:
+            return False
+        radius = stroke_radius_mm(self._laser_cell_size)
+        laser_z = min(float(p0[2]), float(p1[2]))
+        laser = self._ensure_laser()
+        allow, origin = self._laser_allow_from_heights(laser, p0, p1, radius, laser_z)
+        changed = laser.paint_segment(
+            p0[0],
+            p0[1],
+            p1[0],
+            p1[1],
+            radius,
+            allow,
+            allow_origin=origin,
+            burn=burn,
+        )
+        if changed:
+            self._laser_dirty = True
+        elif self._laser is not None and not np.any(self._laser.intensity):
+            # First paint missed (air); drop so mill stays on the fast path.
+            self._drop_laser()
+        return changed
+
     def snapshot_full(self) -> object:
-        return ("full", compress_array(self.heights))
+        return self._snapshot_with_laser(("full", compress_array(self.heights)), full=True)
 
     def snapshot_changed(self, keys: set[TileKey]) -> object:
         ts = self.tile_size
@@ -304,13 +403,15 @@ class HeightmapBackend:
             x0, y0 = tx * ts, ty * ts
             x1, y1 = min(self.nx, x0 + ts), min(self.ny, y0 + ts)
             tiles[key] = self.heights[x0:x1, y0:y1].copy()
-        return ("delta", tiles)
+        return self._snapshot_with_laser(("delta", tiles), full=False)
 
     def restore(self, payload: object) -> set[TileKey]:
-        kind, data = payload  # type: ignore[misc]
+        occ, laser_payload = split_laser_snapshot(payload)
+        kind, data = occ  # type: ignore[misc]
         if kind == "full":
             self.heights[:, :] = decompress_array(data)
             self._touched = self._tiles_not_at_seed()
+            self._restore_laser_payload(laser_payload, occupancy_kind=kind)
             return self.initial_surface_keys()
         dirty: set[TileKey] = set()
         ts = self.tile_size
@@ -321,6 +422,7 @@ class HeightmapBackend:
             self.heights[x0:x1, y0:y1] = tile
             dirty.add(key)
         self._touched |= dirty
+        self._restore_laser_payload(laser_payload, occupancy_kind=kind)
         return dirty
 
     def copy_tiles(self, keys: set[TileKey]) -> HeightmapBackend:
@@ -334,6 +436,7 @@ class HeightmapBackend:
                 heights=np.empty((0, 0), dtype=np.float32),
                 seed=False,
                 index_origin=(0, 0),
+                laser_cell_size_mm=self._laser_cell_size,
             )
         txs = [k[0] for k in keys]
         tys = [k[1] for k in keys]
@@ -349,6 +452,7 @@ class HeightmapBackend:
             heights=self._read_patch(x0, y0, x1, y1),
             seed=False,
             index_origin=(x0, y0),
+            laser_cell_size_mm=self._laser_cell_size,
         )
 
     def expand_dirty(self, dirty: set[TileKey]) -> set[TileKey]:

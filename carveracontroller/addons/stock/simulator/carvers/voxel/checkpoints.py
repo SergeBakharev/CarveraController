@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from carveracontroller.addons.stock.simulator.carvers.laser_map import laser_snapshot_nbytes
+
 from .grid import CHUNK_EMPTY, CHUNK_FULL, ChunkCoord, ChunkedVoxelGrid
 
 # Packed-checkpoint sentinels (compare with ``is``). ``_REMOVED`` = back to FULL.
@@ -48,6 +50,7 @@ class GridCheckpoint:
     is_base: bool
     data: dict[tuple[int, int, int], object]
     nbytes: int
+    laser: object | None = None
 
 
 def _equal_spaced_targets(path_vertex_count: int, slot_count: int) -> list[int]:
@@ -159,7 +162,9 @@ class CheckpointStore:
             raw, _ = grid.snapshot_non_full()
             packed = {key: _pack_chunk_state(state) for key, state in raw.items()}
             nbytes = sum(_packed_nbytes(v) for v in packed.values())
-            cp = GridCheckpoint(vertex=vertex, is_base=True, data=packed, nbytes=nbytes)
+            laser_snap = _laser_capture(occupancy, full=True)
+            nbytes += laser_snapshot_nbytes(laser_snap)
+            cp = GridCheckpoint(vertex=vertex, is_base=True, data=packed, nbytes=nbytes, laser=laser_snap)
             self._last_full_map = dict(packed)
         else:
             delta: dict[tuple[int, int, int], object] = {}
@@ -175,7 +180,9 @@ class CheckpointStore:
                     delta[key] = packed_state
             # Empty deltas are valid seek anchors (air cuts / no-op carves).
             nbytes = sum(_packed_nbytes(v) for v in delta.values())
-            cp = GridCheckpoint(vertex=vertex, is_base=False, data=delta, nbytes=nbytes)
+            laser_snap = _laser_capture(occupancy, full=False)
+            nbytes += laser_snapshot_nbytes(laser_snap)
+            cp = GridCheckpoint(vertex=vertex, is_base=False, data=delta, nbytes=nbytes, laser=laser_snap)
             for key, val in delta.items():
                 if val is _REMOVED:
                     self._last_full_map.pop(key, None)
@@ -189,9 +196,24 @@ class CheckpointStore:
         return True
 
 
+def _laser_capture(occupancy, *, full: bool) -> object | None:
+    fn = getattr(occupancy, "laser_checkpoint_full" if full else "laser_checkpoint_delta", None)
+    if fn is None:
+        return None
+    return fn()
+
+
 def restore_voxel_checkpoint(backend, store: CheckpointStore, checkpoint: GridCheckpoint) -> set:
     """Apply ``checkpoint`` onto ``backend.grid``. Returns restored chunk keys."""
     grid = backend.grid
     chunks = store.resolve_chunks(checkpoint, grid.chunk_size)
     grid.restore_non_full(chunks)
+    restore_laser = getattr(backend, "_restore_laser_payload", None)
+    if restore_laser is not None:
+        idx = store._items.index(checkpoint)
+        base_idx = idx
+        while not store._items[base_idx].is_base:
+            base_idx -= 1
+        for i, cp in enumerate(store._items[base_idx : idx + 1]):
+            restore_laser(cp.laser, occupancy_kind="full" if i == 0 else "delta")
     return set(chunks.keys())

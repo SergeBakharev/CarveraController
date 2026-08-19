@@ -431,6 +431,7 @@ class CNC:
                             line_no,
                             self.tool,
                             self.feed,
+                            self.speed,
                         ]
                     )
                     # self.coordinates.append('X: {} Y: {} Z: {} A: {} Color: {} Line: {} Tool: {}'.format(
@@ -565,6 +566,7 @@ class CNC:
                 self.mval = int(value)
                 if self.mval == 321:
                     self.tool = LASER_TOOL_NUMBER
+                    self.speed = 0  # Laser S is different from mill RPM
 
             elif c == "N":
                 pass

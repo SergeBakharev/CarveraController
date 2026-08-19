@@ -21,8 +21,16 @@ from carveracontroller.addons.stock.simulator.carvers.array_mesh import (
     tile_keys_from_window_mask,
 )
 from carveracontroller.addons.stock.simulator.carvers.backend import DEFAULT_TILE_SIZE, TileKey
+from carveracontroller.addons.stock.simulator.carvers.laser_map import (
+    LaserDecalMixin,
+    LaserMap,
+    laser_burn_uint8,
+    pick_laser_cell_size_mm,
+    split_laser_snapshot,
+    stroke_radius_mm,
+)
 from carveracontroller.addons.stock.simulator.mesh_format import DEFAULT_COLOR
-from carveracontroller.addons.stock.stock_geometry import StockBounds, rotate_yz, rotate_yz_np
+from carveracontroller.addons.stock.stock_geometry import StockBounds, rotate_yz, rotate_yz_np, stock_theta_deg
 from carveracontroller.addons.stock.stock_shape import (
     RectangularStock,
     RotaryCylindricalStock,
@@ -517,7 +525,7 @@ def _revolution_cut_radius(
     return new_s, hit
 
 
-class CylindricalBackend:
+class CylindricalBackend(LaserDecalMixin):
     """Remaining outer radius per (x, θ) cell around the A-axis."""
 
     kind = "cylindrical"
@@ -532,9 +540,15 @@ class CylindricalBackend:
         radii: np.ndarray | None = None,
         seed: bool = True,
         index_origin_x: int = 0,
+        laser_cell_size_mm: float | None = None,
     ):
         self.bounds = bounds
         self.cell_size = float(cell_size_mm)
+        self._laser_cell_size = (
+            float(laser_cell_size_mm)
+            if laser_cell_size_mm is not None
+            else pick_laser_cell_size_mm(bounds, self.cell_size, cylindrical=True)
+        )
         self.tile_size = max(2, int(tile_size))
         self.shape: StockShape = shape or RotaryCylindricalStock(
             diameter_mm=max(min(bounds.size[1], bounds.size[2]), 1e-6),
@@ -563,6 +577,7 @@ class CylindricalBackend:
             self.radii = np.full((self.nx, self.n_theta), _EMPTY_R, dtype=np.float32)
             if seed:
                 self._seed_radii()
+        self._init_laser()
 
     def _fill_seed(self, out: np.ndarray) -> None:
         if isinstance(self.shape, RotaryCylindricalStock):
@@ -594,10 +609,117 @@ class CylindricalBackend:
         self._ox = 0
         self._seed_radii()
         self._touched.clear()
+        self._drop_laser()
         return self.initial_surface_keys()
 
     def clone_empty(self) -> CylindricalBackend:
-        return CylindricalBackend(self.bounds, self.cell_size, self.shape, self.tile_size, seed=True)
+        return CylindricalBackend(
+            self.bounds,
+            self.cell_size,
+            self.shape,
+            self.tile_size,
+            seed=True,
+            laser_cell_size_mm=self._laser_cell_size,
+        )
+
+    def _make_laser_map(self) -> LaserMap:
+        diameter = 2.0 * self.stock_radius
+        nx, n_theta, d_theta = pick_cylindrical_dims(self.bounds, self._laser_cell_size, diameter)
+        return LaserMap.cylindrical(self.bounds, nx, n_theta, self._laser_cell_size, d_theta)
+
+    def _clear_laser_indexed(self, ix0: int, it: np.ndarray, changed: np.ndarray) -> None:
+        if self._laser is None:
+            return
+        if self._laser.clear_from_coarse_mask(
+            changed,
+            ix0,
+            it,
+            self.cell_size,
+            self.d_theta,
+            self.bounds.min_x,
+            0.0,
+            coarse_nv=self.n_theta,
+        ):
+            self._laser_dirty = True
+
+    def _stock_theta(self, p: tuple[float, float, float], angle_deg: float) -> float:
+        return stock_theta_deg(p[1], p[2], angle_deg, self.axis_y, self.axis_z)
+
+    def _laser_allow_from_radii(
+        self,
+        laser: LaserMap,
+        p0: tuple[float, float, float],
+        p1: tuple[float, float, float],
+        theta0: float,
+        theta1: float,
+        radius: float,
+        min_r: float,
+    ) -> tuple[np.ndarray | None, tuple[int, int] | None]:
+        if self.radii.shape != (self.nx, self.n_theta):
+            return None, None
+        pad_u = radius + laser.cell_u
+        pad_v = radius / max(laser.v_scale, 1e-12) + laser.cell_v
+        iu0 = max(0, int(math.floor((min(p0[0], p1[0]) - pad_u - laser.origin_u) / laser.cell_u)))
+        iu1 = min(laser.nx - 1, int(math.floor((max(p0[0], p1[0]) + pad_u - laser.origin_u) / laser.cell_u)))
+        if iu0 > iu1:
+            return None, None
+        uu = laser.origin_u + (np.arange(iu0, iu1 + 1, dtype=np.float64) + 0.5) * laser.cell_u
+        ix = np.clip(
+            np.floor((uu - self.bounds.min_x) / self.cell_size).astype(np.int32),
+            0,
+            self.nx - 1,
+        )
+        iv_idx = laser._wrapped_v_indices(float(theta0), float(theta1), pad_v)
+        if iv_idx.size == 0:
+            return None, None
+        period = laser.v_period if laser.v_period else 360.0
+        vv = laser.origin_v + (iv_idx.astype(np.float64) + 0.5) * laser.cell_v
+        it = np.floor(np.mod(vv, period) / max(self.d_theta, 1e-12)).astype(np.int32) % self.n_theta
+        occ = self.radii[ix[:, None], it[None, :]]
+        eps = max(self.cell_size, 0.2)
+        window = (occ >= 0.0) & (occ >= np.float32(min_r - eps))
+        allow = np.zeros((iu1 - iu0 + 1, laser.nv), dtype=bool)
+        allow[:, iv_idx % laser.nv] = window
+        return allow, (iu0, 0)
+
+    def engrave_segment(
+        self,
+        p0: tuple[float, float, float],
+        p1: tuple[float, float, float],
+        tool_def=None,
+        tool_unit_scale: float = 1.0,
+        *,
+        a0: float = 0.0,
+        a1: float = 0.0,
+        power_s: float | None = None,
+    ) -> bool:
+        del tool_def, tool_unit_scale
+        burn = laser_burn_uint8(power_s)
+        if not burn:
+            return False
+        radius = stroke_radius_mm(self._laser_cell_size)
+        d0 = math.hypot(p0[1] - self.axis_y, p0[2] - self.axis_z)
+        d1 = math.hypot(p1[1] - self.axis_y, p1[2] - self.axis_z)
+        min_r = min(d0, d1)
+        theta0 = self._stock_theta(p0, a0)
+        theta1 = self._stock_theta(p1, a1)
+        laser = self._ensure_laser()
+        allow, origin = self._laser_allow_from_radii(laser, p0, p1, theta0, theta1, radius, min_r)
+        changed = laser.paint_segment(
+            p0[0],
+            theta0,
+            p1[0],
+            theta1,
+            radius,
+            allow,
+            allow_origin=origin,
+            burn=burn,
+        )
+        if changed:
+            self._laser_dirty = True
+        elif self._laser is not None and not np.any(self._laser.intensity):
+            self._drop_laser()
+        return changed
 
     def _x_index(self, x: float) -> int:
         return int(math.floor((x - self.bounds.min_x) / self.cell_size))
@@ -695,8 +817,8 @@ class CylindricalBackend:
         if min_dist < reach + 1e-9:
             return np.arange(self.n_theta, dtype=np.int32)
         pad = math.degrees(math.asin(min(1.0, reach / min_dist))) + self.d_theta
-        th0 = math.degrees(math.atan2(dy0, dz0)) - angle
-        th1 = math.degrees(math.atan2(dy1, dz1)) - angle
+        th0 = stock_theta_deg(p0[1], p0[2], angle, self.axis_y, self.axis_z)
+        th1 = stock_theta_deg(p1[1], p1[2], angle, self.axis_y, self.axis_z)
         delta = (th1 - th0 + 180.0) % 360.0 - 180.0
         lo = min(th0, th0 + delta) - pad
         hi = max(th0, th0 + delta) + pad
@@ -742,6 +864,7 @@ class CylindricalBackend:
             return set()
         ix = np.arange(ix0, ix0 + slab.shape[0])
         self.radii[ix[:, None], it[None, :]] = slab.astype(np.float32, copy=False)
+        self._clear_laser_indexed(ix0, it, changed)
         dirty = self._dirty_from_mask(changed, ix0, it)
         self._touched |= dirty
         return dirty
@@ -827,6 +950,7 @@ class CylindricalBackend:
         if not upd.any():
             return set()
         self.radii[ix0 : ix1 + 1, :] = np.where(upd, r_cut_x[:, None], ring).astype(np.float32)
+        self._clear_laser_indexed(ix0, np.arange(self.n_theta, dtype=np.int32), upd)
         dirty = self._dirty_from_mask(upd, ix0, np.arange(self.n_theta, dtype=np.int32))
         self._touched |= dirty
         return dirty
@@ -884,6 +1008,7 @@ class CylindricalBackend:
         if not changed.any():
             return set()
         self.radii[ix0 : ix1 + 1, :] = r_work.astype(np.float32)
+        self._clear_laser_indexed(ix0, np.arange(self.n_theta, dtype=np.int32), changed)
         dirty = self._dirty_from_mask(changed, ix0, np.arange(self.n_theta, dtype=np.int32))
         self._touched |= dirty
         return dirty
@@ -916,7 +1041,7 @@ class CylindricalBackend:
         return self._write_slab(ix0, it, np.where(upd, new_s, slab), upd)
 
     def snapshot_full(self) -> object:
-        return ("full", compress_array(self.radii))
+        return self._snapshot_with_laser(("full", compress_array(self.radii)), full=True)
 
     def snapshot_changed(self, keys: set[TileKey]) -> object:
         ts = self.tile_size
@@ -926,13 +1051,15 @@ class CylindricalBackend:
             x0, t0 = tx * ts, tt * ts
             x1, t1 = min(self.nx, x0 + ts), min(self.n_theta, t0 + ts)
             tiles[key] = self.radii[x0:x1, t0:t1].copy()
-        return ("delta", tiles)
+        return self._snapshot_with_laser(("delta", tiles), full=False)
 
     def restore(self, payload: object) -> set[TileKey]:
-        kind, data = payload  # type: ignore[misc]
+        occ, laser_payload = split_laser_snapshot(payload)
+        kind, data = occ  # type: ignore[misc]
         if kind == "full":
             self.radii[:, :] = decompress_array(data)
             self._touched = self._tiles_not_at_seed()
+            self._restore_laser_payload(laser_payload, occupancy_kind=kind)
             return self.initial_surface_keys()
         dirty: set[TileKey] = set()
         ts = self.tile_size
@@ -943,6 +1070,7 @@ class CylindricalBackend:
             self.radii[x0:x1, t0:t1] = tile
             dirty.add(key)
         self._touched |= dirty
+        self._restore_laser_payload(laser_payload, occupancy_kind=kind)
         return dirty
 
     def copy_tiles(self, keys: set[TileKey]) -> CylindricalBackend:
@@ -956,6 +1084,7 @@ class CylindricalBackend:
                 radii=np.empty((0, self.n_theta), dtype=np.float32),
                 seed=False,
                 index_origin_x=0,
+                laser_cell_size_mm=self._laser_cell_size,
             )
         txs = [k[0] for k in keys]
         x0 = max(0, min(txs) * ts)
@@ -969,6 +1098,7 @@ class CylindricalBackend:
             radii=window,
             seed=False,
             index_origin_x=x0,
+            laser_cell_size_mm=self._laser_cell_size,
         )
 
     def expand_dirty(self, dirty: set[TileKey]) -> set[TileKey]:

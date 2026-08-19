@@ -332,3 +332,13 @@ def test_rotate_yz_quarter_turn():
     y, z = rotate_yz(0.0, 10.0, 90.0)
     assert y == pytest.approx(-10.0)
     assert z == pytest.approx(0.0)
+
+
+def test_stock_theta_is_atan2_minus_a():
+    from carveracontroller.addons.stock.stock_geometry import rotate_yz, stock_theta_deg
+
+    assert stock_theta_deg(0.0, 14.0, 0.0) == pytest.approx(0.0)
+    # Tool on +Z at A=90 hits stock θ=-90, the same side mill clears.
+    assert stock_theta_deg(0.0, 14.0, 90.0) == pytest.approx(-90.0)
+    y, z = rotate_yz(0.0, 14.0, 90.0)
+    assert stock_theta_deg(y, z, 0.0) == pytest.approx(-90.0)

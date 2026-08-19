@@ -571,6 +571,13 @@ class StockSettingsPopup(ModalView):
         return settings
 
     def _refresh_simulation_availability(self):
+        app = App.get_running_app()
+        viewer = None
+        if app is not None and getattr(app, "root", None) is not None:
+            viewer = getattr(app.root, "gcode_viewer", None)
+        if viewer is not None:
+            self.simulation_available = bool(viewer.simulation_available())
+            return
         tool_table, _scale = self._viewer_tools()
         self.simulation_available = bool(tool_table)
 

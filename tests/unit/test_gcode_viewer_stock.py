@@ -173,3 +173,41 @@ def test_format_sim_hud_heightmap_keeps_mm_per_cell():
     }
     text = viewer._format_sim_hud_text()
     assert "Heightmap: 200x200 - 0.21mm/cell" in text
+
+
+def test_simulation_available_with_cam_tool_table():
+    viewer = _viewer(tool_table={1: object()}, raw_tools=[])
+    assert viewer.simulation_available() is True
+
+
+def test_simulation_available_laser_only_without_tool_table():
+    from carveracontroller.CNC import LASER_TOOL_NUMBER, ZPROBE_TOOL_NUMBER
+
+    viewer = _viewer(tool_table={}, raw_tools=[ZPROBE_TOOL_NUMBER, LASER_TOOL_NUMBER, LASER_TOOL_NUMBER])
+    assert viewer.simulation_available() is True
+
+
+def test_simulation_available_laser_and_3d_probe_without_tool_table():
+    from carveracontroller.CNC import LASER_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER
+
+    viewer = _viewer(tool_table={}, raw_tools=[PROBE_3D_TOOL_NUMBER, LASER_TOOL_NUMBER])
+    assert viewer.simulation_available() is True
+
+
+def test_simulation_unavailable_mill_without_tool_table():
+    from carveracontroller.CNC import LASER_TOOL_NUMBER
+
+    viewer = _viewer(tool_table={}, raw_tools=[LASER_TOOL_NUMBER, 1])
+    assert viewer.simulation_available() is False
+
+
+def test_simulation_unavailable_probe_only_without_tool_table():
+    from carveracontroller.CNC import PROBE_3D_TOOL_NUMBER, ZPROBE_TOOL_NUMBER
+
+    viewer = _viewer(tool_table={}, raw_tools=[ZPROBE_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER])
+    assert viewer.simulation_available() is False
+
+
+def test_simulation_unavailable_empty_path_without_tool_table():
+    viewer = _viewer(tool_table={}, raw_tools=[])
+    assert viewer.simulation_available() is False

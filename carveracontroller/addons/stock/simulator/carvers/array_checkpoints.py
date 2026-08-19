@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from carveracontroller.addons.stock.simulator.carvers.array_mesh import compressed_nbytes
+from carveracontroller.addons.stock.simulator.carvers.laser_map import laser_snapshot_nbytes
+
 
 def _equal_spaced_targets(path_vertex_count: int, slot_count: int) -> list[int]:
     v = int(path_vertex_count)
@@ -12,6 +15,26 @@ def _equal_spaced_targets(path_vertex_count: int, slot_count: int) -> list[int]:
         return []
     last = v - 1
     return list(dict.fromkeys(t for t in (int(round(i * last / n)) for i in range(1, n + 1)) if t > 0))
+
+
+def snapshot_nbytes(payload: object) -> int:
+    """Byte estimate for a ``("full"|"delta", occupancy[, extra...])`` payload."""
+    if payload is None:
+        return 0
+    extra = 0
+    occ = payload
+    if isinstance(payload, tuple) and len(payload) >= 3 and payload[0] in ("full", "delta"):
+        extra = sum(laser_snapshot_nbytes(blob) for blob in payload[2:])
+        occ = payload[:2]
+    if isinstance(occ, tuple) and len(occ) == 2:
+        kind, data = occ
+        if kind == "full":
+            return compressed_nbytes(data) + extra
+        if kind == "delta" and isinstance(data, dict):
+            return sum(int(v.nbytes) if hasattr(v, "nbytes") else 64 for v in data.values()) + extra
+    if hasattr(payload, "nbytes"):
+        return int(payload.nbytes) + extra
+    return 64 + extra
 
 
 @dataclass(frozen=True)
@@ -97,12 +120,12 @@ class ArrayCheckpointStore:
         force_base = changed_keys is None or not self._items or len(self._items) % self.base_interval == 0
         if force_base:
             payload = backend.snapshot_full()
-            nbytes = _payload_nbytes(payload)
+            nbytes = snapshot_nbytes(payload)
             cp = ArrayCheckpoint(vertex=vertex, is_base=True, payload=payload, nbytes=nbytes)
             self._last_full_payload = payload
         else:
             payload = backend.snapshot_changed(changed_keys)
-            nbytes = _payload_nbytes(payload)
+            nbytes = snapshot_nbytes(payload)
             cp = ArrayCheckpoint(vertex=vertex, is_base=False, payload=payload, nbytes=nbytes)
 
         self._items.append(cp)
@@ -110,22 +133,6 @@ class ArrayCheckpointStore:
         while self._next_target_idx < len(self._targets) and self._targets[self._next_target_idx] <= vertex:
             self._next_target_idx += 1
         return True
-
-
-def _payload_nbytes(payload: object) -> int:
-    if payload is None:
-        return 0
-    if isinstance(payload, tuple) and len(payload) == 2:
-        kind, data = payload
-        if kind == "full":
-            from carveracontroller.addons.stock.simulator.carvers.array_mesh import compressed_nbytes
-
-            return compressed_nbytes(data)
-        if kind == "delta" and isinstance(data, dict):
-            return sum(int(v.nbytes) if hasattr(v, "nbytes") else 64 for v in data.values())
-    if hasattr(payload, "nbytes"):
-        return int(payload.nbytes)
-    return 64
 
 
 def restore_array_checkpoint(backend, store: ArrayCheckpointStore, checkpoint: ArrayCheckpoint) -> set:

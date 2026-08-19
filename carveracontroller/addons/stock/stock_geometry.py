@@ -58,6 +58,23 @@ def rotate_yz_np(y: np.ndarray, z: np.ndarray, angle_deg: float) -> tuple[np.nda
     return y * c - z * s, y * s + z * c
 
 
+def stock_theta_deg(
+    y: float,
+    z: float,
+    angle_deg: float,
+    axis_y: float = 0.0,
+    axis_z: float = 0.0,
+) -> float:
+    """Stock-frame azimuth (degrees) of a machine YZ point at A-axis ``angle_deg``.
+
+    Same convention as cylindrical mill occupancy: θ = atan2(Y, Z) − A about
+    the axis after ``Rx(-A)``. Laser unwrap and the carved-stock shader use
+    this θ, not raw A.
+    """
+    y_axis, z_axis = rotate_yz(float(axis_y), float(axis_z), -float(angle_deg))
+    return math.degrees(math.atan2(float(y) - y_axis, float(z) - z_axis)) - float(angle_deg)
+
+
 def compute_wcs_bounds(shape: StockShape, origin: StockOrigin) -> StockBounds:
     """Map a local stock shape into WCS using the given origin placement."""
     (_min_local, (dx, dy, dz)) = shape.local_bounds()

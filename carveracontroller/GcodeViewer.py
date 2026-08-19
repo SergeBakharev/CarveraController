@@ -14,6 +14,7 @@ from kivy.graphics import *
 from kivy.graphics import Callback, Mesh
 from kivy.graphics.instructions import RenderContext
 from kivy.graphics.opengl import *
+from kivy.graphics.texture import Texture
 from kivy.graphics.transformation import Matrix
 from kivy.metrics import dp
 from kivy.properties import BooleanProperty, ListProperty, NumericProperty, StringProperty
@@ -21,6 +22,8 @@ from kivy.uix.widget import Widget
 from kivy.utils import platform
 
 from carveracontroller.translation import tr
+
+from .CNC import LASER_TOOL_NUMBER, ZPROBE_TOOL_NUMBER, is_probe_tools_range
 
 logger = logging.getLogger(__name__)
 
@@ -365,6 +368,7 @@ VIEW_CUBE_MARGIN = dp(10)
 VIEW_CUBE_TOOLBAR_INSET = dp(48)
 VIEW_CUBE_TEXTURE_UNIT = 1
 VIEW_CUBE_WORLD_SCALE = 0.5
+LASER_DECAL_TEXTURE_UNIT = 1
 
 
 # Assets (3D models / textures)
@@ -392,6 +396,8 @@ class MeshManager:
         self.raw_linenumbers = []
         # feed rate (mm/min) per vertex, from CNC parser
         self.raw_feed_rates = []
+        # spindle RPM / laser S (0–1 PWM fraction in laser mode) per vertex
+        self.raw_spindle_speeds = []
         # active tool number per vertex, used to pick the tool mesh to display
         self.raw_tools = []
         # angles of vertices [4 axis]
@@ -427,6 +433,7 @@ class MeshManager:
         # raw numbers
         self.raw_linenumbers.clear()
         self.raw_feed_rates.clear()
+        self.raw_spindle_speeds.clear()
         self.raw_tools.clear()
         # angles of vertices [4 axis]
         self.angles_of_vertices.clear()
@@ -518,6 +525,8 @@ class MeshManager:
         self.vertex_types.append(1.0 if linedata[4] > 0.5 else 2.0)  # line type[red | green]
         self.raw_linenumbers.append(vertex[6])
         self.raw_feed_rates.append(feed)
+        speed = float(linedata[8]) if len(linedata) > 8 else 0.0
+        self.raw_spindle_speeds.append(speed)
         self.raw_tools.append(vertex[9])
         self.angles_of_vertices.append(angle)
 
@@ -639,6 +648,7 @@ class GCodeViewer(Widget):
     raw_linenumbers = []
     raw_positions = []
     raw_feed_rates = []
+    raw_spindle_speeds = []
     raw_tools = []
     frame_callback = None
 
@@ -716,8 +726,13 @@ class GCodeViewer(Widget):
         self.carvedmesh = RenderContext()
         self.carvedmesh.shader.source = os.path.join(shader_dir, "carved_stock.glsl")
         self.carvedmesh["vertex_scale"] = 1.0
+        self.carvedmesh["laser_enabled"] = 0.0
+        self.carvedmesh["laser_mode"] = 0.0
+        self.carvedmesh["texture1"] = LASER_DECAL_TEXTURE_UNIT
         self._carved_meshes: dict[tuple[int, int, int], Mesh] = {}
         self._carved_mesh_anchor = None
+        self._laser_texture = None
+        self._laser_mode = "planar"
         with self.carvedmesh:
             Callback(self.setup_gl_context)
             Callback(self._setup_carved_gl)
@@ -1005,6 +1020,7 @@ class GCodeViewer(Widget):
         self.total_time = 0.0
         self._invalidate_legend_durations()
         self.raw_feed_rates = []
+        self.raw_spindle_speeds = []
         self.raw_tools = []
         self._tool_meshes = {}
         self._default_tool_mesh = None
@@ -1053,6 +1069,13 @@ class GCodeViewer(Widget):
 
     def set_play_over_callback(self, playovercallback):
         self.play_over_callback = playovercallback
+
+    def begin_new_file_load(self):
+        """Drop leftover path vertices so a new file cannot inherit the previous load."""
+        self.clear_before_new_load = False
+        self.meshmanager.clear()
+        self.total_distance = 0.0
+        self.total_line_count = 0
 
     def clear_loaded_memery(self):
         if self.clear_before_new_load:
@@ -1165,11 +1188,12 @@ class GCodeViewer(Widget):
             self.raw_positions = self.meshmanager.raw_positions
             self.raw_linenumbers = self.meshmanager.raw_linenumbers
             self.raw_feed_rates = self.meshmanager.raw_feed_rates
+            self.raw_spindle_speeds = self.meshmanager.raw_spindle_speeds
             self.raw_tools = self.meshmanager.raw_tools
             self.angles_of_vertices = self.meshmanager.angles_of_vertices
 
             self.total_line_count = self.meshmanager.get_pt_count()
-            self.total_distance = self.meshmanager.lengths[-1]
+            self.total_distance = self.meshmanager.lengths[-1] if self.meshmanager.lengths else 0.0
             self.move_scale_by_positon = self.meshmanager.position_scale
 
             self.is_4_axis = self.meshmanager.is_4_axis
@@ -1800,8 +1824,31 @@ class GCodeViewer(Widget):
         self._scene_dirty = True
 
     def simulation_available(self) -> bool:
-        """True when the loaded file has CAM tool definitions usable for cut simulation."""
-        return bool(self.tool_table)
+        """True when cut simulation can run for the loaded file.
+
+        Mill jobs need CAM tool geometry in ``tool_table``. Laser-only files
+        have no mill headers, so an empty table is still enough when the parsed
+        path uses only the laser (probe tools ignored).
+        """
+        if self.tool_table:
+            return True
+        return self._path_is_laser_only()
+
+    def _path_is_laser_only(self) -> bool:
+        """True if vertices use the laser and no mill tools (probes ignored)."""
+        found_laser = False
+        for tool in self.raw_tools or []:
+            try:
+                number = int(tool)
+            except (TypeError, ValueError):
+                continue
+            if number == ZPROBE_TOOL_NUMBER or is_probe_tools_range(number):
+                continue
+            if number == LASER_TOOL_NUMBER:
+                found_laser = True
+                continue
+            return False
+        return found_laser
 
     def _apply_default_stock_settings(self) -> None:
         try:
@@ -2044,20 +2091,61 @@ class GCodeViewer(Widget):
             scale = self._stock_scale()
             self.carvedmesh["stock_z_min"] = float(bounds.min_z) * scale
             self.carvedmesh["stock_z_max"] = float(bounds.max_z) * scale
+            self.carvedmesh["stock_xy_min"] = [float(bounds.min_x) * scale, float(bounds.min_y) * scale]
+            self.carvedmesh["stock_xy_span"] = [
+                max(float(bounds.size[0]) * scale, 1e-6),
+                max(float(bounds.size[1]) * scale, 1e-6),
+            ]
+            self.carvedmesh["axis_yz"] = [
+                0.5 * (float(bounds.min_y) + float(bounds.max_y)) * scale,
+                0.5 * (float(bounds.min_z) + float(bounds.max_z)) * scale,
+            ]
         else:
             self.carvedmesh["stock_z_min"] = 0.0
             self.carvedmesh["stock_z_max"] = 1.0
+            self.carvedmesh["stock_xy_min"] = [0.0, 0.0]
+            self.carvedmesh["stock_xy_span"] = [1.0, 1.0]
+            self.carvedmesh["axis_yz"] = [0.0, 0.0]
 
     def _clear_carved_meshes(self) -> None:
         self.carvedmesh.clear()
         self._carved_meshes = {}
         # Keep GL setup/teardown callbacks so subsequent Mesh children render correctly.
+        # Do not insert BindTexture here — Kivy Canvas.clear() then fails with
+        # ValueError list.remove(x) when quality presets rebuild the simulation.
         with self.carvedmesh:
             Callback(self.setup_gl_context)
             Callback(self._setup_carved_gl)
             self._carved_mesh_anchor = Callback(None)
             Callback(self._reset_carved_gl)
             Callback(self.reset_gl_context)
+
+    def _drop_laser_texture(self) -> None:
+        self._laser_texture = None
+        carved = getattr(self, "carvedmesh", None)
+        if carved is not None:
+            try:
+                carved["laser_enabled"] = 0.0
+            except Exception:
+                pass
+
+    def _apply_laser_payload(self, payload) -> None:
+        if not payload:
+            self._drop_laser_texture()
+            return
+        width, height, pixels, mode = payload
+        self._laser_mode = str(mode)
+        tex = self._laser_texture
+        if tex is None or tex.size != (width, height):
+            tex = Texture.create(size=(width, height), colorfmt="luminance", bufferfmt="ubyte")
+            tex.mag_filter = "linear"
+            tex.min_filter = "linear"
+            self._laser_texture = tex
+        tex.wrap = "repeat" if mode == "cylindrical" else "clamp_to_edge"
+        tex.blit_buffer(pixels, colorfmt="luminance", bufferfmt="ubyte")
+        self.carvedmesh["texture1"] = LASER_DECAL_TEXTURE_UNIT
+        self.carvedmesh["laser_enabled"] = 1.0
+        self.carvedmesh["laser_mode"] = 1.0 if mode == "cylindrical" else 0.0
 
     def _setup_carved_gl(self, *_args):
         # Opaque remaining-stock surfaces: depth writes so pocket floors are visible
@@ -2066,6 +2154,11 @@ class GCodeViewer(Widget):
         glDisable(GL_BLEND)
         glEnable(GL_CULL_FACE)
         glCullFace(GL_BACK)
+        tex = self._laser_texture
+        if tex is not None:
+            glActiveTexture(GL_TEXTURE0 + LASER_DECAL_TEXTURE_UNIT)
+            tex.bind()
+            glActiveTexture(GL_TEXTURE0)
 
     def _reset_carved_gl(self, *_args):
         glDisable(GL_CULL_FACE)
@@ -2086,10 +2179,17 @@ class GCodeViewer(Widget):
     def _apply_stock_meshes(self, meshes: dict) -> None:
         # Special sentinels from disable / seek-back.
         if meshes and "__clear_all__" in meshes:
+            self._drop_laser_texture()
             self._clear_carved_meshes()
             self._defer_carved_stock = False
             self._scene_dirty = True
             return
+        laser_payload = None
+        include_laser = False
+        if meshes and "__laser__" in meshes:
+            meshes = dict(meshes)
+            laser_payload = meshes.pop("__laser__")
+            include_laser = True
         reveal = self._defer_carved_stock
         # Keep GPU buffers in sync even when carvedmesh is off-canvas (play with
         # live mesh off). Hide by not drawing, not by dropping patches.
@@ -2116,6 +2216,8 @@ class GCodeViewer(Widget):
                 except (ValueError, AttributeError):
                     self.carvedmesh.add(mesh)
                 self._carved_meshes[key] = mesh
+        if include_laser:
+            self._apply_laser_payload(laser_payload)
         self._update_carved_uniforms()
         if reveal:
             self._reveal_carved_stock_if_deferred()
@@ -2135,6 +2237,7 @@ class GCodeViewer(Widget):
         self.sim_progress = 0.0
         self.sim_checkpoints = []
         self._defer_carved_stock = False
+        self._drop_laser_texture()
         self._clear_carved_meshes()
         if not self.simulate_cut or self.stock_bounds_mm is None:
             self._stock_simulator.disable()
@@ -2248,6 +2351,7 @@ class GCodeViewer(Widget):
             tool_scale=float(self.tool_unit_scale or 1.0),
             angles=self.angles_of_vertices,
             has_4axis=has_4axis,
+            speeds=self.raw_spindle_speeds,
         )
 
     def _sync_stock_simulation(self, current_vertex: int) -> None:

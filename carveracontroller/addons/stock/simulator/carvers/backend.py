@@ -70,6 +70,28 @@ class CarverBackend(Protocol):
         """Keys that differ from the implicit full-solid state."""
         ...
 
+    def engrave_segment(
+        self,
+        p0: tuple[float, float, float],
+        p1: tuple[float, float, float],
+        tool_def,
+        tool_unit_scale: float = 1.0,
+        *,
+        a0: float = 0.0,
+        a1: float = 0.0,
+        power_s: float | None = None,
+    ) -> bool:
+        """Paint a laser stroke into the decal map. No occupancy change."""
+        ...
+
+    def laser_gpu_payload(self) -> tuple[int, int, bytes, str] | None:
+        """``(width, height, luminance, mode)`` or ``None`` if never engraved."""
+        ...
+
+    def take_laser_dirty(self) -> bool:
+        """True if the laser map changed since the last take (then clears)."""
+        ...
+
     def hud_stats(self) -> dict:
         """Fields merged into the simulator HUD snapshot."""
         ...

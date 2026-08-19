@@ -18,6 +18,7 @@ from carveracontroller.addons.stock.simulator.carver_select import (
     normalize_carver_mode,
     recommend_carver,
 )
+from carveracontroller.addons.stock.simulator.carvers.laser_map import pick_laser_cell_size_mm
 from carveracontroller.addons.stock.simulator.simulation_quality import (
     CHECKPOINT_SLOTS_BY_LEVEL,
     DEFAULT_CHECKPOINT_LEVEL,
@@ -27,6 +28,7 @@ from carveracontroller.addons.stock.simulator.simulation_quality import (
 from carveracontroller.addons.stock.stock_geometry import StockBounds
 from carveracontroller.addons.stock.stock_shape import RectangularStock, StockShape
 from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition
+from carveracontroller.CNC import LASER_TOOL_NUMBER
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +170,8 @@ class CarveJob:
     end_vertex: int = 0  # path vertex at segment end (checkpoints / seek)
     a0: float = 0.0
     a1: float = 0.0
+    tool_number: int | None = None
+    spindle_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -197,6 +201,7 @@ class PathSnapshot:
     tool_table: dict | None
     tool_scale: float = 1.0
     angles: list[float] | None = None
+    speeds: list[float] | None = None
 
     def vertex_count(self) -> int:
         if not self.positions:
@@ -214,19 +219,31 @@ def _create_carver_backend(
     cell_size_mm: float,
     shape: StockShape,
     backend_kind: str,
+    *,
+    has_4axis: bool = False,
+    resolution_level: str | None = None,
 ):
     """Instantiate the occupancy backend for ``backend_kind``."""
+    del resolution_level
+    cylindrical = backend_kind == BACKEND_CYLINDRICAL or (backend_kind == BACKEND_VOXEL and has_4axis)
+    laser_cell = pick_laser_cell_size_mm(bounds, cell_size_mm, cylindrical=cylindrical)
     if backend_kind == BACKEND_HEIGHTMAP:
         from carveracontroller.addons.stock.simulator.carvers.heightmap import HeightmapBackend
 
-        return HeightmapBackend(bounds, cell_size_mm, shape)
+        return HeightmapBackend(bounds, cell_size_mm, shape, laser_cell_size_mm=laser_cell)
     if backend_kind == BACKEND_CYLINDRICAL:
         from carveracontroller.addons.stock.simulator.carvers.cylindrical import CylindricalBackend
 
-        return CylindricalBackend(bounds, cell_size_mm, shape)
+        return CylindricalBackend(bounds, cell_size_mm, shape, laser_cell_size_mm=laser_cell)
     from carveracontroller.addons.stock.simulator.carvers.voxel import VoxelBackend
 
-    return VoxelBackend(bounds, cell_size_mm, shape)
+    return VoxelBackend(
+        bounds,
+        cell_size_mm,
+        shape,
+        has_4axis=has_4axis,
+        laser_cell_size_mm=laser_cell,
+    )
 
 
 class StockSimulator:
@@ -287,6 +304,7 @@ class StockSimulator:
         self._path_vertex_types: list[float] | None = None
         self._path_tools: list[int] | None = None
         self._path_angles: list[float] | None = None
+        self._path_speeds: list[float] | None = None
         self._tool_table: dict | None = None
         self._tool_scale: float = 1.0
         self._has_4axis: bool = False
@@ -388,7 +406,14 @@ class StockSimulator:
 
     def _install_backend_locked(self, bounds: StockBounds, shape: StockShape, cell_size: float, kind: str) -> None:
         """Create live backend. Caller holds lock."""
-        backend = _create_carver_backend(bounds, cell_size, shape, kind)
+        backend = _create_carver_backend(
+            bounds,
+            cell_size,
+            shape,
+            kind,
+            has_4axis=self._has_4axis,
+            resolution_level=self._resolution_level,
+        )
         self._backend = backend
         self._backend_kind = kind
         self._bake_backend = None
@@ -548,6 +573,7 @@ class StockSimulator:
         tool_scale: float = 1.0,
         angles: list[float] | None = None,
         has_4axis: bool = False,
+        speeds: list[float] | None = None,
     ) -> None:
         """Publish the active toolpath (UI thread). Buffers must stay read-only.
 
@@ -561,6 +587,7 @@ class StockSimulator:
             self._path_vertex_types = vertex_types
             self._path_tools = tools
             self._path_angles = angles
+            self._path_speeds = speeds
             self._tool_table = tool_table
             self._tool_scale = float(tool_scale) if tool_scale else 1.0
             self._has_4axis = bool(has_4axis)
@@ -761,6 +788,7 @@ class StockSimulator:
             tool_table=self._tool_table,
             tool_scale=self._tool_scale,
             angles=self._path_angles,
+            speeds=self._path_speeds,
         )
 
     def _path_vertex_count_locked(self) -> int:
@@ -839,7 +867,16 @@ class StockSimulator:
             end_vertex=end_idx,
             a0=self._raw_angle(path, start_idx),
             a1=self._raw_angle(path, end_idx),
+            tool_number=self._tool_number_at_vertex(path, end_idx),
+            spindle_s=self._spindle_at_vertex(path, end_idx),
         )
+
+    @staticmethod
+    def _spindle_at_vertex(path: PathSnapshot, idx: int) -> float | None:
+        speeds = path.speeds
+        if not speeds or idx < 0 or idx >= len(speeds):
+            return None
+        return float(speeds[idx])
 
     def _iter_cut_jobs(
         self,
@@ -886,6 +923,12 @@ class StockSimulator:
             break_at = checkpoints.next_unrecorded_target()
             # Target already behind this segment: flush one job so recording can catch up.
             if break_at is not None and i > break_at:
+                yield self._carve_job(path, p0, p1, tool_def, i - 1, run_end)
+                i = run_end + 1
+                continue
+
+            # Don't merge laser strokes: short raster G1s become lead-in chords.
+            if tool_num == LASER_TOOL_NUMBER:
                 yield self._carve_job(path, p0, p1, tool_def, i - 1, run_end)
                 i = run_end + 1
                 continue
@@ -1283,7 +1326,8 @@ class StockSimulator:
                 force_replace = self._force_mesh_replace
                 throttle = self._mesh_throttle_s
             replace = finished_recarve or force_replace
-            should_emit = replace or do_flush or (pending_dirty and (now - last_emit) >= throttle)
+            laser_pending = bool(getattr(live, "_laser_dirty", False))
+            should_emit = replace or do_flush or ((pending_dirty or laser_pending) and (now - last_emit) >= throttle)
             if should_emit:
                 if not mesh_updates:
                     # Keep dirty so pause can flush visited chunks without a
@@ -1313,7 +1357,7 @@ class StockSimulator:
             if did_display_follow:
                 self._maybe_rearm_idle_bake()
 
-        if pending_dirty:
+        if pending_dirty or bool(getattr(self._backend, "_laser_dirty", False)):
             with self._lock:
                 live = self._backend
                 gen = self._generation
@@ -1362,7 +1406,7 @@ class StockSimulator:
             else:
                 mesh_keys = set()
                 tmp = None
-            replace = replace or coalesce
+            replace = replace or (coalesce and bool(dirty_keys))
 
         if dirty_keys and tmp is not None:
             meshes = tmp.mesh_tiles(mesh_keys)
@@ -1372,15 +1416,31 @@ class StockSimulator:
         with self._lock:
             if self._generation != gen or self._backend is None:
                 return False
+            include_laser = False
+            laser_payload = None
+            take = getattr(backend, "take_laser_dirty", None)
+            get = getattr(backend, "laser_gpu_payload", None)
+            if take is not None and take():
+                include_laser = True
+                laser_payload = get() if get is not None else None
+            elif replace and get is not None:
+                include_laser = True
+                laser_payload = get()
             try:
+                out: dict = {}
                 if replace:
-                    if not dirty_keys and not meshes:
-                        if force_emit:
-                            self._on_meshes_ready({})
-                        return True
-                    self._on_meshes_ready({"__replace__": meshes})
-                elif meshes or force_emit:
-                    self._on_meshes_ready(meshes)
+                    if dirty_keys or meshes:
+                        out["__replace__"] = meshes
+                    if include_laser:
+                        out["__laser__"] = laser_payload
+                    if out or force_emit:
+                        self._on_meshes_ready(out)
+                    return True
+                out = dict(meshes)
+                if include_laser:
+                    out["__laser__"] = laser_payload
+                if out or force_emit:
+                    self._on_meshes_ready(out)
             except Exception:
                 logger.exception("stock mesh callback failed")
             return True
@@ -1397,6 +1457,25 @@ class StockSimulator:
         if abs(float(job.a0)) > 1e-9 or abs(float(job.a1)) > 1e-9:
             kwargs["a0"] = job.a0
             kwargs["a1"] = job.a1
+        if job.tool_number == LASER_TOOL_NUMBER:
+            dx = float(job.p1[0]) - float(job.p0[0])
+            dy = float(job.p1[1]) - float(job.p0[1])
+            dz = float(job.p1[2]) - float(job.p0[2])
+            da = abs(float(job.a1) - float(job.a0))
+            # Skip Z-only plunges; keep XY/A strokes and point stamps.
+            if (dx * dx + dy * dy) < 1e-8 and abs(dz) > 0.02 and da < 0.5:
+                return set()
+            engrave = getattr(backend, "engrave_segment", None)
+            if engrave is not None:
+                engrave(
+                    job.p0,
+                    job.p1,
+                    job.tool_def,
+                    tool_unit_scale=tool_unit_scale,
+                    power_s=job.spindle_s,
+                    **kwargs,
+                )
+            return set()
         return backend.carve_segment(
             job.p0,
             job.p1,
