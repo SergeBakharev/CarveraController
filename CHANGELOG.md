@@ -10,6 +10,7 @@
 - Fixed: Z1 machine settings tabs now load
 - Fixed: Z1 machine config backup option added to settings matching other models
 - Fixed: Switching between different machines no longer reuses the previous machine's settings panels or cached config.txt
+- Fixed: Fix G-Code files not being properly loaded when they end with comments
 - Changed: added help button to probing screen confirmation/error popup for clarity
 
 [2.2.0-RC1]
