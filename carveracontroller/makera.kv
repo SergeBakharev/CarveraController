@@ -4421,7 +4421,7 @@
                                 opacity: 1 if app.supports_camera else 0
                                 disabled: not app.supports_camera
                                 tooltip_txt: tr._('Hide camera') if app.camera_streaming else tr._('Show camera')
-                                pos: camera_splitter.center_x - self.width / 2, camera_splitter.top - camera_splitter.strip_size / 2 - self.height / 2
+                                pos: camera_splitter.center_x - self.width / 2, float_layout.y if camera_splitter.collapsed else (camera_splitter.top - camera_splitter.strip_size / 2 - self.height / 2)
                                 canvas.before:
                                     Color:
                                         rgba: 80/255, 80/255, 80/255, 1
