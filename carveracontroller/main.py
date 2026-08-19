@@ -449,12 +449,15 @@ class FloatBox(FloatLayout):
     touch_interval = 0
     color_scheme_panel = ObjectProperty(None)
     camera_controls = ObjectProperty(None)
+    camera_view = ObjectProperty(None)
     tool_bar = ObjectProperty(None)
 
     def _viewer_chrome_hit(self, touch):
         if self.gcode_ctl_bar.collide_point(*touch.pos):
             return True
         if self.tool_bar is not None and self.tool_bar.collide_point(*touch.pos):
+            return True
+        if self.camera_view is not None and self.camera_view.collide_point(*touch.pos):
             return True
         return any(
             panel is not None and panel.collide_point(*touch.pos)
@@ -3179,6 +3182,8 @@ class Makera(RelativeLayout):
             on_streaming=self._set_camera_streaming,
             on_error=partial(self.show_message_popup, btn_disabled=False),
         )
+        self.ids.camera_splitter.bind(collapsed=self._on_camera_splitter_collapsed)
+        self.ids.camera_splitter.collapse()
 
         # init settings
         self.config = ConfigParser()
@@ -7519,9 +7524,24 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def toggle_camera_stream(self):
+        splitter = self.ids.get("camera_splitter")
+        if splitter is not None:
+            splitter.toggle_collapsed()
+            return
         if self.camera_stream.is_streaming():
             self.camera_stream.stop()
         elif App.get_running_app().supports_camera:
+            self.camera_stream.start(self.controller.connection_address.split(":")[0])
+
+    # -----------------------------------------------------------------------
+    def _on_camera_splitter_collapsed(self, _splitter, collapsed):
+        if collapsed:
+            if self.camera_stream.is_streaming():
+                self.camera_stream.stop()
+            controls = self.ids.get("camera_controls")
+            if controls is not None:
+                controls.adjust_open = False
+        elif App.get_running_app().supports_camera and not self.camera_stream.is_streaming():
             self.camera_stream.start(self.controller.connection_address.split(":")[0])
 
     # -----------------------------------------------------------------------
@@ -7535,6 +7555,13 @@ class Makera(RelativeLayout):
         if probe != self.camera_probe:
             return
         App.get_running_app().supports_camera = found
+        splitter = self.ids.get("camera_splitter")
+        if splitter is None:
+            return
+        if found and splitter.collapsed:
+            splitter.height = splitter.strip_size
+        elif not found:
+            splitter.collapse()
 
     # -----------------------------------------------------------------------
     def set_camera_resolution(self, label):
@@ -7566,6 +7593,9 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def _set_camera_streaming(self, streaming):
         App.get_running_app().camera_streaming = streaming
+        splitter = self.ids.get("camera_splitter")
+        if splitter is not None and not streaming and not splitter.collapsed:
+            splitter.collapse()
 
     # -----------------------------------------------------------------------
     def clear_selection(self):

@@ -11,6 +11,7 @@
 - Fixed: Z1 machine config backup option added to settings matching other models
 - Fixed: Switching between different machines no longer reuses the previous machine's settings panels or cached config.txt
 - Changed: added help button to probing screen confirmation/error popup for clarity
+- Changed: Moved Z1 Camera to a collapsible area in the Gcode Viewer. Collapsible splitter is only shown if a supported camera is found.
 
 [2.2.0-RC1]
 - Enhancement: Read tool definitions from post-processor outputs and use them in the G-code viewer

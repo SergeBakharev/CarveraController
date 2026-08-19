@@ -7,7 +7,7 @@
 
 <CameraButtonSlot@AnchorLayout>:
     visible: False
-    anchor_x: 'right'
+    anchor_x: 'left'
     anchor_y: 'top'
     size_hint_y: None
     height: '50dp' if self.visible else 0
@@ -45,18 +45,8 @@
     adjust_open: False
     orientation: 'vertical'
     size_hint: None, None
-    width: '250dp'
+    width: '250dp' if root.adjust_open and app.camera_streaming else '50dp'
     height: self.minimum_height
-    CameraButtonSlot:
-        visible: app.supports_camera
-        TransparentButton:
-            icon: 'data/camera.png'
-            active: app.camera_streaming
-            size_hint: None, None
-            width: '50dp'
-            height: self.parent.height
-            on_release:
-                app.root.toggle_camera_stream()
     CameraButtonSlot:
         visible: app.camera_streaming
         TransparentButton:

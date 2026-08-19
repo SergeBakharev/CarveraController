@@ -88,3 +88,18 @@ class CameraView(Widget):
         fitted_width, fitted_height = frame_width * scale, frame_height * scale
         self._rect.size = (fitted_width, fitted_height)
         self._rect.pos = (self.x + (width - fitted_width) / 2.0, self.y + (height - fitted_height) / 2.0)
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            return True
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if self.collide_point(*touch.pos):
+            return True
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self.collide_point(*touch.pos):
+            return True
+        return super().on_touch_up(touch)
