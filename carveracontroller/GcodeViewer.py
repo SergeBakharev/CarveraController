@@ -942,6 +942,13 @@ class GCodeViewer(Widget):
     def set_play_over_callback(self, playovercallback):
         self.play_over_callback = playovercallback
 
+    def begin_new_file_load(self):
+        """Drop leftover path vertices so a new file cannot inherit the previous load."""
+        self.clear_before_new_load = False
+        self.meshmanager.clear()
+        self.total_distance = 0.0
+        self.total_line_count = 0
+
     def clear_loaded_memery(self):
         if self.clear_before_new_load:
             self.clear_before_new_load = False
@@ -1057,7 +1064,7 @@ class GCodeViewer(Widget):
             self.angles_of_vertices = self.meshmanager.angles_of_vertices
 
             self.total_line_count = self.meshmanager.get_pt_count()
-            self.total_distance = self.meshmanager.lengths[-1]
+            self.total_distance = self.meshmanager.lengths[-1] if self.meshmanager.lengths else 0.0
             self.move_scale_by_positon = self.meshmanager.position_scale
 
             self.is_4_axis = self.meshmanager.is_4_axis
