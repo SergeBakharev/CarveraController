@@ -7614,6 +7614,7 @@ class Makera(RelativeLayout):
         self.gcode_rv.data = []
         self.init_path_visibility()
         self.gcode_viewer.clearDisplay()
+        self.gcode_viewer.begin_new_file_load()
         self.gcode_viewer.set_display_offset(self.content.x, self.content.y)
         self.gcode_viewer.set_move_speed(GCODE_VIEW_SPEED)
         self.gcode_playing = False
@@ -7664,8 +7665,9 @@ class Makera(RelativeLayout):
 
     # ------------------------------------------------------------------------
     def load_gcodes(self, line_no, parsed_list, *args):
-        if len(parsed_list) > 0:
-            self.gcode_viewer.load_array(parsed_list, line_no == self.selected_file_line_count)
+        is_end = line_no == self.selected_file_line_count
+        if parsed_list or is_end:
+            self.gcode_viewer.load_array(parsed_list, is_end)
 
         self.progress_popup.cancel = self.cancel_load_gcodes
         self.progress_popup.btn_cancel.disabled = False
