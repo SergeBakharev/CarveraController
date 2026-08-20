@@ -1,4 +1,6 @@
 name: Build and Release
+# Windows/macOS signing is enabled when SIGNPATH_ORGANIZATION_ID is set.
+# Console setup, artifact XML, and GitHub secrets/variables: .signpath/README.md
 on:
   push:
     branches:
@@ -10,6 +12,9 @@ jobs:
   build-windows-artifacts:
     name: build-windows-${{ matrix.platform }}
     runs-on: windows-latest
+    permissions:
+      actions: read
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -20,6 +25,10 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG || 'carvera-controller-community' }}
+      SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'test-signing' }}
+      SIGNPATH_WINDOWS_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_WINDOWS_ARTIFACT_CONFIGURATION_SLUG || 'windows-portable-exe' }}
     steps:
     - uses: actions/checkout@v4
 
@@ -59,6 +68,63 @@ jobs:
         }
         poetry run python scripts/build.py --os windows --version $version
 
+    - name: Upload unsigned artifact for SignPath
+      if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      id: upload-unsigned
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-unsigned-${{ matrix.platform }}
+        path: ${{ github.workspace }}/dist/carveracontroller-community-*-windows-x64.exe
+        retention-days: 1
+
+    - name: Submit SignPath test-signing request
+      if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      id: signpath
+      uses: signpath/github-action-submit-signing-request@v2
+      with:
+        api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+        organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+        signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
+        artifact-configuration-slug: ${{ env.SIGNPATH_WINDOWS_ARTIFACT_CONFIGURATION_SLUG }}
+        github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+        wait-for-completion: true
+        wait-for-completion-timeout-in-seconds: 1800
+        output-artifact-directory: ${{ github.workspace }}/signed
+
+    - name: Replace unsigned EXE with SignPath-signed EXE
+      if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      shell: pwsh
+      run: |
+        $signed = Get-ChildItem -Path signed -Recurse -Filter "carveracontroller-community-*-windows-x64.exe" |
+          Select-Object -First 1
+        if (-not $signed) {
+          Get-ChildItem -Path signed -Recurse -ErrorAction SilentlyContinue | Format-Table FullName
+          throw "Signed Windows EXE was not returned by SignPath"
+        }
+        Copy-Item $signed.FullName -Destination dist -Force
+        Write-Host "Copied signed EXE: $($signed.FullName)"
+
+    - name: Verify Authenticode signature
+      if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      shell: pwsh
+      run: |
+        $exe = Get-ChildItem -Path dist -Filter "carveracontroller-community-*-windows-x64.exe" | Select-Object -First 1
+        if (-not $exe) { throw "Windows EXE not found in dist/" }
+        $sig = Get-AuthenticodeSignature $exe.FullName
+        $sig | Format-List *
+        if ($null -eq $sig.SignerCertificate) {
+          throw "EXE is not Authenticode-signed"
+        }
+        $summary = @(
+          "## Windows SignPath test-signing",
+          "- File: $($exe.Name)",
+          "- Signer: $($sig.SignerCertificate.Subject)",
+          "- Status: $($sig.Status) (NotTrusted is expected for a self-signed test certificate)",
+          "- Signing request: ${{ steps.signpath.outputs.signing-request-web-url }}"
+        ) -join "`n"
+        Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $summary
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
@@ -81,6 +147,9 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG || 'carvera-controller-community' }}
+      SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'test-signing' }}
     steps:
     - uses: actions/checkout@v4
 
@@ -97,14 +166,47 @@ jobs:
     - name: Install create-dmg
       run: brew install create-dmg
 
+    - name: Start SignPath CryptoTokenKit
+      if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      uses: ./.github/actions/signpath-macos-ctk
+      with:
+        api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+        organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+        signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
+        certificate-subject-name: ${{ vars.SIGNPATH_CERTIFICATE_SUBJECT_NAME }}
+
     - name: Build release
+      env:
+        SIGNPATH_CERTIFICATE_SUBJECT_NAME: ${{ vars.SIGNPATH_CERTIFICATE_SUBJECT_NAME }}
       run: |
         if [[ $GITHUB_REF == refs/tags/* ]]; then
           VERSION=$GITHUB_REF_NAME
         else
           VERSION=$(date +'%Y.%m.%d')
         fi
-        poetry run python scripts/build.py --os macos --version "$VERSION"
+        extra=()
+        if [[ -n "${{ vars.SIGNPATH_ORGANIZATION_ID }}" ]]; then
+          extra+=(--codesign-identity "${SIGNPATH_CERTIFICATE_SUBJECT_NAME}")
+        fi
+        poetry run python scripts/build.py --os macos --version "$VERSION" "${extra[@]}"
+
+    - name: Verify macOS SignPath signatures
+      if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      run: |
+        set -euo pipefail
+        app="./dist/Carvera Controller Community.app"
+        dmg="$(ls -1 dist/carveracontroller-community-*.dmg | head -n 1)"
+        codesign -dv --verbose=4 "${app}"
+        codesign --verify --deep --verbose "${app}"
+        codesign -dv --verbose=4 "${dmg}"
+        codesign --verify --verbose "${dmg}"
+        {
+          echo "## macOS SignPath test-signing (${{ matrix.platform }})"
+          echo "- App identity: \`$(codesign -dv --verbose=2 "${app}" 2>&1 | sed -n 's/^Authority=//p' | head -n 1)\`"
+          echo "- DMG: \`${dmg##*/}\`"
+          echo "- Gatekeeper will still warn until an Apple Developer ID release certificate and notarization are used."
+        } >> "${GITHUB_STEP_SUMMARY}"
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4

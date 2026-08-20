@@ -1,0 +1,93 @@
+name: 'Start SignPath CryptoTokenKit'
+description: 'Install SignPath CryptoTokenKit and load the signing certificate into the macOS keychain'
+inputs:
+  api-token:
+    description: 'SignPath API token'
+    required: true
+  organization-id:
+    description: 'SignPath organization ID'
+    required: true
+  project-slug:
+    description: 'SignPath project slug'
+    required: true
+  signing-policy-slug:
+    description: 'SignPath signing policy slug'
+    required: true
+  certificate-subject-name:
+    description: 'Common Name (or unique substring) of the SignPath certificate'
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install and start SignPath CryptoTokenKit
+      shell: bash
+      env:
+        SIGNPATH_API_TOKEN: ${{ inputs.api-token }}
+        SIGNPATH_ORGANIZATION_ID: ${{ inputs.organization-id }}
+        SIGNPATH_PROJECT_SLUG: ${{ inputs.project-slug }}
+        SIGNPATH_SIGNING_POLICY_SLUG: ${{ inputs.signing-policy-slug }}
+        SIGNPATH_CERTIFICATE_SUBJECT_NAME: ${{ inputs.certificate-subject-name }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${SIGNPATH_API_TOKEN}" ]; then
+          echo "SIGNPATH_API_TOKEN is not set" >&2
+          exit 1
+        fi
+        if [ -z "${SIGNPATH_CERTIFICATE_SUBJECT_NAME}" ]; then
+          echo "SIGNPATH_CERTIFICATE_SUBJECT_NAME is not set" >&2
+          exit 1
+        fi
+
+        dmg_path="${RUNNER_TEMP}/SignPathCryptoTokenKit.dmg"
+        mount_root="${RUNNER_TEMP}/signpath-ctk"
+        mkdir -p "${mount_root}"
+
+        curl --fail --location --show-error \
+          --output "${dmg_path}" \
+          "https://download.signpath.io/cryptoproviders/macos-cryptotokenkit/2-latest/SignPathCryptoTokenKit.dmg"
+
+        hdiutil attach "${dmg_path}" -mountroot "${mount_root}" -nobrowse -quiet
+
+        ctk_app="$(find "${mount_root}" -maxdepth 3 -name 'SignPathCryptoTokenKit.app' -print -quit)"
+        if [ -z "${ctk_app}" ]; then
+          echo "SignPathCryptoTokenKit.app was not found in the downloaded DMG" >&2
+          find "${mount_root}" -maxdepth 4 -print >&2
+          exit 1
+        fi
+
+        # Keep a copy off the DMG so the extension stays registered for the job.
+        install_app="${HOME}/SignPathCryptoTokenKit.app"
+        rm -rf "${install_app}"
+        ditto "${ctk_app}" "${install_app}"
+
+        open --env SIGNPATH_API_TOKEN="${SIGNPATH_API_TOKEN}" \
+          "${install_app}" --args \
+          --organization-id "${SIGNPATH_ORGANIZATION_ID}" \
+          --project-slug "${SIGNPATH_PROJECT_SLUG}" \
+          --signing-policy-slug "${SIGNPATH_SIGNING_POLICY_SLUG}" \
+          --api-token "${SIGNPATH_API_TOKEN}"
+
+        echo "Waiting for SignPath certificate '${SIGNPATH_CERTIFICATE_SUBJECT_NAME}' to appear in the keychain..."
+        found=0
+        for _ in $(seq 1 30); do
+          if security find-identity -v -p codesigning | grep -F "${SIGNPATH_CERTIFICATE_SUBJECT_NAME}" >/dev/null; then
+            found=1
+            break
+          fi
+          sleep 2
+        done
+
+        if [ "${found}" -ne 1 ]; then
+          echo "SignPath certificate was not loaded into the keychain" >&2
+          security find-identity -v -p codesigning || true
+          security list-smartcard || true
+          pluginkit -m -v -p com.apple.ctk-tokens || true
+          echo "=== SignPathCryptoTokenKit logs ===" >&2
+          find "${HOME}/Library/Logs/SignPathCryptoTokenKit" \
+            "${HOME}/Library/Containers/io.signpath.apps.CryptoTokenKit/Data/Library/Logs" \
+            -type f -print -exec tail -n 80 {} \; 2>/dev/null || true
+          exit 1
+        fi
+
+        security find-identity -v -p codesigning

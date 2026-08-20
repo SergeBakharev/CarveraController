@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration for the Windows portable Controller EXE.
+
+  In the SignPath project:
+  1. Create an artifact configuration with slug `windows-portable-exe`
+  2. Paste this XML
+  3. Pass that slug as GitHub variable SIGNPATH_WINDOWS_ARTIFACT_CONFIGURATION_SLUG
+     (or keep the workflow default of windows-portable-exe)
+
+  GitHub's upload-artifact action stores the EXE in a ZIP, so the root element is zip-file.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="carveracontroller-community-*-windows-x64.exe">
+      <authenticode-sign
+        description="Carvera Controller Community"
+        description-url="https://github.com/Carvera-Community/Carvera_Controller" />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
