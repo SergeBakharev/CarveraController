@@ -22,9 +22,18 @@ class OperationsBase:
         return None
 
     def apply_direction(self, key, config: dict[str, float], is_opposite: bool):
-        if key in config and is_opposite:
-            # print(key + " in config and is_opposite " + str(is_opposite))
-            config[key] = str(float(config[key]) * -1)
+        if not is_opposite or key not in config:
+            return
+
+        raw = config[key]
+        if raw is None or not str(raw).strip():
+            return
+
+        try:
+            config[key] = str(float(raw) * -1)
+        except (TypeError, ValueError):
+            # Leave non-numeric values untouched; callers may still surface them via validation.
+            return
 
     @abstractmethod
     def get_missing_config(self, config: dict[str, float]):

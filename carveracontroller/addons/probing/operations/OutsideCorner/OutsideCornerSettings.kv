@@ -32,7 +32,7 @@
                     halign:'right'
                     input_type: 'number'
                     input_filter: 'float'
-                    text: root.get_setting('XAxisDistance') if root.get_setting('XAxisDistance') != '' else '30'
+                    text: root.get_setting('XAxisDistance')
                     on_text: root.setting_changed('XAxisDistance', self.text)
             BoxLayout:
                 ProbeSettingLabel:
@@ -49,7 +49,7 @@
                     halign:'right'
                     input_type: 'number'
                     input_filter: 'float'
-                    text: root.get_setting('YAxisDistance') if root.get_setting('YAxisDistance') != '' else '30'
+                    text: root.get_setting('YAxisDistance')
                     on_text: root.setting_changed('YAxisDistance', self.text)
             BoxLayout:
                 ProbeSettingLabel:

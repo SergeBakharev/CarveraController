@@ -14,6 +14,14 @@ CONFIG_FILES_TO_BACK_UP = [
     "/sd/flex_compensation.dat",
 ]
 
+MACHINE_CONFIG_FILES = {
+    "C1": "config_c1.json",
+    "CA1": "config_ca1.json",
+    "Z1": "config_z1.json",
+}
+
+MAX_CONFIG_DOWNLOAD_ATTEMPTS = 3
+
 
 def is_android():
     return "ANDROID_ARGUMENT" in os.environ or "ANDROID_PRIVATE" in os.environ or "ANDROID_APP_PATH" in os.environ
@@ -513,12 +521,15 @@ class FloatBox(FloatLayout):
     touch_interval = 0
     color_scheme_panel = ObjectProperty(None)
     camera_controls = ObjectProperty(None)
+    camera_view = ObjectProperty(None)
     tool_bar = ObjectProperty(None)
 
     def _viewer_chrome_hit(self, touch):
         if self.gcode_ctl_bar.collide_point(*touch.pos):
             return True
         if self.tool_bar is not None and self.tool_bar.collide_point(*touch.pos):
+            return True
+        if self.camera_view is not None and self.camera_view.collide_point(*touch.pos):
             return True
         return any(
             panel is not None and panel.collide_point(*touch.pos)
@@ -3120,7 +3131,8 @@ class Makera(RelativeLayout):
     status_index = 0
     past_machine_addr = None
     allow_mdi_while_machine_running = "0"
-    allow_jogging_while_machine_running = "0"
+    allow_jogging_while_machine_running = "1"
+    allow_jogging_while_spindle_on = "0"
     _selected_file_machine_key = None
     _last_loaded_file_key = None  # used to track if a different file is selected
 
@@ -3250,17 +3262,22 @@ class Makera(RelativeLayout):
             on_streaming=self._set_camera_streaming,
             on_error=partial(self.show_message_popup, btn_disabled=False),
         )
+        self.ids.camera_splitter.bind(collapsed=self._on_camera_splitter_collapsed)
+        self.ids.camera_splitter.collapse()
 
         # init settings
         self.config = ConfigParser()
         self.config_popup = ConfigPopup()
         self.config_loaded = False
         self.config_loading = False
+        self._config_apply_failed = False
+        self._config_download_failures = 0
         self.setting_list = {}
         self.setting_type_list = {}
         self.setting_default_list = {}
         self.machine_config_data = None
         self.machine_config_data_model = None
+        self.machine_settings_model = None
         self.controller_setting_change_list = {}
         self.load_controller_config()
         self.load_gcode_viewer_config()
@@ -3291,6 +3308,11 @@ class Makera(RelativeLayout):
 
         if Config.has_option("carvera", "allow_jogging_while_machine_running"):
             self.allow_jogging_while_machine_running = Config.get("carvera", "allow_jogging_while_machine_running")
+
+        if Config.has_option("carvera", "allow_jogging_while_spindle_on"):
+            self.allow_jogging_while_spindle_on = Config.get("carvera", "allow_jogging_while_spindle_on")
+
+        self._bind_jog_control_deps()
 
         # Setup pendant
         self.refresh_pendant_settings()
@@ -4970,7 +4992,7 @@ class Makera(RelativeLayout):
         self.downloading_config = True
         remote_path = "/sd/config.txt"
         self.downloading_file = remote_path
-        local_path = os.path.join(self.temp_dir, "config.txt")
+        local_path = self._machine_config_cache_path()
         threading.Thread(target=self.doDownload, args=(remote_path, local_path)).start()
 
     # -----------------------------------------------------------------------
@@ -4981,7 +5003,7 @@ class Makera(RelativeLayout):
                 self.setting_list.clear()
                 self.load_machine_config_defaults()
                 # caching config file
-                config_path = os.path.join(self.temp_dir, "config.txt")
+                config_path = self._machine_config_cache_path()
                 if not os.path.exists(config_path):
                     raise FileNotFoundError(f"Cached config not found: {config_path}")
                 with open(config_path) as f:
@@ -5014,16 +5036,27 @@ class Makera(RelativeLayout):
                 self.setting_change_list = {}
 
                 self.config_loaded = self.load_machine_config()
+                self._config_download_failures = 0
+                if not self.config_loaded:
+                    # Applying settings failed; retrying the download cannot fix panel/schema mismatches.
+                    self._config_apply_failed = True
                 self.config_popup.btn_apply.disabled = len(self.setting_change_list) == 0
             except Exception as e:
                 logger.exception("Failed to load machine config")
                 self.config_loaded = False
+                self._config_apply_failed = True
                 self.controller.log.put((Controller.MSG_ERROR, tr._("Failed to load config file: {}").format(e)))
             finally:
                 self.config_loading = False
         else:
             self.config_loading = False
+            self._config_download_failures += 1
             self.controller.log.put((Controller.MSG_ERROR, tr._("Download config file error")))
+            if self._config_download_failures >= MAX_CONFIG_DOWNLOAD_ATTEMPTS:
+                logger.error(
+                    "Giving up config download after %s failed attempts",
+                    self._config_download_failures,
+                )
             # self.controller.close()
 
         # Preserve selected file only when reconnecting to the same machine.
@@ -5059,6 +5092,12 @@ class Makera(RelativeLayout):
         if conn_type == CONN_USB:
             return f"usb:{addr}" if addr else "usb"
         return str(conn_type)
+
+    def _machine_config_cache_path(self):
+        """Return a per-machine path for the cached /sd/config.txt copy."""
+        key = self._get_current_machine_connection_key() or "unknown"
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(key))
+        return os.path.join(self.temp_dir, f"config_{safe}.txt")
 
     # -----------------------------------------------------------------------
     def doDownload(self, remote_path, local_path, show_progress=True):
@@ -5342,7 +5381,15 @@ class Makera(RelativeLayout):
         app.has_atc = bool(CNC.vars["FuncSetting"] & 4)
         # The first machine config load must happen after /sd/config.txt is parsed.
         if model_changed and self.config_loaded:
-            Clock.schedule_once(lambda dt: self.load_machine_config(), 0.1)
+
+            def _reload_machine_config(_dt):
+                self.config_loading = True
+                try:
+                    self.load_machine_config()
+                finally:
+                    self.config_loading = False
+
+            Clock.schedule_once(_reload_machine_config, 0.1)
 
     # -----------------------------------------------------------------------
     def downloadCallback(self, remote_path, packet_size, success_count, error_count):
@@ -5484,11 +5531,7 @@ class Makera(RelativeLayout):
         if self.machine_config_data_model == app.model:
             return self.machine_config_data
 
-        config_files = {
-            "C1": "config_c1.json",
-            "CA1": "config_ca1.json",
-        }
-        config_file = config_files.get(app.model)
+        config_file = MACHINE_CONFIG_FILES.get(app.model)
         if config_file is None:
             return None
 
@@ -6046,11 +6089,12 @@ class Makera(RelativeLayout):
         app = App.get_running_app()
         if (
             not app.playing
+            or app.state == NOT_CONNECTED
             or (not app.selected_remote_filename and not app.selected_local_filename)
             or not self.selected_file_line_count
             or app.state in self._PROGRESS_TIMER_PAUSED_STATES
         ):
-            # While held/paused, leave the last progress_info unchanged so both timers freeze.
+            # While held/paused/disconnected, leave the last progress_info unchanged so both timers freeze.
             return
         remaining_display = self._current_remaining_sec()
         filename = os.path.basename(app.selected_remote_filename or app.selected_local_filename)
@@ -6115,6 +6159,8 @@ class Makera(RelativeLayout):
                     self.status_drop_down.btn_disconnect.disabled = True
                     self.config_loaded = False
                     self.config_loading = False
+                    self._config_apply_failed = False
+                    self._config_download_failures = 0
                     self.fw_version_checked = False
                     self.fw_version = ""
                     app.model = ""
@@ -6188,7 +6234,14 @@ class Makera(RelativeLayout):
                     self.status_drop_down.btn_unlock.text = "Unlock"
 
             # load config, only one time per connection
-            if not app.playing and not self.config_loaded and not self.config_loading and app.state == "Idle":
+            if (
+                not app.playing
+                and not self.config_loaded
+                and not self.config_loading
+                and not self._config_apply_failed
+                and self._config_download_failures < MAX_CONFIG_DOWNLOAD_ATTEMPTS
+                and app.state == "Idle"
+            ):
                 if not app.model or not self.fw_version:
                     if now - self.machine_metadata_query_time > 1:
                         self.check_model_metadata()
@@ -6295,6 +6348,11 @@ class Makera(RelativeLayout):
                     v.minr_text = "{:.1f}".format(CNC.vars["spindletemp"]) + " °C"
                 else:
                     v.minr_text = "Vac: {}".format("On" if CNC.vars["vacuummode"] else "Off")
+
+            app.spindle_or_laser_is_on = app.state not in (NOT_CONNECTED, CONNECTED) and (
+                (not CNC.vars["lasermode"] and CNC.vars["curspindle"] > 0.0)
+                or (CNC.vars["lasermode"] and CNC.vars["laserpower"] > 0.0)
+            )
 
             elapsed = now - self.control_list["vacuum_mode"][0]
             if elapsed < 2:
@@ -6437,7 +6495,12 @@ class Makera(RelativeLayout):
             use_cf_playing_flag = app.is_community_firmware and app.fw_version_digitized >= Utils.digitize_v(
                 "2.1.0"
             )  # in community firmware > 2.1.0 the machine state has a is_playing attribute
-            machine_not_playing = CNC.vars["is_playing"] == 0 if use_cf_playing_flag else CNC.vars["playedlines"] <= 0
+            if CNC.vars["state"] == NOT_CONNECTED:
+                machine_not_playing = True
+            elif use_cf_playing_flag:
+                machine_not_playing = CNC.vars["is_playing"] == 0
+            else:
+                machine_not_playing = CNC.vars["playedlines"] <= 0
 
             # update progress bar and set selected
             if machine_not_playing:
@@ -6805,13 +6868,62 @@ class Makera(RelativeLayout):
         self.updateStatus()
 
     # -----------------------------------------------------------------------
+    def _clear_machine_settings_panels(self):
+        """Remove Machine-* settings tabs from a previous model so they can be rebuilt."""
+        settings = self.config_popup.settings_panel
+        interface = getattr(settings, "interface", None)
+        content = getattr(interface, "content", None) if interface is not None else None
+        if content is None:
+            self.machine_settings_model = None
+            return
+
+        menu = getattr(interface, "menu", None)
+        machine_uids = [uid for uid, panel in list(content.panels.items()) if panel.config is self.config]
+        if not machine_uids:
+            self.machine_settings_model = None
+            return
+
+        remaining = next(
+            (uid for uid, panel in content.panels.items() if panel.config is not self.config),
+            None,
+        )
+        if getattr(content, "current_uid", None) in machine_uids:
+            if remaining is not None:
+                content.current_uid = remaining
+                if menu is not None:
+                    menu.selected_uid = remaining
+            else:
+                if content.current_panel is not None:
+                    try:
+                        content.remove_widget(content.current_panel)
+                    except Exception:
+                        pass
+                content.current_panel = None
+                content.current_uid = 0
+
+        for uid in machine_uids:
+            content.panels.pop(uid, None)
+            buttons_layout = getattr(menu, "buttons_layout", None) if menu is not None else None
+            if buttons_layout is not None:
+                for child in list(buttons_layout.children):
+                    if getattr(child, "uid", None) == uid:
+                        buttons_layout.remove_widget(child)
+
+        for section in list(self.config.sections()):
+            self.config.remove_section(section)
+        self.machine_settings_model = None
+        self.setting_type_list.clear()
+
+    # -----------------------------------------------------------------------
     def load_machine_config(self):
+        app = App.get_running_app()
         panels = self.config_popup.settings_panel.interface.content.panels
 
         # Filter panels that are bound to the machine config
         machine_panels = [panel for panel in panels.values() if panel.config is self.config]
+        same_model = bool(machine_panels) and self.machine_settings_model == getattr(app, "model", None)
 
-        if machine_panels:
+        if same_model:
             # already have panels, update data
             for panel in machine_panels:
                 children = panel.children
@@ -6857,6 +6969,9 @@ class Makera(RelativeLayout):
                             self.updateStatus()
                             return False
         else:
+            if machine_panels:
+                self._clear_machine_settings_panels()
+
             data = self.load_machine_config_data()
             if data is None:
                 return True
@@ -6940,10 +7055,11 @@ class Makera(RelativeLayout):
             self.config_popup.settings_panel.add_json_panel(
                 "Machine - Restore", self.config, data=json.dumps(restore_config)
             )
-            if kivy_platform not in ["android", "ios"]:
+            if backup_config and kivy_platform not in ["android", "ios"]:
                 self.config_popup.settings_panel.add_json_panel(
                     "Machine - Backup", self.config, data=json.dumps(backup_config)
                 )
+            self.machine_settings_model = getattr(app, "model", None)
         return True
 
     # -----------------------------------------------------------------------
@@ -6984,21 +7100,37 @@ class Makera(RelativeLayout):
             modals.append(self.cmm_workbench_popup)
         return self._is_popup_open() and not any(m.allows_external_jog() for m in modals)
 
-    def is_jogging_enabled(self):
+    def _bind_jog_control_deps(self):
         app = App.get_running_app()
+        if app is not None:
+            app.bind(
+                state=self.update_jog_controls_enabled,
+                playing=self.update_jog_controls_enabled,
+                spindle_or_laser_is_on=self.update_jog_controls_enabled,
+            )
+        self.update_jog_controls_enabled()
 
-        # Keyboard/pendant jogging is normally blocked whenever a modal popup is open,
-        # except for probing and the probe-scan jog overlay (see allows_external_jog).
-        popup_prevents_jogging = self._popup_prevents_jogging()
+    def update_jog_controls_enabled(self, *args):
+        app = App.get_running_app()
+        if app is None:
+            return
+        app.jog_controls_enabled = self._machine_allows_jogging()
 
+    def _machine_allows_jogging(self):
+        app = App.get_running_app()
         return (
             (not app.playing or app.state == "Pause")
             and (
                 app.state in ["Idle", "Pause"]
                 or (app.state == "Run" and self.allow_jogging_while_machine_running == "1")
             )
-            and not popup_prevents_jogging
+            and (not app.spindle_or_laser_is_on or self.allow_jogging_while_spindle_on == "1")
         )
+
+    def is_jogging_enabled(self):
+        # Keyboard/pendant jogging is normally blocked whenever a modal popup is open,
+        # except for probing and the probe-scan jog overlay (see allows_external_jog).
+        return self._machine_allows_jogging() and not self._popup_prevents_jogging()
 
     def is_pendant_jogging_enabled(self):
         # If the user disabled pendant, respect it.
@@ -7285,13 +7417,19 @@ class Makera(RelativeLayout):
                 "allow_mdi_while_machine_running"
             )
 
-        if (
-            self.controller_setting_change_list.get("allow_jogging_while_machine_running")
-            != self.allow_jogging_while_machine_running
-        ):
-            self.allow_jogging_while_machine_running = self.controller_setting_change_list.get(
+        if "allow_jogging_while_machine_running" in self.controller_setting_change_list:
+            self.allow_jogging_while_machine_running = self.controller_setting_change_list[
                 "allow_jogging_while_machine_running"
-            )
+            ]
+
+        if "allow_jogging_while_spindle_on" in self.controller_setting_change_list:
+            self.allow_jogging_while_spindle_on = self.controller_setting_change_list["allow_jogging_while_spindle_on"]
+
+        if (
+            "allow_jogging_while_machine_running" in self.controller_setting_change_list
+            or "allow_jogging_while_spindle_on" in self.controller_setting_change_list
+        ):
+            self.update_jog_controls_enabled()
 
         if self.controller_setting_change_list.get("invert_y_axis_jogging"):
             App.get_running_app().invert_y_axis_jogging = (
@@ -7591,9 +7729,24 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def toggle_camera_stream(self):
+        splitter = self.ids.get("camera_splitter")
+        if splitter is not None:
+            splitter.toggle_collapsed()
+            return
         if self.camera_stream.is_streaming():
             self.camera_stream.stop()
         elif App.get_running_app().supports_camera:
+            self.camera_stream.start(self.controller.connection_address.split(":")[0])
+
+    # -----------------------------------------------------------------------
+    def _on_camera_splitter_collapsed(self, _splitter, collapsed):
+        if collapsed:
+            if self.camera_stream.is_streaming():
+                self.camera_stream.stop()
+            controls = self.ids.get("camera_controls")
+            if controls is not None:
+                controls.adjust_open = False
+        elif App.get_running_app().supports_camera and not self.camera_stream.is_streaming():
             self.camera_stream.start(self.controller.connection_address.split(":")[0])
 
     # -----------------------------------------------------------------------
@@ -7607,6 +7760,13 @@ class Makera(RelativeLayout):
         if probe != self.camera_probe:
             return
         App.get_running_app().supports_camera = found
+        splitter = self.ids.get("camera_splitter")
+        if splitter is None:
+            return
+        if found and splitter.collapsed:
+            splitter.height = splitter.strip_size
+        elif not found:
+            splitter.collapse()
 
     # -----------------------------------------------------------------------
     def set_camera_resolution(self, label):
@@ -7638,6 +7798,9 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def _set_camera_streaming(self, streaming):
         App.get_running_app().camera_streaming = streaming
+        splitter = self.ids.get("camera_splitter")
+        if splitter is not None and not streaming and not splitter.collapsed:
+            splitter.collapse()
 
     # -----------------------------------------------------------------------
     def clear_selection(self):
@@ -8206,6 +8369,8 @@ class Makera(RelativeLayout):
 class MakeraApp(App):
     state = StringProperty(NOT_CONNECTED)
     playing = BooleanProperty(False)
+    spindle_or_laser_is_on = BooleanProperty(False)
+    jog_controls_enabled = BooleanProperty(False)
     has_4axis = BooleanProperty(False)
     has_atc = BooleanProperty(False)
     lasering = BooleanProperty(False)
@@ -8384,6 +8549,14 @@ def set_config_defaults(default_lang):
         Config.set("carvera", "custom_bkg_img_dir", "")
     if not Config.has_option("carvera", "invert_y_axis_jogging"):
         Config.set("carvera", "invert_y_axis_jogging", "0")
+    had_jogging_while_running = Config.has_option("carvera", "allow_jogging_while_machine_running")
+    if not had_jogging_while_running:
+        Config.set("carvera", "allow_jogging_while_machine_running", "1")
+    if not Config.has_option("carvera", "allow_jogging_while_spindle_on"):
+        migrate_spindle_on = had_jogging_while_running and Config.getboolean(
+            "carvera", "allow_jogging_while_machine_running", fallback=False
+        )
+        Config.set("carvera", "allow_jogging_while_spindle_on", "1" if migrate_spindle_on else "0")
     if not Config.has_option("carvera", "allow_manual_usb_device"):
         Config.set("carvera", "allow_manual_usb_device", "0")
     if not Config.has_option("carvera", "manual_usb_device"):

@@ -25,7 +25,12 @@ class AngleOperation(OperationsBase):
         if self.requires_y:
             config[AngleParameterDefinitions.XAxisDistance.code] = ""
 
-        super().apply_direction(AngleParameterDefinitions.ProbeDepth.code, config, self.invert_direction)
+        # Make sure the probe depth is set to the default value if it is not set.
+        depth = AngleParameterDefinitions.ProbeDepth
+        if not str(config.get(depth.code, "")).strip():
+            config[depth.code] = depth.default
+
+        super().apply_direction(depth.code, config, self.invert_direction)
 
         return "M465" + self.config_to_gcode(config)
 
@@ -38,9 +43,6 @@ class AngleOperation(OperationsBase):
             definition = AngleParameterDefinitions.YAxisDistance
             if definition.code not in config or not config[definition.code].strip():
                 return definition
-        definition = AngleParameterDefinitions.ProbeDepth
-        if not definition.code in config:
-            return definition
 
         required_definitions = {
             name: value

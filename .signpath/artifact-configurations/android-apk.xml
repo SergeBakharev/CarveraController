@@ -1,0 +1,14 @@
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <!--
+    Slug: android-apk
+    GitHub upload-artifact v4 wraps the APK in a ZIP, so the root element is zip-file.
+    The ** path matches the APK at the ZIP root or under dist/.
+    Buildozer currently emits a debug-signed APK; SignPath apk-sign replaces that
+    with v2/v3 signatures from the signing policy certificate.
+  -->
+  <zip-file>
+    <apk-file path="**/carveracontroller-community-*.apk">
+      <apk-sign />
+    </apk-file>
+  </zip-file>
+</artifact-configuration>

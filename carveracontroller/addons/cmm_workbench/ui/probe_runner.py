@@ -22,13 +22,17 @@ class ProbeRunner:
         set_status_text: Callable[[str], None],
         on_is_probing_changed: Callable[[], None],
         controller_abort: Callable[[], None],
-        idle_ok: Callable[[], bool],
+        get_machine_state: Callable[[], str],
+        on_timeout: Callable[[], None],
+        on_invalid_state: Callable[[str], None],
     ) -> None:
         self._set_is_probing = set_is_probing
         self._set_status_text = set_status_text
         self._on_is_probing_changed = on_is_probing_changed
         self._controller_abort = controller_abort
-        self._idle_ok = idle_ok
+        self._get_machine_state = get_machine_state
+        self._on_timeout_cb = on_timeout
+        self._on_invalid_state_cb = on_invalid_state
 
         self._gen: int = 0
         self._active_token: int | None = None
@@ -80,7 +84,7 @@ class ProbeRunner:
         """Cancel the current probe run and optionally abort the machine."""
         self._invalidate_token()
         self._clear_events()
-        if abort_machine and not self._idle_ok():
+        if abort_machine and self._get_machine_state() != "Idle":
             self._controller_abort()
         self._set_is_probing(False)
         self._set_status_text("")
@@ -112,6 +116,9 @@ class ProbeRunner:
             self._timeout_event = None
 
     def _tick_anim(self, _dt=None) -> None:
+        self._check_machine_state()
+        if self._active_token is None:
+            return
         self._anim_frame = (self._anim_frame + 1) % len(_PROBE_ANIM_FRAMES)
         self._tick_status()
 
@@ -119,18 +126,19 @@ class ProbeRunner:
         frame = _PROBE_ANIM_FRAMES[self._anim_frame % len(_PROBE_ANIM_FRAMES)]
         self._set_status_text(f"{frame}  {tr._('Probing in progress ...')}")
 
+    def _check_machine_state(self) -> None:
+        if self._active_token is None:
+            return
+        state = self._get_machine_state()
+        if state in ("Idle", "Run"):
+            return
+        self.cancel(abort_machine=False)
+        self._on_invalid_state_cb(state)
+
     def _on_timeout(self, _dt=None, run_token: int | None = None) -> None:
         if self._active_token is None:
             return
         if run_token is None or run_token != self._active_token:
             return
         self.cancel(abort_machine=True)
-        if self._on_timeout_cb is not None:
-            self._on_timeout_cb()
-
-    # Optional timeout notification callback set after construction.
-    _on_timeout_cb: Callable[[], None] | None = None
-
-    def set_on_timeout(self, cb: Callable[[], None]) -> None:
-        """Register a callback invoked when the probe times out."""
-        self._on_timeout_cb = cb
+        self._on_timeout_cb()
