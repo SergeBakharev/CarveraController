@@ -1,6 +1,4 @@
 name: Build and Release
-# Windows and Android signing is enabled when SIGNPATH_ORGANIZATION_ID is set.
-# Console setup, artifact XML, and GitHub secrets/variables: .signpath/README.md
 on:
   push:
     branches:
