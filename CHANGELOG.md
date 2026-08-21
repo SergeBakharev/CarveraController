@@ -1,5 +1,6 @@
 [unreleased]
 - Change: Moved tools visibility controls to the color scheme panel
+- Enhancement: Sign Windows and Android artifacts are now signed
 
 [2.2.0-RC2]
 - Enhancement: Adds "Allow Jogging When Spindle or Laser Is On" option (disabled by default). "Allow Jogging When Machine Running" will now be enabled by default. Existing configs that already allowed jogging while the machine is running also enable the new spindle/laser option.
