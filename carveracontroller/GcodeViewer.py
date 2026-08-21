@@ -712,7 +712,7 @@ class GCodeViewer(Widget):
     z_min_mm = 0.0
     z_max_mm = 1.0
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.canvas = RenderContext()
         shader_dir = os.path.join(os.path.dirname(__file__), "shaders")
@@ -1887,6 +1887,7 @@ class GCodeViewer(Widget):
         material: str = DEFAULT_MATERIAL,
     ) -> None:
         """Configure stock display and optional cut simulation."""
+        new_shape: StockShape | None
         if shape is not None:
             new_shape = shape
         elif bounds is not None and self.stock_shape is None:
