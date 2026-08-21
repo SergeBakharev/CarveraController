@@ -13,11 +13,12 @@ or the included tip/point angle for drills (converted to per-side on parse).
 
 Stock and origin, when present:
 
-(@F360|STOCK|id=cuboid|length=<float>|width=<float>|height=<float>)
-(@F360|STOCK|id=cylinder|length=<float>|width=<float>|height=<float>|diameter=<float>)
+(@F360|STOCK|id=box|width=<float>|depth=<float>|height=<float>)
+(@F360|STOCK|id=cylinder|width=<float>|depth=<float>|height=<float>|diameter=<float>)
+(@F360|STOCK|id=tube|width=<float>|depth=<float>|height=<float>|diameter=<float>)
 (@F360|ORIGIN|type_name=<camelCase>|x=<float>|y=<float>|z=<float>)
 
-``length`` is the X extent and ``width`` is the Y extent.
+``width`` is the X extent and ``depth`` is the Y extent.
 """
 
 import logging
@@ -176,28 +177,27 @@ def _build_cam_stock(stock_fields, origin_fields):
     origin_type = (origin_fields or {}).get("type_name") or ""
     xy_corner, z_reference = _origin_corner_from_type_name(origin_type)
 
-    if stock_id == "cuboid":
-        # /!\ length -> X (our width_mm), width -> Y (our length_mm) /!\
-        width_mm = _positive_or_none(_to_float(stock_fields.get("length")))
-        length_mm = _positive_or_none(_to_float(stock_fields.get("width")))
+    if stock_id == "box":
+        width_mm = _positive_or_none(_to_float(stock_fields.get("width")))
+        length_mm = _positive_or_none(_to_float(stock_fields.get("depth")))
         height_mm = _positive_or_none(_to_float(stock_fields.get("height")))
         if width_mm is None or length_mm is None or height_mm is None:
-            logger.warning("Ignoring Fusion 360 cuboid STOCK with missing or non-positive length/width/height")
+            logger.warning("Ignoring Fusion 360 box STOCK with missing or non-positive width/depth/height")
             return None
         kind = "rectangular"
         diameter_mm = None
         dx, dy, dz = width_mm, length_mm, height_mm
-    elif stock_id == "cylinder":
+    elif stock_id in ("cylinder", "tube"):
         diameter_mm = _positive_or_none(_to_float(stock_fields.get("diameter")))
         if diameter_mm is None:
-            logger.warning("Ignoring Fusion 360 cylinder STOCK with missing or non-positive diameter")
+            logger.warning(f"Ignoring Fusion 360 {stock_id} STOCK with missing or non-positive diameter")
             return None
-        x_mm = _positive_or_none(_to_float(stock_fields.get("length")))
-        y_mm = _positive_or_none(_to_float(stock_fields.get("width")))
+        x_mm = _positive_or_none(_to_float(stock_fields.get("width")))
+        y_mm = _positive_or_none(_to_float(stock_fields.get("depth")))
         z_mm = _positive_or_none(_to_float(stock_fields.get("height")))
         axis = _infer_cylinder_axis(x_mm, y_mm, z_mm)
         if axis == "y":
-            logger.warning("Ignoring Fusion 360 cylinder STOCK with unsupported Y-axis orientation")
+            logger.warning(f"Ignoring Fusion 360 {stock_id} STOCK with unsupported Y-axis orientation")
             return None
         if axis == "x":
             is_rotary = True
@@ -208,7 +208,7 @@ def _build_cam_stock(stock_fields, origin_fields):
         if is_rotary:
             length_mm = x_mm
             if length_mm is None:
-                logger.warning("Ignoring Fusion 360 rotary cylinder STOCK with missing or non-positive length")
+                logger.warning(f"Ignoring Fusion 360 rotary {stock_id} STOCK with missing or non-positive width")
                 return None
             if (origin_type or "").strip().lower() == "custom":
                 xy_corner, z_reference = "center", "center"
@@ -219,7 +219,7 @@ def _build_cam_stock(stock_fields, origin_fields):
         else:
             height_mm = z_mm
             if height_mm is None:
-                logger.warning("Ignoring Fusion 360 mill cylinder STOCK with missing or non-positive height")
+                logger.warning(f"Ignoring Fusion 360 mill {stock_id} STOCK with missing or non-positive height")
                 return None
             kind = "cylindrical"
             width_mm = None
