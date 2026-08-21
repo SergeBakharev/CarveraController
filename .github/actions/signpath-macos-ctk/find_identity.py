@@ -13,10 +13,12 @@ def normalize(value: str) -> str:
     return value.replace("'", "").replace('"', "").replace("[", "").replace("]", "")
 
 
-def identities(valid_only: bool) -> list[tuple[str, str]]:
-    cmd = ["security", "find-identity", "-p", "codesigning"]
+def identities(*, policy: str | None, valid_only: bool) -> list[tuple[str, str]]:
+    cmd = ["security", "find-identity"]
     if valid_only:
-        cmd.insert(2, "-v")
+        cmd.append("-v")
+    if policy:
+        cmd.extend(["-p", policy])
     out = subprocess.check_output(cmd, text=True)
     found: list[tuple[str, str]] = []
     for line in out.splitlines():
@@ -32,11 +34,18 @@ def matches(name: str, needle: str) -> bool:
 
 def main() -> None:
     needle = os.environ["SIGNPATH_CERTIFICATE_SUBJECT_NAME"]
-    valid_only = "--valid-only" in sys.argv
-    for fingerprint, name in identities(valid_only=valid_only):
-        if matches(name, needle):
-            print(fingerprint, end="")
-            return
+    searches = (
+        {"policy": "codesigning", "valid_only": True},
+        {"policy": "codesigning", "valid_only": False},
+        # A SignPath test cert is not an Apple Developer ID, so Apple's
+        # codesigning policy often hides it. codesign can still use the hash.
+        {"policy": None, "valid_only": False},
+    )
+    for search in searches:
+        for fingerprint, name in identities(**search):
+            if matches(name, needle):
+                print(fingerprint, end="")
+                return
     raise SystemExit(1)
 
 
