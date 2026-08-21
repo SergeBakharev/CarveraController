@@ -1,5 +1,5 @@
 name: 'Start SignPath CryptoTokenKit'
-description: 'Install SignPath CryptoTokenKit, trust the test certificate, and load it into the macOS keychain'
+description: 'Install SignPath CryptoTokenKit and load the signing certificate into the macOS keychain'
 inputs:
   api-token:
     description: 'SignPath API token'
@@ -63,24 +63,11 @@ runs:
           "https://app.signpath.io/api/v1/${SIGNPATH_ORGANIZATION_ID}/Cryptoki/MySigningPolicies?projectSlug=${SIGNPATH_PROJECT_SLUG}&signingPolicySlug=${SIGNPATH_SIGNING_POLICY_SLUG}"
 
         python3 "${ACTION_PATH}/extract_cert.py" "${policies_json}" "${cert_path}"
-        cert_pem="${RUNNER_TEMP}/signpath-codesign.pem"
-        if openssl x509 -inform DER -in "${cert_path}" -out "${cert_pem}" 2>/dev/null; then
-          openssl x509 -inform DER -in "${cert_path}" -noout -subject -dates
-        else
-          openssl x509 -inform PEM -in "${cert_path}" -out "${cert_pem}"
-          openssl x509 -inform PEM -in "${cert_path}" -noout -subject -dates
-        fi
+        openssl x509 -inform DER -in "${cert_path}" -noout -subject -dates 2>/dev/null \
+          || openssl x509 -inform PEM -in "${cert_path}" -noout -subject -dates
 
-        # Self-signed SignPath test certs are not Apple CAs, so they never show up in
-        # `security find-identity -v` until they are trusted for code signing.
-        echo "Trusting SignPath certificate for codeSign on this runner..."
-        sudo security authorizationdb write com.apple.trust-settings.admin allow || true
-        if ! sudo security add-trusted-cert -d -r trustAsRoot -p codeSign \
-          -k /Library/Keychains/System.keychain "${cert_pem}"; then
-          echo "System keychain trust failed; trying login keychain..."
-          security add-trusted-cert -p codeSign \
-            -k "${HOME}/Library/Keychains/login.keychain-db" "${cert_pem}"
-        fi
+        # GitHub-hosted runners reject add-trusted-cert (errAuthorizationDenied / -60005).
+        # codesign can still use the CTK identity; find-identity -v will not list it.
 
         dmg_path="${RUNNER_TEMP}/SignPathCryptoTokenKit.dmg"
         mount_root="${RUNNER_TEMP}/signpath-ctk"
@@ -131,7 +118,13 @@ runs:
         echo "Waiting for a codesigning identity matching '${SIGNPATH_CERTIFICATE_SUBJECT_NAME}'..."
         identity_hash=""
         for _ in $(seq 1 30); do
+          # Self-signed test certs are matching identities, not "valid" (-v) ones.
           if identity_hash="$(python3 "${ACTION_PATH}/find_identity.py" --valid-only)"; then
+            echo "Found trusted codesigning identity"
+            break
+          fi
+          if identity_hash="$(python3 "${ACTION_PATH}/find_identity.py")"; then
+            echo "Found matching (untrusted test) codesigning identity"
             break
           fi
           identity_hash=""
@@ -139,7 +132,7 @@ runs:
         done
 
         if [ -z "${identity_hash}" ]; then
-          echo "SignPath certificate was not loaded as a valid codesigning identity" >&2
+          echo "SignPath certificate was not loaded as a codesigning identity" >&2
           dump_identities
           security list-smartcard || true
           pluginkit -m -v -p com.apple.ctk-tokens || true
