@@ -124,9 +124,18 @@ def _cut_z_along_segment(
     wy: np.ndarray,
     profile_zs: np.ndarray,
     profile_rs: np.ndarray,
+    *,
+    clamp_r: float | None = None,
 ) -> np.ndarray:
-    """Remaining world Z at poses ``p0 + t * Δ`` for each XY sample."""
+    """Remaining world Z at poses ``p0 + t * Δ`` for each XY sample.
+
+    ``clamp_r`` caps XY distance before the profile lookup. Coverage-interval
+    endpoints are constructed to lie on the max-radius circle; reconstructing
+    that distance with ``hypot`` can land 1 ULP outside and drop the sample.
+    """
     dist = np.hypot(wx - (p0[0] + t * dx), wy - (p0[1] + t * dy))
+    if clamp_r is not None:
+        dist = np.minimum(dist, float(clamp_r))
     z_rel = _sample_profile_z_for_radius(profile_zs, profile_rs, dist)
     return (p0[2] + t * dz) + z_rel
 
@@ -298,14 +307,21 @@ class HeightmapBackend(LaserDecalMixin):
             t_hi = np.minimum(t_proj + delta_t, 1.0)
             t_mid = np.clip(t_proj, 0.0, 1.0)
             in_interval = (dist_perp_sq <= r_cov * r_cov) & (t_lo <= t_hi)
-            args = (p0, dx, dy, dz, wx, wy, profile_zs, profile_rs)
-            cut_z = np.minimum.reduce(
-                [
-                    _cut_z_along_segment(t_lo, *args),
-                    _cut_z_along_segment(t_hi, *args),
-                    _cut_z_along_segment(t_mid, *args),
-                ]
-            )
+            if float(np.max(profile_rs)) - float(np.min(profile_rs)) < 1e-12:
+                # Cylinder: remaining Z is the lowest covering tip (z_rel constant).
+                t_z = t_lo if dz >= 0.0 else t_hi
+                cut_z = (p0[2] + t_z * dz) + float(profile_zs[0])
+            else:
+                args = (p0, dx, dy, dz, wx, wy, profile_zs, profile_rs)
+                # Clamp hypot reconstruction onto the silhouette so endpoint
+                # samples are not dropped (sawtooth ramps / tabs).
+                cut_z = np.minimum.reduce(
+                    [
+                        _cut_z_along_segment(t_lo, *args, clamp_r=max_r),
+                        _cut_z_along_segment(t_hi, *args, clamp_r=max_r),
+                        _cut_z_along_segment(t_mid, *args, clamp_r=max_r),
+                    ]
+                )
             cut_z = np.where(in_interval, cut_z, np.inf)
         cut_z = np.maximum(cut_z, float(self.bounds.min_z))
         hit = valid & np.isfinite(cut_z) & (cut_z < slab)

@@ -2280,6 +2280,76 @@ def test_iter_cut_jobs_merges_a_only_wrap():
         sim.stop()
 
 
+def test_iter_cut_jobs_does_not_chord_wrapping_z_bump():
+    """Constant-XY 4-axis following is XYZ-collinear; a Z bump must not collapse.
+
+    Nefertiti-style wrapping keeps X (and Y) fixed while Z tracks the surface
+    and A advances. A machine-XYZ chord overcuts the ridge and leaves holes.
+    """
+    from carveracontroller.addons.stock.simulator import CheckpointStore, PathSnapshot, StockSimulator
+
+    tool = _flat_tool()
+    # Slow Z, then a jump: linear Z(A) would be far from the second vertex.
+    zs = [10.0, 10.2, 11.5, 12.0]
+    angs = [0.0, 2.0, 4.0, 6.0]
+    positions: list[float] = []
+    for z in zs:
+        positions.extend((20.0, 0.0, z))
+    n = len(zs)
+    path = PathSnapshot(
+        positions,
+        [2.0] + [1.0] * (n - 1),
+        [1] * n,
+        {1: tool},
+        tool_scale=1.0,
+        angles=angs,
+    )
+    store = CheckpointStore(slot_count=1)
+    store.set_path_vertex_count(n)
+    sim = StockSimulator()
+    try:
+        jobs = list(sim._iter_cut_jobs(path, 0, n - 1, voxel_size_mm=0.2, checkpoints=store))
+        assert len(jobs) >= 2
+        assert not (
+            len(jobs) == 1 and jobs[0].p0[2] == pytest.approx(10.0) and jobs[0].p1[2] == pytest.approx(12.0)
+        )
+    finally:
+        sim.stop()
+
+
+def test_iter_cut_jobs_merges_linear_wrapping_z_ramp():
+    """Linear Z vs A at constant XY is a true helix and may stay one job."""
+    from carveracontroller.addons.stock.simulator import CheckpointStore, PathSnapshot, StockSimulator
+
+    tool = _flat_tool()
+    zs = [10.0, 11.0, 12.0, 13.0]
+    angs = [0.0, 2.0, 4.0, 6.0]
+    positions: list[float] = []
+    for z in zs:
+        positions.extend((20.0, 0.0, z))
+    n = len(zs)
+    path = PathSnapshot(
+        positions,
+        [2.0] + [1.0] * (n - 1),
+        [1] * n,
+        {1: tool},
+        tool_scale=1.0,
+        angles=angs,
+    )
+    store = CheckpointStore(slot_count=1)
+    store.set_path_vertex_count(n)
+    sim = StockSimulator()
+    try:
+        jobs = list(sim._iter_cut_jobs(path, 0, n - 1, voxel_size_mm=0.2, checkpoints=store))
+        assert len(jobs) == 1
+        assert jobs[0].p0[2] == pytest.approx(10.0)
+        assert jobs[0].p1[2] == pytest.approx(13.0)
+        assert jobs[0].a0 == pytest.approx(0.0)
+        assert jobs[0].a1 == pytest.approx(6.0)
+    finally:
+        sim.stop()
+
+
 def test_reset_seeds_rotary_cylindrical_occupancy():
     from carveracontroller.addons.stock.simulator import StockSimulator
     from carveracontroller.addons.stock.stock_geometry import compute_wcs_bounds

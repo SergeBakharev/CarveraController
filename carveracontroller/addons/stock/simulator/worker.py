@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import queue
 import threading
 import time
@@ -86,6 +87,35 @@ def _point_to_segment_dist_sq(
     return dx * dx + dy * dy + dz * dz
 
 
+def _merge_angle_tol_deg(
+    p0: tuple[float, float, float],
+    merge_tol_mm: float,
+) -> float:
+    """Degrees of A that match ``merge_tol_mm`` of arc at the tool's YZ radius."""
+    r_ref = max(math.hypot(p0[1], p0[2]), 1.0)
+    return math.degrees(max(float(merge_tol_mm), 0.0) / r_ref)
+
+
+def _angle_error_on_xyz_chord(
+    a: tuple[float, float, float],
+    a_ang: float,
+    p: tuple[float, float, float],
+    p_ang: float,
+    c: tuple[float, float, float],
+    c_ang: float,
+) -> float:
+    """``|A(P) − lerp(A(A), A(C), t)|`` with ``t`` from the XYZ chord ``A→C``."""
+    acx = c[0] - a[0]
+    acy = c[1] - a[1]
+    acz = c[2] - a[2]
+    ac_len_sq = acx * acx + acy * acy + acz * acz
+    if ac_len_sq < 1e-18:
+        return abs(float(p_ang) - float(a_ang))
+    t = ((p[0] - a[0]) * acx + (p[1] - a[1]) * acy + (p[2] - a[2]) * acz) / ac_len_sq
+    expected = float(a_ang) + t * (float(c_ang) - float(a_ang))
+    return abs(float(p_ang) - expected)
+
+
 def _can_extend_collinear_merge(
     a: tuple[float, float, float],
     b: tuple[float, float, float],
@@ -127,9 +157,21 @@ def _collinear_intermediates_within_tol(
     p0: tuple[float, float, float],
     p1: tuple[float, float, float],
     tol_sq: float,
+    *,
+    angle_at: Callable[[int], float] | None = None,
+    a0: float = 0.0,
+    a1: float = 0.0,
+    a_tol_deg: float = 0.0,
 ) -> bool:
     """True if every vertex in ``[run_start, run_end)`` lies within ``tol`` of chord ``p0→p1``."""
-    return all(_point_to_segment_dist_sq(p0, p1, point_at(k)) <= tol_sq for k in range(run_start, run_end))
+    for k in range(run_start, run_end):
+        pk = point_at(k)
+        if _point_to_segment_dist_sq(p0, p1, pk) > tol_sq:
+            return False
+        if angle_at is not None and a_tol_deg > 0.0:
+            if _angle_error_on_xyz_chord(p0, a0, pk, angle_at(k), p1, a1) > a_tol_deg:
+                return False
+    return True
 
 
 def _clamp_collinear_run_end(
@@ -138,13 +180,34 @@ def _clamp_collinear_run_end(
     run_end: int,
     p0: tuple[float, float, float],
     tol_mm: float,
+    *,
+    angle_at: Callable[[int], float] | None = None,
+    a0: float = 0.0,
+    a_tol_deg: float = 0.0,
 ) -> tuple[int, tuple[float, float, float]]:
     """Longest prefix of ``[run_start, run_end]`` within ``tol_mm`` of the final chord."""
     if run_end <= run_start:
         return run_end, point_at(run_end)
     tol_sq = float(tol_mm) * float(tol_mm)
+
+    def _ok(end: int) -> bool:
+        p1 = point_at(end)
+        a1 = float(angle_at(end)) if angle_at is not None else 0.0
+        return _collinear_intermediates_within_tol(
+            point_at,
+            run_start,
+            end,
+            p0,
+            p1,
+            tol_sq,
+            angle_at=angle_at,
+            a0=a0,
+            a1=a1,
+            a_tol_deg=a_tol_deg,
+        )
+
     p1 = point_at(run_end)
-    if _collinear_intermediates_within_tol(point_at, run_start, run_end, p0, p1, tol_sq):
+    if _ok(run_end):
         return run_end, p1
 
     best = run_start
@@ -152,8 +215,7 @@ def _clamp_collinear_run_end(
     hi = run_end - 1
     while lo <= hi:
         mid = (lo + hi) // 2
-        p_mid = point_at(mid)
-        if _collinear_intermediates_within_tol(point_at, run_start, mid, p0, p_mid, tol_sq):
+        if _ok(mid):
             best = mid
             lo = mid + 1
         else:
@@ -892,6 +954,8 @@ class StockSimulator:
         Near-collinear same-tool cuts collapse to a chord, flushing at the next
         unrecorded checkpoint target or length/span caps. After greedy extend,
         :func:`_clamp_collinear_run_end` keeps intermediates within tolerance.
+        Rotary moves must also keep A on that XYZ chord so wrapping Z-profiles
+        are not flattened into a machine-XYZ line.
         """
         n = path.vertex_count()
         if n < 2:
@@ -906,6 +970,9 @@ class StockSimulator:
         def point_at(idx: int) -> tuple[float, float, float]:
             return self._raw_xyz(path, idx)
 
+        def angle_at(idx: int) -> float:
+            return self._raw_angle(path, idx)
+
         i = start
         while i <= end:
             if not self._is_cut_vertex(path, i):
@@ -915,6 +982,8 @@ class StockSimulator:
             run_end = i
             p0 = self._raw_xyz(path, i - 1)
             p1 = self._raw_xyz(path, run_end)
+            a0 = self._raw_angle(path, i - 1)
+            a_tol = _merge_angle_tol_deg(p0, merge_tol)
             tool_num = self._tool_number_at_vertex(path, run_end)
             tool_def = self._tool_def_at_vertex(path, run_end)
             path_len = _xyz_dist(p0, p1)
@@ -945,8 +1014,16 @@ class StockSimulator:
                 p_new = self._raw_xyz(path, j)
                 step = _xyz_dist(p1, p_new)
                 a_only = _xyz_dist(p0, p_new) <= merge_tol and step <= merge_tol
-                if not a_only and not _can_extend_collinear_merge(p0, p1, p_new, merge_tol):
-                    break
+                if not a_only:
+                    if not _can_extend_collinear_merge(p0, p1, p_new, merge_tol):
+                        break
+                    # XYZ-collinear wrapping (constant X/Y, Z follows the surface)
+                    # is a straight line in machine XYZ; A must follow that chord
+                    # or a 4-axis bump collapses into an overcutting ramp.
+                    a_end = self._raw_angle(path, run_end)
+                    a_new = self._raw_angle(path, j)
+                    if _angle_error_on_xyz_chord(p0, a0, p1, a_end, p_new, a_new) > a_tol:
+                        break
 
                 if (not a_only) and (path_len + step > max_merge_mm or span + 1 > max_span):
                     break
@@ -963,7 +1040,16 @@ class StockSimulator:
                     break
 
             if run_end > i and not (_xyz_dist(p0, p1) <= merge_tol):
-                run_end, p1 = _clamp_collinear_run_end(point_at, i, run_end, p0, merge_tol)
+                run_end, p1 = _clamp_collinear_run_end(
+                    point_at,
+                    i,
+                    run_end,
+                    p0,
+                    merge_tol,
+                    angle_at=angle_at,
+                    a0=a0,
+                    a_tol_deg=a_tol,
+                )
 
             yield self._carve_job(path, p0, p1, tool_def, i - 1, run_end)
             i = run_end + 1

@@ -366,6 +366,36 @@ def test_cylindrical_vbit_short_wrap_step_clears():
     assert not cyl.is_solid_at_world(20.07, 0.0, 10.0)
 
 
+def test_cylindrical_wrapping_z_bump_chord_overcuts_vbit():
+    """XYZ chord of a wrapping Z bump overcuts; the polyline keeps the ridge.
+
+    Same geometry as 4-axis surface following: X fixed, A advances, Z jumps
+    away from the axis then returns. A V-bit chord through the bump gouges.
+    """
+    bounds = StockBounds(min_x=0, min_y=-16, min_z=-16, max_x=40, max_y=16, max_z=16)
+    shape = RotaryCylindricalStock(diameter_mm=32.0, length_mm=40.0)
+    tool = _vbit()
+    x = 20.0
+    poses = (
+        ((x, 0.0, 10.0), 0.0),
+        ((x, 0.0, 10.2), 3.0),
+        ((x, 0.0, 12.0), 6.0),
+        ((x, 0.0, 10.2), 9.0),
+        ((x, 0.0, 10.0), 12.0),
+    )
+    cyl_poly = CylindricalBackend(bounds, 0.4, shape)
+    for i in range(1, len(poses)):
+        (p0, a0), (p1, a1) = poses[i - 1], poses[i]
+        cyl_poly.carve_segment(p0, p1, tool, a0=a0, a1=a1)
+    cyl_chord = CylindricalBackend(bounds, 0.4, shape)
+    cyl_chord.carve_segment(poses[0][0], poses[-1][0], tool, a0=poses[0][1], a1=poses[-1][1])
+    # Tool sits on +Z; occupancy θ is atan2(Y,Z)−A ≈ −A.
+    r_poly = cyl_poly.radius_at(x, -6.0)
+    r_chord = cyl_chord.radius_at(x, -6.0)
+    assert r_poly is not None and r_chord is not None
+    assert r_poly > r_chord + 0.3
+
+
 def test_cylindrical_vbit_helix_floor_is_smooth():
     """Helix stamps at cell centers so a V-tip does not leave X-wise bumps."""
     bounds = StockBounds(min_x=0, min_y=-14, min_z=-14, max_x=40, max_y=14, max_z=14)

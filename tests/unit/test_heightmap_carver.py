@@ -258,6 +258,48 @@ def test_heightmap_ramp_clears_uphill_footprint():
     assert untouched is not None and abs(untouched - 10.0) < 1e-3
 
 
+def test_heightmap_ramp_clears_off_centerline_to_lowest_covering_pose():
+    """Cells beside a descending ramp must use the low covering tip, not XY-closest.
+
+    Reconstructing the coverage-circle hypot can land 1 ULP outside the tool
+    radius and drop the endpoint sample, leaving a high/low sawtooth across
+    the kerf (Makera-style 2D-contour tabs).
+    """
+    bounds = StockBounds(0, 0, 0, 20, 10, 10)
+    hm = HeightmapBackend(bounds, 0.1, RectangularStock(20, 10, 10))
+    tool = _flat_tool(6.0)
+    hm.carve_segment((0.5, 5.0, 5.0), (10.5, 5.0, 0.0), tool)
+    h = hm.height_at_world(0.5, 6.5)
+    assert h is not None
+    # dist_perp=1.5, R=3 → covering half-width ≈ 2.598 mm along a 10 mm, ΔZ=-5 ramp.
+    # Lowest covering Z ≈ 5 - 5 * 2.598/10 ≈ 3.70. Closest-pose Z is 5.0.
+    assert h <= 3.75
+
+
+def test_heightmap_flat_tab_ramp_is_not_crenellated():
+    """A 2D-contour tab (ramp up then down) must not alternate high/low across the slot."""
+    bounds = StockBounds(0, 0, -2, 30, 12, 0)
+    hm = HeightmapBackend(bounds, 0.1, RectangularStock(30, 12, 2))
+    tool = _flat_tool(3.175)
+    y = 6.0
+    hm.carve_segment((2.0, y, -0.5), (28.0, y, -0.5), tool)
+    hm.carve_segment((2.0, y, -1.5), (10.0, y, -1.5), tool)
+    hm.carve_segment((10.0, y, -1.5), (15.0, y, -0.5), tool)
+    hm.carve_segment((15.0, y, -0.5), (20.0, y, -1.5), tool)
+    hm.carve_segment((20.0, y, -1.5), (28.0, y, -1.5), tool)
+
+    ys = np.arange(y - 1.7, y + 1.7 + 1e-9, 0.1)
+    hs = np.array([hm.height_at_world(15.0, float(yy)) for yy in ys], dtype=np.float64)
+    cut = hs < -0.05
+    assert cut.any()
+    vals = hs[cut]
+    # Interior local maxima: a U-groove is fine; every-other-cell teeth are not.
+    if vals.size >= 3:
+        interior = vals[1:-1]
+        maxima = (interior > vals[:-2] + 0.08) & (interior > vals[2:] + 0.08)
+        assert int(np.sum(maxima)) <= 2
+
+
 def _packed_vertex_rows(meshes: dict) -> np.ndarray:
     rows = []
     for packed in meshes.values():
