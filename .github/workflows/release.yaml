@@ -1,5 +1,5 @@
 name: Build and Release
-# Windows/macOS signing is enabled when SIGNPATH_ORGANIZATION_ID is set.
+# Windows and Android signing is enabled when SIGNPATH_ORGANIZATION_ID is set.
 # Console setup, artifact XML, and GitHub secrets/variables: .signpath/README.md
 on:
   push:
@@ -147,9 +147,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG || 'carvera-controller-community' }}
-      SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'test-signing' }}
     steps:
     - uses: actions/checkout@v4
 
@@ -166,48 +163,14 @@ jobs:
     - name: Install create-dmg
       run: brew install create-dmg
 
-    - name: Start SignPath CryptoTokenKit
-      if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
-      id: signpath-ctk
-      uses: ./.github/actions/signpath-macos-ctk
-      with:
-        api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-        organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-        project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
-        signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
-        certificate-subject-name: ${{ vars.SIGNPATH_CERTIFICATE_SUBJECT_NAME }}
-
     - name: Build release
-      env:
-        SIGNPATH_CODESIGN_IDENTITY: ${{ steps.signpath-ctk.outputs.codesign-identity }}
       run: |
         if [[ $GITHUB_REF == refs/tags/* ]]; then
           VERSION=$GITHUB_REF_NAME
         else
           VERSION=$(date +'%Y.%m.%d')
         fi
-        extra=()
-        if [[ -n "${{ vars.SIGNPATH_ORGANIZATION_ID }}" ]]; then
-          extra+=(--codesign-identity "${SIGNPATH_CODESIGN_IDENTITY}")
-        fi
-        poetry run python scripts/build.py --os macos --version "$VERSION" "${extra[@]}"
-
-    - name: Verify macOS SignPath signatures
-      if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
-      run: |
-        set -euo pipefail
-        app="./dist/Carvera Controller Community.app"
-        dmg="$(ls -1 dist/carveracontroller-community-*.dmg | head -n 1)"
-        codesign -dv --verbose=4 "${app}"
-        codesign --verify --deep --verbose "${app}"
-        codesign -dv --verbose=4 "${dmg}"
-        codesign --verify --verbose "${dmg}"
-        {
-          echo "## macOS SignPath test-signing (${{ matrix.platform }})"
-          echo "- App identity: \`$(codesign -dv --verbose=2 "${app}" 2>&1 | sed -n 's/^Authority=//p' | head -n 1)\`"
-          echo "- DMG: \`${dmg##*/}\`"
-          echo "- Gatekeeper will still warn until an Apple Developer ID release certificate and notarization are used."
-        } >> "${GITHUB_STEP_SUMMARY}"
+        poetry run python scripts/build.py --os macos --version "$VERSION"
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -351,10 +314,17 @@ jobs:
   build-android-artifacts:
     name: build-android
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 70
+    permissions:
+      actions: read
+      contents: read
     defaults:
       run:
         shell: bash
+    env:
+      SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG || 'carvera-controller-community' }}
+      SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'test-signing' }}
+      SIGNPATH_ANDROID_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_ANDROID_ARTIFACT_CONFIGURATION_SLUG || 'android-apk' }}
     steps:
     - uses: actions/checkout@v4
 
@@ -414,6 +384,61 @@ jobs:
           VERSION=$(date +'%Y.%m.%d')
         fi
         xvfb-run poetry run python scripts/build.py --os android --version "$VERSION" --automation
+
+    - name: Upload unsigned APK for SignPath
+      if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      id: upload-unsigned-apk
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-unsigned
+        path: ${{ github.workspace }}/dist/carveracontroller-community-*.apk
+        retention-days: 1
+
+    - name: Submit SignPath test-signing request
+      if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      id: signpath-apk
+      uses: signpath/github-action-submit-signing-request@v2
+      with:
+        api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+        organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+        signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
+        artifact-configuration-slug: ${{ env.SIGNPATH_ANDROID_ARTIFACT_CONFIGURATION_SLUG }}
+        github-artifact-id: ${{ steps.upload-unsigned-apk.outputs.artifact-id }}
+        wait-for-completion: true
+        wait-for-completion-timeout-in-seconds: 1800
+        output-artifact-directory: ${{ github.workspace }}/signed
+
+    - name: Replace unsigned APK with SignPath-signed APK
+      if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      run: |
+        set -euo pipefail
+        signed_apk="$(find "${GITHUB_WORKSPACE}/signed" -type f -name 'carveracontroller-community-*.apk' | head -n 1)"
+        if [ -z "${signed_apk}" ]; then
+          echo "Signed Android APK was not returned by SignPath" >&2
+          find "${GITHUB_WORKSPACE}/signed" -print >&2 || true
+          exit 1
+        fi
+        cp "${signed_apk}" "${GITHUB_WORKSPACE}/dist/"
+        echo "Copied signed APK: ${signed_apk}"
+
+    - name: Verify APK signature
+      if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      run: |
+        set -euo pipefail
+        apk="$(ls -1 dist/carveracontroller-community-*.apk | head -n 1)"
+        apksigner="$(find "${HOME}/.buildozer/android/platform/android-sdk/build-tools" -name apksigner -type f | sort | tail -n 1)"
+        if [ -z "${apksigner}" ]; then
+          echo "apksigner not found; falling back to jarsigner -verify"
+          jarsigner -verify -verbose -certs "${apk}"
+        else
+          "${apksigner}" verify --verbose --print-certs "${apk}"
+        fi
+        {
+          echo "## Android SignPath test-signing"
+          echo "- File: \`${apk##*/}\`"
+          echo "- Signing request: ${{ steps.signpath-apk.outputs.signing-request-web-url }}"
+        } >> "${GITHUB_STEP_SUMMARY}"
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4

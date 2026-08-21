@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 APP_NAME = "Carvera-Controller-Community"
 PACKAGE_NAME = "carveracontroller"
 ASSETS_FOLDER = "assets/packaging"
-MACOS_APP_BUNDLE_NAME = "Carvera Controller Community.app"
 
 # ------ Versionfile info ------
 COMPANY_NAME = "Carvera-Community"
@@ -367,61 +366,19 @@ def rename_release_file(os_name, package_version):
     shutil.move(src, dst)
 
 
-def codesign_macos(path: str, identity: str, *, deep: bool = False) -> None:
-    """Sign a macOS .app or .dmg with a real identity.
-
-    Hardened Runtime (--options=runtime) is omitted: PyInstaller enables it when a
-    codesign identity is passed at freeze time, and that mode requires an Apple-issued
-    certificate. SignPath test certificates are self-signed, so this post-sign step is
-    used instead. Add Hardened Runtime when switching to a Developer ID release cert.
-    """
-    cmd = [
-        "/usr/bin/codesign",
-        "--sign",
-        identity,
-        "--force",
-        "--timestamp",
-    ]
-    if deep:
-        # .app bundles contain Mach-O slices; these flags do not apply to the DMG.
-        cmd.extend(["--all-architectures", "--deep"])
-    cmd.append(path)
-
-    logger.info("Signing %s with identity %s", path, identity)
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        logger.error("codesign failed for %s: %s%s", path, result.stdout, result.stderr)
-        raise RuntimeError(f"codesign failed for {path}")
-
-    verify_cmd = ["/usr/bin/codesign", "--verify", "--verbose", path]
-    if deep:
-        verify_cmd[2:2] = ["--deep"]
-    verify = subprocess.run(verify_cmd, capture_output=True, text=True)
-    if verify.returncode != 0:
-        logger.error("codesign verify failed for %s: %s%s", path, verify.stdout, verify.stderr)
-        raise RuntimeError(f"codesign verify failed for {path}")
-
-
-def create_macos_dmg(codesign_identity: str | None = None):
+def create_macos_dmg():
     dmg_path = "./dist/carveracontroller-community.dmg"
     app_src = "./dist/carveracontroller.app"
-    app_dst = f"./dist/{MACOS_APP_BUNDLE_NAME}"
+    app_dst = "./dist/Carvera Controller Community.app"
 
     if os.path.exists(dmg_path):
         os.remove(dmg_path)
 
-    # Rename .app before signing so the sealed bundle name matches the shipped app.
+    # Rename .app
     if os.path.exists(app_src):
         os.rename(app_src, app_dst)
     else:
         raise FileNotFoundError(f"Source app not found: {app_src}")
-
-    if codesign_identity:
-        codesign_macos(app_dst, codesign_identity, deep=True)
-    else:
-        import PyInstaller.utils.osx as osxutils
-
-        osxutils.sign_binary(app_dst, deep=True)
 
     cmd = [
         "create-dmg",
@@ -438,13 +395,13 @@ def create_macos_dmg(codesign_identity: str | None = None):
         "640",
         "324",
         "--icon",
-        MACOS_APP_BUNDLE_NAME,
+        "Carvera Controller Community.app",
         "130",
         "130",
         "--icon-size",
         "64",
         "--hide-extension",
-        MACOS_APP_BUNDLE_NAME,
+        "Carvera Controller Community.app",
         "--app-drop-link",
         "510",
         "130",
@@ -458,9 +415,6 @@ def create_macos_dmg(codesign_identity: str | None = None):
     if result.returncode != 0:
         logger.error("Error creating DMG: %s", result.stderr)
         raise RuntimeError("create-dmg failed")
-
-    if codesign_identity:
-        codesign_macos(dmg_path, codesign_identity)
 
 
 def update_buildozer_version(package_version: str) -> None:
@@ -558,16 +512,6 @@ def main():
         required=True,
         type=version_type,
         help="Version string to use for build. Supports X.Y.Z[-SUFFIX] format (e.g., 1.2.3, 2.0.0-RC1, v2.0.0-BETA2).",
-    )
-
-    parser.add_argument(
-        "--codesign-identity",
-        default=None,
-        help=(
-            "macOS codesign identity (certificate Common Name). Used after the .app is "
-            "renamed, then again on the DMG. Intended for SignPath CryptoTokenKit test "
-            "or release certificates; omit for local ad-hoc signing."
-        ),
     )
 
     args = parser.parse_args()
@@ -671,8 +615,11 @@ def main():
     if os_name == "macos":
         # Need to manually revise the version string due to
         # https://github.com/pyinstaller/pyinstaller/issues/6943
+        import PyInstaller.utils.osx as osxutils
+
         fix_macos_version_string(package_version)
-        create_macos_dmg(codesign_identity=args.codesign_identity or None)
+        osxutils.sign_binary(f"dist/{PACKAGE_NAME}.app", deep=True)
+        create_macos_dmg()
 
     logger.info("Renaming artifacts to have version number and platform in filename")
     rename_release_file(os_name, package_version)
