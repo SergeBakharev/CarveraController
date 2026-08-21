@@ -413,7 +413,7 @@ def create_macos_dmg():
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        logger.error("Error creating DMG:", result.stderr)
+        logger.error("Error creating DMG: %s", result.stderr)
         raise RuntimeError("create-dmg failed")
 
 

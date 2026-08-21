@@ -1,0 +1,15 @@
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <!--
+    Slug: windows-portable-exe
+    GitHub upload-artifact v4 wraps the EXE in a ZIP, so the root element is zip-file.
+    The ** path matches the EXE at the ZIP root or under dist/.
+  -->
+  <zip-file>
+    <pe-file
+        path="**/carveracontroller-community-*-windows-x64.exe"
+        product-name="Carvera-Controller-Community"
+        company-name="Carvera-Community">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
