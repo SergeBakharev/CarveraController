@@ -2310,9 +2310,7 @@ def test_iter_cut_jobs_does_not_chord_wrapping_z_bump():
     try:
         jobs = list(sim._iter_cut_jobs(path, 0, n - 1, voxel_size_mm=0.2, checkpoints=store))
         assert len(jobs) >= 2
-        assert not (
-            len(jobs) == 1 and jobs[0].p0[2] == pytest.approx(10.0) and jobs[0].p1[2] == pytest.approx(12.0)
-        )
+        assert not (len(jobs) == 1 and jobs[0].p0[2] == pytest.approx(10.0) and jobs[0].p1[2] == pytest.approx(12.0))
     finally:
         sim.stop()
 

@@ -2067,16 +2067,12 @@ class GCodeViewer(Widget):
             edge_verts, edge_idx = build_cylinder_edges(cx, cy, z0, z1, radius, edge_rgba)
             fill_verts = fill_idx = None
             if not self._carved_stock_visible():
-                fill_verts, fill_idx = build_cylinder_triangles(
-                    cx, cy, z0, z1, radius, other_rgba, top_color=top_rgba
-                )
+                fill_verts, fill_idx = build_cylinder_triangles(cx, cy, z0, z1, radius, other_rgba, top_color=top_rgba)
         else:
             edge_verts, edge_idx = build_box_edges(x0, y0, z0, x1, y1, z1, edge_rgba)
             fill_verts = fill_idx = None
             if not self._carved_stock_visible():
-                fill_verts, fill_idx = build_box_triangles(
-                    x0, y0, z0, x1, y1, z1, other_rgba, top_color=top_rgba
-                )
+                fill_verts, fill_idx = build_box_triangles(x0, y0, z0, x1, y1, z1, other_rgba, top_color=top_rgba)
 
         with self.stockmesh:
             Callback(self.setup_gl_context)

@@ -87,9 +87,7 @@ def build_box_edges(x0, y0, z0, x1, y1, z1, color):
     return vertices, indices
 
 
-def build_cylinder_triangles(
-    cx, cy, z0, z1, radius, color, segments: int = DEFAULT_CYLINDER_SEGMENTS, top_color=None
-):
+def build_cylinder_triangles(cx, cy, z0, z1, radius, color, segments: int = DEFAULT_CYLINDER_SEGMENTS, top_color=None):
     """Return (vertices, indices) for a Z-axis cylinder (side + caps).
 
     *top_color* tints the +Z cap; the wall and bottom keep *color*.

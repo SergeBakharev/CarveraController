@@ -45,8 +45,8 @@ from carveracontroller.addons.stock.stock_material import (
     MATERIAL_ALUMINUM,
     MATERIAL_BEIGE,
     MATERIAL_COPPER,
-    MATERIAL_WOOD,
     MATERIAL_PCB,
+    MATERIAL_WOOD,
     normalize_stock_material,
 )
 from carveracontroller.addons.stock.stock_origin import (
