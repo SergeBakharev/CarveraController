@@ -68,8 +68,6 @@ from .addons.stock.simulator.simulation_quality import (
     normalize_voxel_resolution,
 )
 from .addons.stock.stock_aabb_mesh import (
-    STOCK_EDGE_COLOR,
-    STOCK_FILL_COLOR,
     STOCK_VERTEX_FORMAT,
     build_box_edges,
     build_box_triangles,
@@ -80,6 +78,12 @@ from .addons.stock.stock_aabb_mesh import (
 )
 from .addons.stock.stock_defaults import default_bounds, default_shape
 from .addons.stock.stock_geometry import StockBounds
+from .addons.stock.stock_material import (
+    DEFAULT_MATERIAL,
+    normalize_stock_material,
+    preview_fill_rgba,
+    style_for_material,
+)
 from .addons.stock.stock_shape import CylindricalStock, RectangularStock, RotaryCylindricalStock, StockShape
 from .addons.tool_visualization.mesh_builder import build_tool_meshes
 from .arcball_from_cpp import *
@@ -728,6 +732,13 @@ class GCodeViewer(Widget):
         self.carvedmesh["vertex_scale"] = 1.0
         self.carvedmesh["laser_enabled"] = 0.0
         self.carvedmesh["laser_mode"] = 0.0
+        self.carvedmesh["use_two_tone"] = 0.0
+        self.carvedmesh["use_height_tint"] = 1.0
+        self.carvedmesh["cylindrical_skin"] = 0.0
+        self.carvedmesh["metallic"] = 0.0
+        self.carvedmesh["interior_metallic"] = 0.0
+        self.carvedmesh["roughness"] = 0.92
+        self.carvedmesh["interior_roughness"] = 0.92
         self.carvedmesh["texture1"] = LASER_DECAL_TEXTURE_UNIT
         self._carved_meshes: dict[tuple[int, int, int], Mesh] = {}
         self._carved_mesh_anchor = None
@@ -801,6 +812,7 @@ class GCodeViewer(Widget):
         # Stock preview / cut simulation state
         self.stock_bounds_mm: StockBounds | None = None
         self.stock_shape: StockShape | None = None
+        self.stock_visible = False
         self.simulate_cut = False
         self.stock_mesh_while_playing = False
         # Keep the translucent AABB up after pause until the worker flush
@@ -810,6 +822,7 @@ class GCodeViewer(Widget):
         self.stock_voxel_resolution = DEFAULT_VOXEL_RESOLUTION
         self.stock_checkpoint_level = DEFAULT_CHECKPOINT_LEVEL
         self.stock_carver_mode = DEFAULT_CARVER_MODE
+        self.stock_material = DEFAULT_MATERIAL
         self._sim_carved_vertex = 0
         self._sim_progress_vertex = 0
         self._sim_progress_trigger = Clock.create_trigger(self._flush_sim_progress, 0)
@@ -1871,30 +1884,55 @@ class GCodeViewer(Widget):
         mesh_while_playing: bool = False,
         carver_mode: str = DEFAULT_CARVER_MODE,
         shape: StockShape | None = None,
+        material: str = DEFAULT_MATERIAL,
     ) -> None:
         """Configure stock display and optional cut simulation."""
-        self.stock_bounds_mm = bounds
         if shape is not None:
-            self.stock_shape = shape
+            new_shape = shape
         elif bounds is not None and self.stock_shape is None:
             sx, sy, sz = bounds.size
-            self.stock_shape = RectangularStock(
+            new_shape = RectangularStock(
                 width_mm=max(sx, 1e-6),
                 length_mm=max(sy, 1e-6),
                 height_mm=max(sz, 1e-6),
             )
-        self.stock_visible = bool(visible) and bounds is not None
-        want_sim = bool(simulate_cut) and self.simulation_available() and self.stock_visible
+        else:
+            new_shape = self.stock_shape
+        stock_visible = bool(visible) and bounds is not None
+        want_sim = bool(simulate_cut) and self.simulation_available() and stock_visible
+        mesh_while = bool(mesh_while_playing)
+        voxel_res = normalize_voxel_resolution(voxel_resolution)
+        ckpt = normalize_checkpoint_level(checkpoint_level)
+        carver = normalize_carver_mode(carver_mode)
+        material = normalize_stock_material(material)
+
+        carve_unchanged = (
+            bounds == self.stock_bounds_mm
+            and new_shape == self.stock_shape
+            and want_sim == self.simulate_cut
+            and mesh_while == self.stock_mesh_while_playing
+            and voxel_res == self.stock_voxel_resolution
+            and ckpt == self.stock_checkpoint_level
+            and carver == self.stock_carver_mode
+        )
+
+        self.stock_bounds_mm = bounds
+        self.stock_shape = new_shape
+        self.stock_visible = stock_visible
         self.simulate_cut = want_sim
-        self.stock_mesh_while_playing = bool(mesh_while_playing)
-        self.stock_voxel_resolution = normalize_voxel_resolution(voxel_resolution)
-        self.stock_checkpoint_level = normalize_checkpoint_level(checkpoint_level)
-        self.stock_carver_mode = normalize_carver_mode(carver_mode)
-        self._defer_carved_stock = False
+        self.stock_mesh_while_playing = mesh_while
+        self.stock_voxel_resolution = voxel_res
+        self.stock_checkpoint_level = ckpt
+        self.stock_carver_mode = carver
+        self.stock_material = material
+        if not carve_unchanged:
+            self._defer_carved_stock = False
 
         self._rebuild_stock_mesh()
         self._ensure_stock_on_canvas()
-        self._restart_stock_simulation()
+        self._update_carved_uniforms()
+        if not carve_unchanged:
+            self._restart_stock_simulation()
         self._scene_dirty = True
         self._sim_hud_trigger()
 
@@ -2008,28 +2046,37 @@ class GCodeViewer(Widget):
         x0, y0, z0 = self._mm_to_viewer(b.min_x, b.min_y, b.min_z)
         x1, y1, z1 = self._mm_to_viewer(b.max_x, b.max_y, b.max_z)
 
+        style = style_for_material(getattr(self, "stock_material", DEFAULT_MATERIAL))
+        top_rgba, other_rgba, edge_rgba = preview_fill_rgba(style)
+
         shape = self.stock_shape
         if isinstance(shape, RotaryCylindricalStock):
             cy = 0.5 * (y0 + y1)
             cz = 0.5 * (z0 + z1)
             radius = 0.5 * min(abs(y1 - y0), abs(z1 - z0))
-            edge_verts, edge_idx = build_x_cylinder_edges(cy, cz, x0, x1, radius, STOCK_EDGE_COLOR)
+            edge_verts, edge_idx = build_x_cylinder_edges(cy, cz, x0, x1, radius, edge_rgba)
             fill_verts = fill_idx = None
             if not self._carved_stock_visible():
-                fill_verts, fill_idx = build_x_cylinder_triangles(cy, cz, x0, x1, radius, STOCK_FILL_COLOR)
+                fill_verts, fill_idx = build_x_cylinder_triangles(
+                    cy, cz, x0, x1, radius, other_rgba, top_color=top_rgba
+                )
         elif isinstance(shape, CylindricalStock):
             cx = 0.5 * (x0 + x1)
             cy = 0.5 * (y0 + y1)
             radius = 0.5 * min(abs(x1 - x0), abs(y1 - y0))
-            edge_verts, edge_idx = build_cylinder_edges(cx, cy, z0, z1, radius, STOCK_EDGE_COLOR)
+            edge_verts, edge_idx = build_cylinder_edges(cx, cy, z0, z1, radius, edge_rgba)
             fill_verts = fill_idx = None
             if not self._carved_stock_visible():
-                fill_verts, fill_idx = build_cylinder_triangles(cx, cy, z0, z1, radius, STOCK_FILL_COLOR)
+                fill_verts, fill_idx = build_cylinder_triangles(
+                    cx, cy, z0, z1, radius, other_rgba, top_color=top_rgba
+                )
         else:
-            edge_verts, edge_idx = build_box_edges(x0, y0, z0, x1, y1, z1, STOCK_EDGE_COLOR)
+            edge_verts, edge_idx = build_box_edges(x0, y0, z0, x1, y1, z1, edge_rgba)
             fill_verts = fill_idx = None
             if not self._carved_stock_visible():
-                fill_verts, fill_idx = build_box_triangles(x0, y0, z0, x1, y1, z1, STOCK_FILL_COLOR)
+                fill_verts, fill_idx = build_box_triangles(
+                    x0, y0, z0, x1, y1, z1, other_rgba, top_color=top_rgba
+                )
 
         with self.stockmesh:
             Callback(self.setup_gl_context)
@@ -2078,6 +2125,12 @@ class GCodeViewer(Widget):
         self.stockmesh["rotation_mat"] = self._stock_rotation_mat
         self.stockmesh["use_lighting"] = 1.0
 
+    def _surface_z_eps_viewer(self) -> float:
+        """Layer thickness in viewer-scaled millimetres (PCB foil / bicolor skin)."""
+        style = style_for_material(getattr(self, "stock_material", DEFAULT_MATERIAL))
+        thickness = max(float(style.surface_thickness_mm), 1e-4)
+        return thickness * self._stock_scale()
+
     def _update_carved_uniforms(self) -> None:
         center = getattr(self, "lines_center", [0.0, 0.0, 0.0])
         self.carvedmesh["center_offset"] = Matrix().translate(-center[0], -center[1], -center[2])
@@ -2106,6 +2159,24 @@ class GCodeViewer(Widget):
             self.carvedmesh["stock_xy_min"] = [0.0, 0.0]
             self.carvedmesh["stock_xy_span"] = [1.0, 1.0]
             self.carvedmesh["axis_yz"] = [0.0, 0.0]
+
+        style = style_for_material(getattr(self, "stock_material", DEFAULT_MATERIAL))
+        self.carvedmesh["surface_color"] = list(style.surface_rgb)
+        self.carvedmesh["interior_color"] = list(style.resolved_interior_rgb())
+        self.carvedmesh["use_two_tone"] = 1.0 if style.two_tone else 0.0
+        self.carvedmesh["use_height_tint"] = 1.0 if style.use_height_tint else 0.0
+        self.carvedmesh["metallic"] = float(style.metallic)
+        self.carvedmesh["interior_metallic"] = float(style.resolved_interior_metallic())
+        self.carvedmesh["roughness"] = float(style.roughness)
+        self.carvedmesh["interior_roughness"] = float(style.resolved_interior_roughness())
+        self.carvedmesh["surface_z_eps"] = self._surface_z_eps_viewer()
+        rotary = isinstance(getattr(self, "stock_shape", None), RotaryCylindricalStock)
+        self.carvedmesh["cylindrical_skin"] = 1.0 if rotary else 0.0
+        radius = 0.0
+        if bounds is not None and rotary:
+            scale = self._stock_scale()
+            radius = 0.5 * min(float(bounds.size[1]), float(bounds.size[2])) * scale
+        self.carvedmesh["stock_radius"] = radius
 
     def _clear_carved_meshes(self) -> None:
         self.carvedmesh.clear()

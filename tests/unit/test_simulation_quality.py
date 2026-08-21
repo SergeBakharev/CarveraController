@@ -138,6 +138,7 @@ def test_default_settings_include_quality_presets():
     assert settings["voxel_resolution"] == DEFAULT_VOXEL_RESOLUTION
     assert settings["checkpoint_level"] == DEFAULT_CHECKPOINT_LEVEL
     assert settings["mesh_while_playing"] is False
+    assert settings["material"] == "beige"
     assert voxel_resolution_from_settings(settings) == DEFAULT_VOXEL_RESOLUTION
     assert checkpoint_level_from_settings(settings) == DEFAULT_CHECKPOINT_LEVEL
     assert mesh_while_playing_from_settings(settings) is False

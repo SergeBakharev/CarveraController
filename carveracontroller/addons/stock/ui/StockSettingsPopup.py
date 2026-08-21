@@ -38,6 +38,17 @@ from carveracontroller.addons.stock.stock_defaults import (
     default_settings,
 )
 from carveracontroller.addons.stock.stock_geometry import StockBounds
+from carveracontroller.addons.stock.stock_material import (
+    DEFAULT_MATERIAL,
+    MATERIAL_ACRYLIC,
+    MATERIAL_ACRYLIC_BICOLOR,
+    MATERIAL_ALUMINUM,
+    MATERIAL_BEIGE,
+    MATERIAL_COPPER,
+    MATERIAL_WOOD,
+    MATERIAL_PCB,
+    normalize_stock_material,
+)
 from carveracontroller.addons.stock.stock_origin import (
     CORNER_BC,
     CORNER_BL,
@@ -169,6 +180,18 @@ def _carver_mode_pairs(recommended: str | None = None):
     ]
 
 
+def _material_pairs():
+    return [
+        (tr._("Default"), MATERIAL_BEIGE),
+        (tr._("PCB"), MATERIAL_PCB),
+        (tr._("Wood"), MATERIAL_WOOD),
+        (tr._("Acrylic"), MATERIAL_ACRYLIC),
+        (tr._("Bi-color acrylic"), MATERIAL_ACRYLIC_BICOLOR),
+        (tr._("Aluminum"), MATERIAL_ALUMINUM),
+        (tr._("Copper"), MATERIAL_COPPER),
+    ]
+
+
 def _parse_positive_float(text: str, label: str) -> float:
     t = (text or "").strip().replace(",", ".")
     if not t:
@@ -231,6 +254,7 @@ class StockSettingsPopup(ModalView):
         self._voxel_resolution_pairs = None
         self._checkpoint_level_pairs = None
         self._carver_mode_pairs = None
+        self._material_pairs = None
         self._fit_event = None
         # Snapshot seeds the form and is the Cancel/dismiss restore baseline.
         self._settings_snapshot: dict = default_settings()
@@ -268,6 +292,8 @@ class StockSettingsPopup(ModalView):
             self._checkpoint_level_pairs = _checkpoint_level_pairs()
         if getattr(self, "_carver_mode_pairs", None) is None:
             self._carver_mode_pairs = _carver_mode_pairs()
+        if getattr(self, "_material_pairs", None) is None:
+            self._material_pairs = _material_pairs()
 
     def _path_recommendation(self, mode: str = MODE_AUTO):
         """Recommend a carver for spinner filtering and resolution labels."""
@@ -562,6 +588,7 @@ class StockSettingsPopup(ModalView):
         settings = dict(self._settings_snapshot)
         settings["show_stock"] = bool(show_stock)
         settings["simulate_cut"] = False
+        settings["material"] = normalize_stock_material(settings.get("material"))
         if shape is not None:
             settings["shape"] = shape.to_dict()
         if origin is not None:
@@ -592,6 +619,8 @@ class StockSettingsPopup(ModalView):
         ids.spn_checkpoint_level.values = [lab for lab, _ in self._checkpoint_level_pairs]
         if "spn_carver_mode" in ids:
             ids.spn_carver_mode.values = [lab for lab, _ in self._carver_mode_pairs]
+        if "spn_material" in ids:
+            ids.spn_material.values = [lab for lab, _ in self._material_pairs]
 
     def _label_for_value(self, pairs, value, fallback: str | None = None) -> str:
         for label, val in pairs:
@@ -641,6 +670,11 @@ class StockSettingsPopup(ModalView):
                 self._carver_mode_pairs,
                 normalize_carver_mode(settings.get("carver_mode", DEFAULT_CARVER_MODE)),
             )
+        if "spn_material" in ids:
+            ids.spn_material.text = self._label_for_value(
+                self._material_pairs,
+                normalize_stock_material(settings.get("material", DEFAULT_MATERIAL)),
+            )
         self._refresh_carver_spinner_options()
         self._refresh_resolution_spinner_labels()
 
@@ -683,6 +717,15 @@ class StockSettingsPopup(ModalView):
         if (text or "").startswith(tr._("Auto")):
             return MODE_AUTO
         return DEFAULT_CARVER_MODE
+
+    def _material_from_ui(self) -> str:
+        if "spn_material" not in self.ids:
+            return DEFAULT_MATERIAL
+        text = self.ids.spn_material.text
+        for lab, val in self._material_pairs:
+            if lab == text:
+                return val
+        return DEFAULT_MATERIAL
 
     def _on_carver_mode_text(self, *_args) -> None:
         self._refresh_resolution_spinner_labels()
@@ -734,6 +777,7 @@ class StockSettingsPopup(ModalView):
             "voxel_resolution": self._voxel_resolution_from_ui(),
             "checkpoint_level": self._checkpoint_level_from_ui(),
             "carver_mode": self._carver_mode_from_ui(),
+            "material": self._material_from_ui(),
         }
 
     def on_apply_and_close(self):

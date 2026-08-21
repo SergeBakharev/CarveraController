@@ -12,6 +12,7 @@ from .simulator.simulation_quality import (
     normalize_voxel_resolution,
 )
 from .stock_geometry import StockBounds, compute_wcs_bounds
+from .stock_material import DEFAULT_MATERIAL, normalize_stock_material
 from .stock_origin import CORNER_BL, CORNER_LC, Z_CENTER, Z_TOP, StockOrigin
 from .stock_shape import RectangularStock, RotaryCylindricalStock, StockShape, shape_from_dict
 
@@ -55,6 +56,7 @@ def default_settings() -> dict[str, Any]:
         "voxel_resolution": DEFAULT_VOXEL_RESOLUTION,
         "checkpoint_level": DEFAULT_CHECKPOINT_LEVEL,
         "carver_mode": DEFAULT_CARVER_MODE,
+        "material": DEFAULT_MATERIAL,
     }
 
 
@@ -84,3 +86,7 @@ def mesh_while_playing_from_settings(settings: dict[str, Any]) -> bool:
 
 def carver_mode_from_settings(settings: dict[str, Any]) -> str:
     return normalize_carver_mode(settings.get("carver_mode"))
+
+
+def material_from_settings(settings: dict[str, Any]) -> str:
+    return normalize_stock_material(settings.get("material"))

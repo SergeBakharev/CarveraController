@@ -31,6 +31,7 @@ def test_reset_for_loaded_file_uses_snapshot_not_ui():
         "voxel_resolution": "high",
         "checkpoint_level": "medium",
         "carver_mode": "voxel",
+        "material": "pcb",
     }
     popup._settings_snapshot = dict(custom)
     written = []
@@ -46,11 +47,29 @@ def test_reset_for_loaded_file_uses_snapshot_not_ui():
     assert out["voxel_resolution"] == "high"
     assert out["checkpoint_level"] == "medium"
     assert out["carver_mode"] == "voxel"
+    assert out["material"] == "pcb"
     assert out["show_stock"] is False
     assert out["simulate_cut"] is False
     assert out["mesh_while_playing"] is False
     assert popup._settings_snapshot == out
     assert written == [out]
+
+
+def test_reset_for_loaded_file_defaults_missing_material_to_beige():
+    popup = StockSettingsPopup.__new__(StockSettingsPopup)
+    custom = {
+        "shape": {"kind": "rectangular", "width_mm": 50, "length_mm": 40, "height_mm": 5},
+        "origin": {"xy_corner": "BL", "z_reference": "top"},
+        "show_stock": True,
+        "simulate_cut": True,
+    }
+    popup._settings_snapshot = dict(custom)
+    popup._write_settings_to_ui = lambda _s: None
+
+    out = popup.reset_for_loaded_file()
+
+    assert out["material"] == "beige"
+    assert out["show_stock"] is False
 
 
 def test_carver_mode_from_settings_defaults_auto():
@@ -65,6 +84,15 @@ def test_carver_mode_from_settings_defaults_auto():
     assert carver_mode_from_settings({"carver_mode": "NOPE"}) == "auto"
 
 
+def test_material_from_settings_defaults_beige():
+    from carveracontroller.addons.stock.stock_defaults import default_settings, material_from_settings
+
+    assert default_settings()["material"] == "beige"
+    assert material_from_settings({}) == "beige"
+    assert material_from_settings({"material": "aluminum"}) == "aluminum"
+    assert material_from_settings({"material": "NOPE"}) == "beige"
+
+
 def test_auto_carver_label_includes_backend():
     from carveracontroller.addons.stock.simulator.carver_select import (
         BACKEND_CYLINDRICAL,
@@ -77,6 +105,26 @@ def test_auto_carver_label_includes_backend():
     assert _auto_carver_label(BACKEND_CYLINDRICAL) == "Auto (cylindrical)"
     assert _auto_carver_label(BACKEND_VOXEL) == "Auto (voxels)"
     assert _auto_carver_label(None) == "Auto"
+
+
+def test_material_pairs_cover_known_presets():
+    from carveracontroller.addons.stock.stock_material import KNOWN_MATERIALS
+    from carveracontroller.addons.stock.ui.StockSettingsPopup import _material_pairs
+
+    pairs = _material_pairs()
+    values = [val for _lab, val in pairs]
+    assert values == list(KNOWN_MATERIALS)
+    assert pairs[0] == ("Default", "beige")
+    assert [lab for lab, _val in pairs] == [
+        "Default",
+        "PCB",
+        "Wood",
+        "Acrylic",
+        "Bi-color acrylic",
+        "Aluminum",
+        "Copper",
+    ]
+    assert ("PCB", "pcb") in pairs
 
 
 def test_carver_spinner_filters_incompatible_modes():

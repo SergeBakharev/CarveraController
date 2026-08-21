@@ -42,6 +42,20 @@ def test_build_box_triangles_counts_and_color():
     assert min(zs) == 0 and max(zs) == 5
 
 
+def test_build_box_triangles_top_color_only_on_plus_z():
+    fill = (0.1, 0.2, 0.3, 0.4)
+    top = (0.9, 0.8, 0.7, 0.6)
+    vertices, _indices = build_box_triangles(0, 0, 0, 10, 20, 5, fill, top_color=top)
+    # First face is +Z (4 verts), remaining 5 faces use fill.
+    for i in range(4):
+        offset = i * FLOATS_PER_VERTEX
+        assert tuple(vertices[offset + 6 : offset + 10]) == top
+        assert vertices[offset + 5] == 1.0
+    for i in range(4, 24):
+        offset = i * FLOATS_PER_VERTEX
+        assert tuple(vertices[offset + 6 : offset + 10]) == fill
+
+
 def test_build_box_edges_counts_and_color():
     color = STOCK_EDGE_COLOR
     vertices, indices = build_box_edges(-1, -2, -3, 1, 2, 3, color)
@@ -74,6 +88,21 @@ def test_build_cylinder_triangles_counts_and_extent():
     assert min(zs) == -5 and max(zs) == 5
 
 
+def test_build_cylinder_triangles_top_color_on_plus_z_cap():
+    fill = (0.1, 0.2, 0.3, 0.4)
+    top = (0.9, 0.8, 0.7, 0.6)
+    segs = 8
+    vertices, _indices = build_cylinder_triangles(0, 0, -5, 5, 10, fill, segments=segs, top_color=top)
+    # side (2*segs) + bottom (1+segs) + top (1+segs)
+    top_start = 2 * segs + 1 + segs
+    for i in range(top_start):
+        offset = i * FLOATS_PER_VERTEX
+        assert tuple(vertices[offset + 6 : offset + 10]) == fill
+    for i in range(top_start, len(vertices) // FLOATS_PER_VERTEX):
+        offset = i * FLOATS_PER_VERTEX
+        assert tuple(vertices[offset + 6 : offset + 10]) == top
+
+
 def test_build_cylinder_edges_counts_and_color():
     color = STOCK_EDGE_COLOR
     segs = 12
@@ -101,6 +130,20 @@ def test_build_x_cylinder_triangles_counts_and_extent():
     assert max(ys) == pytest.approx(10)
     assert min(zs) == pytest.approx(-10)
     assert max(zs) == pytest.approx(10)
+
+
+def test_build_x_cylinder_triangles_top_color_on_barrel():
+    fill = (0.1, 0.2, 0.3, 0.4)
+    top = (0.9, 0.8, 0.7, 0.6)
+    segs = 8
+    vertices, _indices = build_x_cylinder_triangles(0, 0, -5, 5, 10, fill, segments=segs, top_color=top)
+    barrel_verts = 2 * segs
+    for i in range(barrel_verts):
+        offset = i * FLOATS_PER_VERTEX
+        assert tuple(vertices[offset + 6 : offset + 10]) == top
+    for i in range(barrel_verts, len(vertices) // FLOATS_PER_VERTEX):
+        offset = i * FLOATS_PER_VERTEX
+        assert tuple(vertices[offset + 6 : offset + 10]) == fill
 
 
 def test_build_x_cylinder_edges_counts_and_color():

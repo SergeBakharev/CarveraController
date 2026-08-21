@@ -134,6 +134,7 @@ from carveracontroller.addons.stock.stock_defaults import (
     carver_mode_from_settings,
     checkpoint_level_from_settings,
     default_settings,
+    material_from_settings,
     mesh_while_playing_from_settings,
     shape_from_settings,
     voxel_resolution_from_settings,
@@ -3629,6 +3630,7 @@ class Makera(RelativeLayout):
                 mesh_while_playing=mesh_while_playing_from_settings(settings),
                 carver_mode=carver_mode_from_settings(settings),
                 shape=shape_from_settings(settings),
+                material=material_from_settings(settings),
             )
         except Exception:
             logger.exception("failed to apply stock settings")

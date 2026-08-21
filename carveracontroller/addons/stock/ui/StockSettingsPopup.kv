@@ -77,6 +77,22 @@
                         height: dp(40)
                         spacing: dp(8)
                         Label:
+                            text: tr._('Material')
+                            size_hint_x: LABEL_W
+                            text_size: self.size
+                            halign: 'left'
+                            valign: 'middle'
+                        Spinner:
+                            id: spn_material
+                            values: ['']
+                            text: ''
+                            size_hint_x: FIELD_W
+
+                    BoxLayout:
+                        size_hint_y: None
+                        height: dp(40)
+                        spacing: dp(8)
+                        Label:
                             text: tr._('Shape')
                             size_hint_x: LABEL_W
                             text_size: self.size
