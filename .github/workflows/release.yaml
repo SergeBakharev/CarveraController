@@ -168,6 +168,7 @@ jobs:
 
     - name: Start SignPath CryptoTokenKit
       if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      id: signpath-ctk
       uses: ./.github/actions/signpath-macos-ctk
       with:
         api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -178,7 +179,7 @@ jobs:
 
     - name: Build release
       env:
-        SIGNPATH_CERTIFICATE_SUBJECT_NAME: ${{ vars.SIGNPATH_CERTIFICATE_SUBJECT_NAME }}
+        SIGNPATH_CODESIGN_IDENTITY: ${{ steps.signpath-ctk.outputs.codesign-identity }}
       run: |
         if [[ $GITHUB_REF == refs/tags/* ]]; then
           VERSION=$GITHUB_REF_NAME
@@ -187,7 +188,7 @@ jobs:
         fi
         extra=()
         if [[ -n "${{ vars.SIGNPATH_ORGANIZATION_ID }}" ]]; then
-          extra+=(--codesign-identity "${SIGNPATH_CERTIFICATE_SUBJECT_NAME}")
+          extra+=(--codesign-identity "${SIGNPATH_CODESIGN_IDENTITY}")
         fi
         poetry run python scripts/build.py --os macos --version "$VERSION" "${extra[@]}"
 

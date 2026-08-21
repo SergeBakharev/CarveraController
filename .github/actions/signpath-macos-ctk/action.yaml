@@ -1,5 +1,5 @@
 name: 'Start SignPath CryptoTokenKit'
-description: 'Install SignPath CryptoTokenKit and load the signing certificate into the macOS keychain'
+description: 'Install SignPath CryptoTokenKit, trust the test certificate, and load it into the macOS keychain'
 inputs:
   api-token:
     description: 'SignPath API token'
@@ -16,12 +16,18 @@ inputs:
   certificate-subject-name:
     description: 'Common Name (or unique substring) of the SignPath certificate'
     required: true
+outputs:
+  codesign-identity:
+    description: 'SHA-1 hash to pass to codesign -s'
+    value: ${{ steps.start.outputs.codesign-identity }}
 runs:
   using: composite
   steps:
     - name: Install and start SignPath CryptoTokenKit
+      id: start
       shell: bash
       env:
+        ACTION_PATH: ${{ github.action_path }}
         SIGNPATH_API_TOKEN: ${{ inputs.api-token }}
         SIGNPATH_ORGANIZATION_ID: ${{ inputs.organization-id }}
         SIGNPATH_PROJECT_SLUG: ${{ inputs.project-slug }}
@@ -37,6 +43,43 @@ runs:
         if [ -z "${SIGNPATH_CERTIFICATE_SUBJECT_NAME}" ]; then
           echo "SIGNPATH_CERTIFICATE_SUBJECT_NAME is not set" >&2
           exit 1
+        fi
+
+        cert_path="${RUNNER_TEMP}/signpath-codesign.cer"
+        config_path="${RUNNER_TEMP}/signpath-ctk-config.json"
+        dump_identities() {
+          echo "=== security find-identity -p codesigning (matching + valid) ==="
+          security find-identity -p codesigning || true
+          echo "=== security find-identity -v -p codesigning (valid only) ==="
+          security find-identity -v -p codesigning || true
+        }
+
+        echo "Downloading SignPath signing-policy certificate..."
+        policies_json="${RUNNER_TEMP}/signpath-policies.json"
+        curl --fail --location --show-error \
+          --header "Authorization: Bearer ${SIGNPATH_API_TOKEN}" \
+          --header "Accept: application/json" \
+          --output "${policies_json}" \
+          "https://app.signpath.io/api/v1/${SIGNPATH_ORGANIZATION_ID}/Cryptoki/MySigningPolicies?projectSlug=${SIGNPATH_PROJECT_SLUG}&signingPolicySlug=${SIGNPATH_SIGNING_POLICY_SLUG}"
+
+        python3 "${ACTION_PATH}/extract_cert.py" "${policies_json}" "${cert_path}"
+        cert_pem="${RUNNER_TEMP}/signpath-codesign.pem"
+        if openssl x509 -inform DER -in "${cert_path}" -out "${cert_pem}" 2>/dev/null; then
+          openssl x509 -inform DER -in "${cert_path}" -noout -subject -dates
+        else
+          openssl x509 -inform PEM -in "${cert_path}" -out "${cert_pem}"
+          openssl x509 -inform PEM -in "${cert_path}" -noout -subject -dates
+        fi
+
+        # Self-signed SignPath test certs are not Apple CAs, so they never show up in
+        # `security find-identity -v` until they are trusted for code signing.
+        echo "Trusting SignPath certificate for codeSign on this runner..."
+        sudo security authorizationdb write com.apple.trust-settings.admin allow || true
+        if ! sudo security add-trusted-cert -d -r trustAsRoot -p codeSign \
+          -k /Library/Keychains/System.keychain "${cert_pem}"; then
+          echo "System keychain trust failed; trying login keychain..."
+          security add-trusted-cert -p codeSign \
+            -k "${HOME}/Library/Keychains/login.keychain-db" "${cert_pem}"
         fi
 
         dmg_path="${RUNNER_TEMP}/SignPathCryptoTokenKit.dmg"
@@ -56,33 +99,52 @@ runs:
           exit 1
         fi
 
-        # Keep a copy off the DMG so the extension stays registered for the job.
         install_app="${HOME}/SignPathCryptoTokenKit.app"
         rm -rf "${install_app}"
         ditto "${ctk_app}" "${install_app}"
 
-        open --env SIGNPATH_API_TOKEN="${SIGNPATH_API_TOKEN}" \
+        python3 "${ACTION_PATH}/write_config.py" "${config_path}"
+        chmod 600 "${config_path}"
+
+        open --env SIGNPATH_CONFIG_FILE="${config_path}" \
+          --env SIGNPATH_API_TOKEN="${SIGNPATH_API_TOKEN}" \
           "${install_app}" --args \
+          --config "${config_path}" \
           --organization-id "${SIGNPATH_ORGANIZATION_ID}" \
           --project-slug "${SIGNPATH_PROJECT_SLUG}" \
           --signing-policy-slug "${SIGNPATH_SIGNING_POLICY_SLUG}" \
           --api-token "${SIGNPATH_API_TOKEN}"
 
-        echo "Waiting for SignPath certificate '${SIGNPATH_CERTIFICATE_SUBJECT_NAME}' to appear in the keychain..."
-        found=0
-        for _ in $(seq 1 30); do
-          if security find-identity -v -p codesigning | grep -F "${SIGNPATH_CERTIFICATE_SUBJECT_NAME}" >/dev/null; then
-            found=1
+        echo "Waiting for SignPath smartcard..."
+        for _ in $(seq 1 20); do
+          if security list-smartcard 2>/dev/null | grep -q 'io.signpath.apps.SignPathCryptoTokenKit'; then
             break
           fi
+          sleep 1
+        done
+        security list-smartcard || true
+
+        # ctkd often needs a kick before CTK identities are visible to codesign.
+        killall ctkd 2>/dev/null || true
+        sleep 3
+
+        echo "Waiting for a codesigning identity matching '${SIGNPATH_CERTIFICATE_SUBJECT_NAME}'..."
+        identity_hash=""
+        for _ in $(seq 1 30); do
+          if identity_hash="$(python3 "${ACTION_PATH}/find_identity.py" --valid-only)"; then
+            break
+          fi
+          identity_hash=""
           sleep 2
         done
 
-        if [ "${found}" -ne 1 ]; then
-          echo "SignPath certificate was not loaded into the keychain" >&2
-          security find-identity -v -p codesigning || true
+        if [ -z "${identity_hash}" ]; then
+          echo "SignPath certificate was not loaded as a valid codesigning identity" >&2
+          dump_identities
           security list-smartcard || true
           pluginkit -m -v -p com.apple.ctk-tokens || true
+          echo "=== smartcard certificates ===" >&2
+          system_profiler SPSmartCardsDataType 2>/dev/null | sed -n '1,120p' || true
           echo "=== SignPathCryptoTokenKit logs ===" >&2
           find "${HOME}/Library/Logs/SignPathCryptoTokenKit" \
             "${HOME}/Library/Containers/io.signpath.apps.CryptoTokenKit/Data/Library/Logs" \
@@ -90,4 +152,6 @@ runs:
           exit 1
         fi
 
-        security find-identity -v -p codesigning
+        dump_identities
+        echo "Using codesign identity ${identity_hash}"
+        echo "codesign-identity=${identity_hash}" >> "${GITHUB_OUTPUT}"
