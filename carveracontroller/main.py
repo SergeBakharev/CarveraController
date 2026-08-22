@@ -4183,7 +4183,7 @@ class Makera(RelativeLayout):
 
                     remote_time = re.search("time = [0-9]+", line)
                     if remote_time != None:
-                        if abs(int(time.time()) - time.timezone - int(remote_time[0].split("=")[1])) > 10:
+                        if abs(Utils.local_unix_time() - int(remote_time[0].split("=")[1])) > 10:
                             self.controller.syncTime()
 
                     remote_version = re.search(r"version = [0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9\-_]*", line)

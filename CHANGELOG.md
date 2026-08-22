@@ -12,6 +12,7 @@
 - Fixed: Z1 machine config backup option added to settings matching other models
 - Fixed: Switching between different machines no longer reuses the previous machine's settings panels or cached config.txt
 - Fixed: Fix G-Code files not being properly loaded when they end with comments
+- Fixed: Machine time sync now includes daylight saving, SD card timestamps now match the PC clock when daylight savings is in effect
 - Changed: added help button to probing screen confirmation/error popup for clarity
 - Changed: Moved Z1 Camera to a collapsible area in the Gcode Viewer. Collapsible splitter is only shown if a supported camera is found.
 
