@@ -457,19 +457,6 @@ jobs:
         github-artifact-id: ${{ needs.build-android-artifacts.outputs.unsigned-artifact-id }}
         wait-for-completion: false
 
-    - name: Publish SignPath approval links
-      if: ${{ always() && !cancelled() }}
-      run: |
-        {
-          echo "## SignPath approval"
-          echo "Both signing requests are submitted. Approve them in one SignPath visit."
-          if [ -n "${{ steps.signpath-windows.outputs.signing-request-web-url }}" ]; then
-            echo "- Windows: ${{ steps.signpath-windows.outputs.signing-request-web-url }}"
-          fi
-          if [ -n "${{ steps.signpath-apk.outputs.signing-request-web-url }}" ]; then
-            echo "- Android: ${{ steps.signpath-apk.outputs.signing-request-web-url }}"
-          fi
-        } >> "${GITHUB_STEP_SUMMARY}"
 
     - name: Wait for SignPath signing and download artifacts
       if: ${{ always() && !cancelled() && (steps.signpath-windows.outputs.signing-request-id != '' || steps.signpath-apk.outputs.signing-request-id != '') }}
