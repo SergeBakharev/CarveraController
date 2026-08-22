@@ -1,7 +1,4 @@
 name: Build and Release
-# Windows and Android signing is enabled when SIGNPATH_ORGANIZATION_ID is set.
-# Temporarily using test-signing for all refs (including tags) until release-signing is ready for use.
-# Console setup, artifact XML, and GitHub secrets/variables: .signpath/README.md
 on:
   push:
     branches:
