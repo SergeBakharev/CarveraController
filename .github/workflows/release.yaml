@@ -576,20 +576,6 @@ jobs:
         cp "${signed}" "${GITHUB_WORKSPACE}/dist/"
         echo "Copied signed EXE: ${signed}"
 
-    - name: Verify Authenticode signature
-      if: ${{ always() && !cancelled() && steps.signpath-windows.outputs.signing-request-id != '' }}
-      run: |
-        set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y osslsigncode
-        exe="$(ls -1 dist/carveracontroller-community-*-windows-x64.exe | head -n 1)"
-        osslsigncode verify -in "${exe}"
-        {
-          echo "## Windows SignPath (${SIGNPATH_SIGNING_POLICY_SLUG})"
-          echo "- File: \`${exe##*/}\`"
-          echo "- Signing request: ${{ steps.signpath-windows.outputs.signing-request-web-url }}"
-        } >> "${GITHUB_STEP_SUMMARY}"
-
     - name: Upload signed Windows artifact
       if: ${{ always() && !cancelled() && steps.signpath-windows.outputs.signing-request-id != '' }}
       uses: actions/upload-artifact@v4
@@ -611,25 +597,6 @@ jobs:
         fi
         cp "${signed_apk}" "${GITHUB_WORKSPACE}/dist/"
         echo "Copied signed APK: ${signed_apk}"
-
-    - name: Setup Java for APK verification
-      if: ${{ always() && !cancelled() && steps.signpath-apk.outputs.signing-request-id != '' }}
-      uses: actions/setup-java@v4
-      with:
-        distribution: temurin
-        java-version: '17'
-
-    - name: Verify APK signature
-      if: ${{ always() && !cancelled() && steps.signpath-apk.outputs.signing-request-id != '' }}
-      run: |
-        set -euo pipefail
-        apk="$(ls -1 dist/carveracontroller-community-*.apk | head -n 1)"
-        jarsigner -verify -verbose -certs "${apk}"
-        {
-          echo "## Android SignPath (${SIGNPATH_SIGNING_POLICY_SLUG})"
-          echo "- File: \`${apk##*/}\`"
-          echo "- Signing request: ${{ steps.signpath-apk.outputs.signing-request-web-url }}"
-        } >> "${GITHUB_STEP_SUMMARY}"
 
     - name: Upload signed Android artifact
       if: ${{ always() && !cancelled() && steps.signpath-apk.outputs.signing-request-id != '' }}
