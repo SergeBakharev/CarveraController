@@ -11,6 +11,7 @@
 - Fixed: Switching between different machines no longer reuses the previous machine's settings panels or cached config.txt
 - Fixed: Fix G-Code files not being properly loaded when they end with comments
 - Fixed: Makera protocol now buffers PTYPE_NORMAL_INFO frames until a newline so the MDI terminal and logs show complete lines instead of one line per frame
+- Fixed: Machine time sync now includes daylight saving, SD card timestamps now match the PC clock when daylight savings is in effect
 - Changed: added help button to probing screen confirmation/error popup for clarity
 - Changed: Moved Z1 Camera to a collapsible area in the Gcode Viewer. Collapsible splitter is only shown if a supported camera is found.
 - Change: Moved tools visibility controls to the color scheme panel
