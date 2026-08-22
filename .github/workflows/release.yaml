@@ -412,83 +412,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/${{ matrix.platform == 'x64' && 'amd64' || matrix.platform }}
 
-  sign-windows:
-    name: sign-windows
-    needs: [build-windows-artifacts]
-    if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && needs.build-windows-artifacts.result == 'success' }}
-    runs-on: windows-latest
-    timeout-minutes: 270
-    permissions:
-      actions: read
-      contents: read
-    defaults:
-      run:
-        shell: bash
-    env:
-      SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG || 'carvera-controller-community' }}
-      # TODO: restore release-signing for tags after release-signing is setup
-      SIGNPATH_SIGNING_POLICY_SLUG: test-signing
-      SIGNPATH_WINDOWS_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_WINDOWS_ARTIFACT_CONFIGURATION_SLUG || 'windows-portable-exe' }}
-    steps:
-    - name: Submit SignPath signing request
-      id: signpath
-      uses: signpath/github-action-submit-signing-request@v2
-      with:
-        api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-        organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-        project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
-        signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
-        artifact-configuration-slug: ${{ env.SIGNPATH_WINDOWS_ARTIFACT_CONFIGURATION_SLUG }}
-        github-artifact-id: ${{ needs.build-windows-artifacts.outputs.unsigned-artifact-id }}
-        wait-for-completion: true
-        wait-for-completion-timeout-in-seconds: 14400
-        output-artifact-directory: ${{ github.workspace }}/signed
-
-    - name: Stage signed Windows EXE
-      shell: pwsh
-      run: |
-        $signed = Get-ChildItem -Path signed -Recurse -Filter "carveracontroller-community-*-windows-x64.exe" |
-          Select-Object -First 1
-        if (-not $signed) {
-          Get-ChildItem -Path signed -Recurse -ErrorAction SilentlyContinue | Format-Table FullName
-          throw "Signed Windows EXE was not returned by SignPath"
-        }
-        New-Item -ItemType Directory -Path dist -Force | Out-Null
-        Copy-Item $signed.FullName -Destination dist -Force
-        Write-Host "Copied signed EXE: $($signed.FullName)"
-
-    - name: Verify Authenticode signature
-      shell: pwsh
-      run: |
-        $exe = Get-ChildItem -Path dist -Filter "carveracontroller-community-*-windows-x64.exe" | Select-Object -First 1
-        if (-not $exe) { throw "Windows EXE not found in dist/" }
-        $sig = Get-AuthenticodeSignature $exe.FullName
-        $sig | Format-List *
-        if ($null -eq $sig.SignerCertificate) {
-          throw "EXE is not Authenticode-signed"
-        }
-        $policy = $env:SIGNPATH_SIGNING_POLICY_SLUG
-        $trustNote = if ($policy -eq 'test-signing') { " (NotTrusted is expected for a self-signed test certificate)" } else { "" }
-        $summary = @(
-          "## Windows SignPath ($policy)",
-          "- File: $($exe.Name)",
-          "- Signer: $($sig.SignerCertificate.Subject)",
-          "- Status: $($sig.Status)$trustNote",
-          "- Signing request: ${{ steps.signpath.outputs.signing-request-web-url }}"
-        ) -join "`n"
-        Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value $summary
-
-    - name: Upload signed artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: windows-assets-win64
-        path: ${{ github.workspace }}/dist/carveracontroller-community-*-windows-x64.exe
-        retention-days: 2
-
-  sign-android:
-    name: sign-android
-    needs: [build-android-artifacts]
-    if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && needs.build-android-artifacts.result == 'success' }}
+  sign-artifacts:
+    name: sign-artifacts
+    needs: [build-windows-artifacts, build-android-artifacts]
+    if: ${{ always() && !cancelled() && vars.SIGNPATH_ORGANIZATION_ID != '' && (needs.build-windows-artifacts.result == 'success' || needs.build-android-artifacts.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 270
     permissions:
@@ -501,9 +428,24 @@ jobs:
       SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG || 'carvera-controller-community' }}
       # TODO: restore release-signing for tags after release-signing is setup
       SIGNPATH_SIGNING_POLICY_SLUG: test-signing
+      SIGNPATH_WINDOWS_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_WINDOWS_ARTIFACT_CONFIGURATION_SLUG || 'windows-portable-exe' }}
       SIGNPATH_ANDROID_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_ANDROID_ARTIFACT_CONFIGURATION_SLUG || 'android-apk' }}
     steps:
-    - name: Submit SignPath signing request
+    - name: Submit Windows SignPath signing request
+      if: ${{ needs.build-windows-artifacts.result == 'success' }}
+      id: signpath-windows
+      uses: signpath/github-action-submit-signing-request@v2
+      with:
+        api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+        organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        project-slug: ${{ env.SIGNPATH_PROJECT_SLUG }}
+        signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
+        artifact-configuration-slug: ${{ env.SIGNPATH_WINDOWS_ARTIFACT_CONFIGURATION_SLUG }}
+        github-artifact-id: ${{ needs.build-windows-artifacts.outputs.unsigned-artifact-id }}
+        wait-for-completion: false
+
+    - name: Submit Android SignPath signing request
+      if: ${{ always() && !cancelled() && needs.build-android-artifacts.result == 'success' }}
       id: signpath-apk
       uses: signpath/github-action-submit-signing-request@v2
       with:
@@ -513,30 +455,172 @@ jobs:
         signing-policy-slug: ${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}
         artifact-configuration-slug: ${{ env.SIGNPATH_ANDROID_ARTIFACT_CONFIGURATION_SLUG }}
         github-artifact-id: ${{ needs.build-android-artifacts.outputs.unsigned-artifact-id }}
-        wait-for-completion: true
-        wait-for-completion-timeout-in-seconds: 14400
-        output-artifact-directory: ${{ github.workspace }}/signed
+        wait-for-completion: false
 
-    - name: Stage signed Android APK
+    - name: Publish SignPath approval links
+      if: ${{ always() && !cancelled() }}
+      run: |
+        {
+          echo "## SignPath approval"
+          echo "Both signing requests are submitted. Approve them in one SignPath visit."
+          if [ -n "${{ steps.signpath-windows.outputs.signing-request-web-url }}" ]; then
+            echo "- Windows: ${{ steps.signpath-windows.outputs.signing-request-web-url }}"
+          fi
+          if [ -n "${{ steps.signpath-apk.outputs.signing-request-web-url }}" ]; then
+            echo "- Android: ${{ steps.signpath-apk.outputs.signing-request-web-url }}"
+          fi
+        } >> "${GITHUB_STEP_SUMMARY}"
+
+    - name: Wait for SignPath signing and download artifacts
+      if: ${{ always() && !cancelled() && (steps.signpath-windows.outputs.signing-request-id != '' || steps.signpath-apk.outputs.signing-request-id != '') }}
+      env:
+        SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        WINDOWS_REQUEST_ID: ${{ steps.signpath-windows.outputs.signing-request-id }}
+        ANDROID_REQUEST_ID: ${{ steps.signpath-apk.outputs.signing-request-id }}
+        WAIT_TIMEOUT_SECONDS: "14400"
+      run: |
+        set -euo pipefail
+        connector="https://githubactions.connectors.signpath.io"
+        org="${SIGNPATH_ORGANIZATION_ID}"
+        deadline=$((SECONDS + WAIT_TIMEOUT_SECONDS))
+        names=()
+        ids=()
+        outdirs=()
+        states=()
+        if [ -n "${WINDOWS_REQUEST_ID}" ]; then
+          names+=("Windows")
+          ids+=("${WINDOWS_REQUEST_ID}")
+          outdirs+=("${GITHUB_WORKSPACE}/signed-windows")
+          states+=("pending")
+        fi
+        if [ -n "${ANDROID_REQUEST_ID}" ]; then
+          names+=("Android")
+          ids+=("${ANDROID_REQUEST_ID}")
+          outdirs+=("${GITHUB_WORKSPACE}/signed-android")
+          states+=("pending")
+        fi
+
+        pending_count() {
+          local count=0
+          local state
+          for state in "${states[@]}"; do
+            if [ "${state}" = "pending" ]; then
+              count=$((count + 1))
+            fi
+          done
+          echo "${count}"
+        }
+
+        while [ "$(pending_count)" -gt 0 ]; do
+          if [ "${SECONDS}" -ge "${deadline}" ]; then
+            echo "Timed out after ${WAIT_TIMEOUT_SECONDS}s waiting for: ${names[*]}" >&2
+            exit 1
+          fi
+          for i in "${!names[@]}"; do
+            if [ "${states[$i]}" != "pending" ]; then
+              continue
+            fi
+            if ! body="$(curl -sS --fail -H "Authorization: Bearer ${SIGNPATH_API_TOKEN}" \
+              "${connector}/${org}/SigningRequests/${ids[$i]}/Status?api-version=1.0")"; then
+              echo "${names[$i]} status check failed; will retry"
+              continue
+            fi
+            status="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("status") or "")' <<<"${body}")"
+            is_final="$(python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("isFinalStatus", False)).lower())' <<<"${body}")"
+            echo "${names[$i]} status: ${status} final=${is_final}"
+            if [ "${is_final}" != "true" ]; then
+              continue
+            fi
+            if [ "${status}" != "Completed" ]; then
+              echo "${names[$i]} signing ended with status ${status}" >&2
+              echo "${body}" >&2
+              states[$i]="failed"
+              continue
+            fi
+            mkdir -p "${outdirs[$i]}"
+            curl -sS --fail -L -H "Authorization: Bearer ${SIGNPATH_API_TOKEN}" \
+              -o "${outdirs[$i]}/signed.zip" \
+              "${connector}/${org}/SigningRequests/${ids[$i]}/SignedArtifact?api-version=1.0"
+            unzip -o "${outdirs[$i]}/signed.zip" -d "${outdirs[$i]}"
+            echo "Downloaded and extracted ${names[$i]} signed artifact"
+            states[$i]="completed"
+          done
+          if [ "$(pending_count)" -gt 0 ]; then
+            sleep 15
+          fi
+        done
+
+        failures=()
+        for i in "${!names[@]}"; do
+          if [ "${states[$i]}" != "completed" ]; then
+            failures+=("${names[$i]}")
+          fi
+        done
+        if [ "${#failures[@]}" -ne 0 ]; then
+          echo "Signing failed for: ${failures[*]}" >&2
+          exit 1
+        fi
+
+    - name: Stage signed Windows EXE
+      if: ${{ always() && !cancelled() && steps.signpath-windows.outputs.signing-request-id != '' }}
       run: |
         set -euo pipefail
         mkdir -p dist
-        signed_apk="$(find "${GITHUB_WORKSPACE}/signed" -type f -name 'carveracontroller-community-*.apk' | head -n 1)"
+        signed="$(find "${GITHUB_WORKSPACE}/signed-windows" -type f -name 'carveracontroller-community-*-windows-x64.exe' | head -n 1)"
+        if [ -z "${signed}" ]; then
+          echo "Signed Windows EXE was not returned by SignPath" >&2
+          find "${GITHUB_WORKSPACE}/signed-windows" -print >&2 || true
+          exit 1
+        fi
+        cp "${signed}" "${GITHUB_WORKSPACE}/dist/"
+        echo "Copied signed EXE: ${signed}"
+
+    - name: Verify Authenticode signature
+      if: ${{ always() && !cancelled() && steps.signpath-windows.outputs.signing-request-id != '' }}
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y osslsigncode
+        exe="$(ls -1 dist/carveracontroller-community-*-windows-x64.exe | head -n 1)"
+        osslsigncode verify -in "${exe}"
+        {
+          echo "## Windows SignPath (${SIGNPATH_SIGNING_POLICY_SLUG})"
+          echo "- File: \`${exe##*/}\`"
+          echo "- Signing request: ${{ steps.signpath-windows.outputs.signing-request-web-url }}"
+        } >> "${GITHUB_STEP_SUMMARY}"
+
+    - name: Upload signed Windows artifact
+      if: ${{ always() && !cancelled() && steps.signpath-windows.outputs.signing-request-id != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-assets-win64
+        path: ${{ github.workspace }}/dist/carveracontroller-community-*-windows-x64.exe
+        retention-days: 2
+
+    - name: Stage signed Android APK
+      if: ${{ always() && !cancelled() && steps.signpath-apk.outputs.signing-request-id != '' }}
+      run: |
+        set -euo pipefail
+        mkdir -p dist
+        signed_apk="$(find "${GITHUB_WORKSPACE}/signed-android" -type f -name 'carveracontroller-community-*.apk' | head -n 1)"
         if [ -z "${signed_apk}" ]; then
           echo "Signed Android APK was not returned by SignPath" >&2
-          find "${GITHUB_WORKSPACE}/signed" -print >&2 || true
+          find "${GITHUB_WORKSPACE}/signed-android" -print >&2 || true
           exit 1
         fi
         cp "${signed_apk}" "${GITHUB_WORKSPACE}/dist/"
         echo "Copied signed APK: ${signed_apk}"
 
     - name: Setup Java for APK verification
+      if: ${{ always() && !cancelled() && steps.signpath-apk.outputs.signing-request-id != '' }}
       uses: actions/setup-java@v4
       with:
         distribution: temurin
         java-version: '17'
 
     - name: Verify APK signature
+      if: ${{ always() && !cancelled() && steps.signpath-apk.outputs.signing-request-id != '' }}
       run: |
         set -euo pipefail
         apk="$(ls -1 dist/carveracontroller-community-*.apk | head -n 1)"
@@ -547,7 +631,8 @@ jobs:
           echo "- Signing request: ${{ steps.signpath-apk.outputs.signing-request-web-url }}"
         } >> "${GITHUB_STEP_SUMMARY}"
 
-    - name: Upload signed artifact
+    - name: Upload signed Android artifact
+      if: ${{ always() && !cancelled() && steps.signpath-apk.outputs.signing-request-id != '' }}
       uses: actions/upload-artifact@v4
       with:
         name: android-assets
@@ -555,7 +640,7 @@ jobs:
         retention-days: 2
 
   publish-release:
-    needs: [ build-windows-artifacts, build-macos-artifacts, build-linux-artifacts, build-pypi-artifacts, sign-windows ]
+    needs: [ build-windows-artifacts, build-macos-artifacts, build-linux-artifacts, build-pypi-artifacts, sign-artifacts ]
     if: ${{ always() && !cancelled() && (needs.build-windows-artifacts.result == 'success' || needs.build-macos-artifacts.result == 'success' || needs.build-linux-artifacts.result == 'success' || needs.build-pypi-artifacts.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
@@ -603,7 +688,7 @@ jobs:
           prerelease: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'true' }}
 
   publish-android-release:
-    needs: [ build-android-artifacts, publish-release, sign-android ]  # depends on publish-release to delete previous release/tags
+    needs: [ build-android-artifacts, publish-release, sign-artifacts ]  # depends on publish-release to delete previous release/tags
     if: ${{ always() && !cancelled() && needs.build-android-artifacts.result == 'success' && (needs.publish-release.result == 'success' || needs.publish-release.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
