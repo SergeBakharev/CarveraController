@@ -594,8 +594,8 @@ jobs:
         retention-days: 2
 
   publish-release:
-    needs: [ build-windows-artifacts, build-macos-artifacts, build-linux-artifacts, build-pypi-artifacts, sign-artifacts ]
-    if: ${{ always() && !cancelled() && (needs.build-windows-artifacts.result == 'success' || needs.build-macos-artifacts.result == 'success' || needs.build-linux-artifacts.result == 'success' || needs.build-pypi-artifacts.result == 'success') }}
+    needs: [ build-windows-artifacts, build-macos-artifacts, build-linux-artifacts, build-pypi-artifacts, build-android-artifacts, sign-artifacts ]
+    if: ${{ always() && !cancelled() && (needs.build-windows-artifacts.result == 'success' || needs.build-macos-artifacts.result == 'success' || needs.build-linux-artifacts.result == 'success' || needs.build-pypi-artifacts.result == 'success' || needs.build-android-artifacts.result == 'success') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -628,7 +628,7 @@ jobs:
           git tag -f dev
           git push origin dev --force
 
-      - name: Publish release  # All but android artifacts
+      - name: Publish release
         uses: softprops/action-gh-release@v2.2.2
         with:
           fail_on_unmatched_files: false
@@ -637,44 +637,8 @@ jobs:
             macos-assets-*/carveracontroller-community-*.dmg
             linux-assets-*/carveracontroller-community-*.appimage
             pypi-assets/*.whl
+            android-assets/carveracontroller-community-*.apk
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'dev' }}
           body_path: ${{ startsWith(github.ref, 'refs/tags/') && 'CHANGELOG.md' || 'dev-CHANGELOG.md' }} 
           prerelease: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'true' }}
-
-  publish-android-release:
-    needs: [ build-android-artifacts, publish-release, sign-artifacts ]  # depends on publish-release to delete previous release/tags
-    if: ${{ always() && !cancelled() && needs.build-android-artifacts.result == 'success' && (needs.publish-release.result == 'success' || needs.publish-release.result == 'skipped') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:  # Skip downloading docker images
-          pattern: '*-assets*'
-      
-      - name: Generate dev release notes (dev builds only)
-        if: startsWith(github.ref, 'refs/heads/develop')
-        run: python3 ./scripts/dev_release_notes.py
-
-      - name: Check Android artifacts exist
-        id: android-files
-        run: |
-          if ls android-assets/carveracontroller-community-*.apk >/dev/null 2>&1; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "No Android APK artifacts to publish"
-          fi
-
-      - name: Publish Android release
-        if: ${{ steps.android-files.outputs.present == 'true' }}
-        uses: softprops/action-gh-release@v2.2.2
-        with:
-          fail_on_unmatched_files: false
-          files: android-assets/carveracontroller-community-*.apk
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'dev' }}
-          body_path: ${{ startsWith(github.ref, 'refs/tags/') && 'CHANGELOG.md' || 'dev-CHANGELOG.md' }} 
-          prerelease: ${{ startsWith(github.ref, 'refs/tags/') && 'false' || 'true' }} 
+ 
