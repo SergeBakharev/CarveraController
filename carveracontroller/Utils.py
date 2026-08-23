@@ -7,9 +7,11 @@
 __author__ = "Vasilis Vlachoudis"
 __email__ = "vvlachoudis@gmail.com"
 
+import calendar
 import hashlib
 import os
 import sys
+import time
 
 try:
     import ConfigParser
@@ -505,6 +507,19 @@ def humansize(nbytes):
 # ------------------------------------------------------------------------------
 def humandate(date):
     return datetime.fromtimestamp(date).strftime("%Y-%m-%d %H:%M")
+
+
+# ------------------------------------------------------------------------------
+# Unix timestamp of the current local wall-clock time, including DST.
+#
+# The machine stores SD card timestamps in local time with no timezone.
+# time.timezone is the standard-time offset only, so int(time.time()) -
+# time.timezone is one hour off while daylight saving is in effect.
+# calendar.timegm(time.localtime()) encodes the current local clock
+# (standard or DST) as a Unix timestamp.
+# ------------------------------------------------------------------------------
+def local_unix_time():
+    return calendar.timegm(time.localtime())
 
 
 # ------------------------------------------------------------------------------

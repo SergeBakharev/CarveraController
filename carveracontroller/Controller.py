@@ -379,7 +379,7 @@ class Controller:
         self.executeCommand("M471")
 
     def syncTime(self, *args):
-        self.executeCommand("time " + str(int(time.time()) - time.timezone))
+        self.executeCommand("time " + str(Utils.local_unix_time()))
 
     def queryTime(self, *args):
         self.executeCommand("time")
