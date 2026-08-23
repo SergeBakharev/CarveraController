@@ -13,7 +13,6 @@ from __future__ import annotations
 import importlib
 import logging
 import platform
-import threading
 import time
 from urllib.parse import quote, unquote
 
@@ -33,7 +32,6 @@ Z1_USB_PID = 0x4002
 USB_BULK_DEVICE_IDS = ((Z1_USB_VID, Z1_USB_PID),)
 
 USB_BULK_SCHEME = "usbbulk://"
-BULK_READ_TIMEOUT_MS = 100
 BULK_WRITE_TIMEOUT_MS = 2000
 DEFAULT_MAX_PACKET = 512
 Z1_USB_DOCS_URL = "https://carvera-community.gitbook.io/docs/controller/features/z1-usb-support"
@@ -265,12 +263,8 @@ class USBBulkStream:
         self.ep_out = None
         self.interface = None
         self._address = ""
-        self._rx_lock = threading.Lock()
         self._rx_buf = bytearray()
-        self._rx_event = threading.Event()
-        self._stop = threading.Event()
-        self._reader_thread = None
-        self._read_error = None
+        self._stop = False
 
     def send(self, data):
         if self.dev is None:
@@ -294,8 +288,12 @@ class USBBulkStream:
             self._send_log_buffer = b""
 
     def recv(self):
-        self._raise_if_disconnected()
-        data = self._take_rx()
+        if self.dev is None or self._stop:
+            return b""
+        if not self._rx_buf:
+            self._pump(timeout_ms=1)
+        data = bytes(self._rx_buf)
+        self._rx_buf.clear()
         if self.log_sent_receive and data:
             self._recv_log_buffer += data
             while b"\n" in self._recv_log_buffer:
@@ -331,7 +329,7 @@ class USBBulkStream:
         return True
 
     def close(self):
-        self._stop.set()
+        self._stop = True
         device = self.dev
         self.dev = None
         self.ep_in = None
@@ -347,10 +345,6 @@ class USBBulkStream:
                     usb.util.dispose_resources(device)
             except Exception:
                 pass
-        thread = self._reader_thread
-        self._reader_thread = None
-        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
-            thread.join(timeout=1.0)
         try:
             self.modem.clear_mode_set()
         except Exception:
@@ -359,40 +353,35 @@ class USBBulkStream:
         self._send_log_buffer = b""
         self._recv_log_buffer = b""
         self.reset_input_buffer()
-        self._read_error = None
-        self._stop.clear()
         return True
 
     def waiting_for_send(self):
         return self.dev is not None
 
     def waiting_for_recv(self):
-        self._raise_if_disconnected()
-        with self._rx_lock:
-            return len(self._rx_buf) > 0
+        if self.dev is None or self._stop:
+            return False
+        if self._rx_buf:
+            return True
+        self._pump(timeout_ms=1)
+        return bool(self._rx_buf)
 
     def reset_input_buffer(self):
-        with self._rx_lock:
-            self._rx_buf.clear()
-            self._rx_event.clear()
+        self._rx_buf.clear()
 
     def getc(self, size, timeout=1):
-        if self.dev is None and self._reader_thread is None:
+        if self.dev is None:
             return None
         deadline = time.time() + timeout
         while True:
-            self._raise_if_disconnected()
-            with self._rx_lock:
-                if len(self._rx_buf) >= size:
-                    data = bytes(self._rx_buf[:size])
-                    del self._rx_buf[:size]
-                    if not self._rx_buf:
-                        self._rx_event.clear()
-                    return data
+            if len(self._rx_buf) >= size:
+                data = bytes(self._rx_buf[:size])
+                del self._rx_buf[:size]
+                return data
             remaining = deadline - time.time()
             if remaining <= 0:
                 return None
-            self._rx_event.wait(timeout=min(0.05, remaining))
+            self._pump(timeout_ms=max(1, int(min(0.05, remaining) * 1000)))
 
     def putc(self, data, timeout=1):
         if self.dev is None:
@@ -473,11 +462,8 @@ class USBBulkStream:
         self.interface = interface
         self.ep_in = ep_in
         self.ep_out = ep_out
-        self._stop.clear()
-        self._read_error = None
+        self._stop = False
         self.reset_input_buffer()
-        self._reader_thread = threading.Thread(target=self._reader_loop, name="USBBulkReader", daemon=True)
-        self._reader_thread.start()
 
     def _write(self, data, timeout_ms=BULK_WRITE_TIMEOUT_MS):
         if self.dev is None or self.ep_out is None:
@@ -494,46 +480,20 @@ class USBBulkStream:
                 raise USBBulkError("USB bulk write returned 0 bytes")
             offset += written
 
-    def _ingest(self, data):
-        if not data:
+    def _pump(self, timeout_ms=1):
+        if self.dev is None or self.ep_in is None or self._stop:
             return
-        with self._rx_lock:
-            self._rx_buf.extend(data)
-            self._rx_event.set()
-
-    def _take_rx(self, size=None):
-        with self._rx_lock:
-            if size is None:
-                data = bytes(self._rx_buf)
-                self._rx_buf.clear()
-            else:
-                data = bytes(self._rx_buf[:size])
-                del self._rx_buf[:size]
-            if not self._rx_buf:
-                self._rx_event.clear()
-            return data
-
-    def _raise_if_disconnected(self):
-        error = self._read_error
-        if error is not None:
-            raise USBBulkError("USB device disconnected") from error
-
-    def _reader_loop(self):
-        while not self._stop.is_set():
-            if self.dev is None or self.ep_in is None:
-                break
-            try:
-                data = self.dev.read(
-                    self.ep_in.bEndpointAddress,
-                    int(getattr(self.ep_in, "wMaxPacketSize", 0) or DEFAULT_MAX_PACKET),
-                    timeout=BULK_READ_TIMEOUT_MS,
-                )
-            except Exception as exc:
-                if self._stop.is_set():
-                    break
-                if _is_timeout_error(exc):
-                    continue
-                self._read_error = exc
-                break
-            if data:
-                self._ingest(bytes(data))
+        try:
+            data = self.dev.read(
+                self.ep_in.bEndpointAddress,
+                int(getattr(self.ep_in, "wMaxPacketSize", 0) or DEFAULT_MAX_PACKET),
+                timeout=timeout_ms,
+            )
+        except Exception as exc:
+            if self._stop or self.dev is None:
+                return
+            if _is_timeout_error(exc):
+                return
+            raise USBBulkError("USB device disconnected") from exc
+        if data:
+            self._rx_buf.extend(bytes(data))

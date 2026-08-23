@@ -85,6 +85,8 @@ import re
 import subprocess
 import tempfile
 
+import kivy.lang.builder as _kivy_builder
+import kivy.uix.widget as _kivy_widget
 from kivy.app import App
 from kivy.clock import Clock, mainthread
 from kivy.config import Config
@@ -119,6 +121,19 @@ from kivy.uix.slider import Slider
 from kivy.uix.stencilview import StencilView
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
+
+
+def _safe_widget_destructor(uid, _ref):
+    # Kivy 2.3.1 does `del _widget_destructors[uid]` in a weakref callback.
+    # Python 3.12+ GC can invoke that after the uid is already gone, which
+    # prints KeyError on quit. USB/libusb teardown makes that extra collection
+    # more likely than serial or WiFi.
+    # https://github.com/kivy/kivy/issues/5005
+    _kivy_widget._widget_destructors.pop(uid, None)
+    _kivy_builder.Builder.unbind_widget(uid)
+
+
+_kivy_widget._widget_destructor = _safe_widget_destructor
 
 from carveracontroller.addons.facing.FacingWizardPopup import FacingWizardPopup
 from carveracontroller.addons.pendant import (
@@ -3337,6 +3352,12 @@ class Makera(RelativeLayout):
             self.pendant.close()
         except Exception as e:
             logger.error(f"Error closing pendant: {e}")
+
+        try:
+            if getattr(self, "controller", None) is not None:
+                self.controller.close_manual()
+        except Exception as e:
+            logger.error(f"Error closing machine connection: {e}")
 
         # Save the last window size.
         # Seems that kivvy uses the window size before dpi scaling in the config,

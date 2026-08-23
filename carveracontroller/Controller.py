@@ -1529,10 +1529,7 @@ class Controller:
         if self.stream is None and self.thread is None:
             return
         self.stopRun()
-        thread = self.thread
-        self.thread = None
-        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
-            thread.join(timeout=1.0)
+        self._join_stream_io()
         if self.stream is not None:
             try:
                 self.stream.close()
@@ -1541,6 +1538,12 @@ class Controller:
             self.stream = None
         self.comms.reset()
         self.clearRun()
+
+    def _join_stream_io(self):
+        thread = self.thread
+        self.thread = None
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
 
     def _usb_transport_for_address(self, address):
         if is_usb_bulk_address(address):
@@ -1633,8 +1636,7 @@ class Controller:
         except Exception:
             self.log.put((self.MSG_ERROR, "Controller stop thread error!"))
         self._runLines = 0
-        time.sleep(0.5)
-        self.thread = None
+        self._join_stream_io()
         try:
             self.stream.close()
         except Exception:
@@ -1660,8 +1662,7 @@ class Controller:
         except Exception:
             self.log.put((self.MSG_ERROR, "Controller stop thread error!"))
         self._runLines = 0
-        time.sleep(0.5)
-        self.thread = None
+        self._join_stream_io()
         try:
             self.stream.close()
         except Exception:
