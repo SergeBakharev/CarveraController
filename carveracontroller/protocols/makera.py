@@ -21,6 +21,7 @@ from .framing import (
     PTYPE_LOAD_ERROR,
     PTYPE_LOAD_FINISH,
     PTYPE_LOAD_INFO,
+    PTYPE_NORMAL_INFO,
     build_frame,
     validate_packet_data,
 )
@@ -60,6 +61,9 @@ class MakeraProtocol(CommunicationProtocol):
         self._footer_buffer = bytearray(2)
         self._bytes_needed = 2
         self._expected_length = 0
+        # PTYPE_NORMAL_INFO payloads are fragments of a text line, not
+        # complete outputs. Buffer until a newline completes the line.
+        self._normal_info_line = bytearray()
 
     def encode_command(self, data: bytes) -> bytes:
         if not isinstance(data, (bytes, bytearray)):
@@ -145,16 +149,30 @@ class MakeraProtocol(CommunicationProtocol):
             return [ParsedMessage(MessageKind.LOAD_EOF)]
         if parsed.ptype == PTYPE_LOAD_ERROR:
             return [ParsedMessage(MessageKind.LOAD_ERROR)]
+        if parsed.ptype == PTYPE_NORMAL_INFO:
+            return self._buffer_normal_info(parsed.payload)
 
         text = parsed.payload.decode(errors="ignore")
         if not text:
             return []
 
-        # Status/diag/normal always become LINE. LOAD_INFO chunks go to the
+        # Status/diag always become LINE. LOAD_INFO chunks go to the
         # load buffer path; Controller decides via loadNUM.
         if parsed.ptype == PTYPE_LOAD_INFO:
             return [ParsedMessage(MessageKind.LOAD_CHUNK, text)]
         return [ParsedMessage(MessageKind.LINE, text)]
+
+    def _buffer_normal_info(self, payload: bytes) -> list[ParsedMessage]:
+        """Accumulate NORMAL_INFO fragments until a newline completes a line."""
+        messages: list[ParsedMessage] = []
+        for byte in payload:
+            if byte == 0x0A:  # '\n' marks the end of one MDI/log line
+                text = self._normal_info_line.decode(errors="ignore")
+                self._normal_info_line.clear()
+                messages.append(ParsedMessage(MessageKind.LINE, text))
+            else:
+                self._normal_info_line.append(byte)
+        return messages
 
     def reset(self) -> None:
         self._state = _RevPacketState.WAIT_HEADER
@@ -163,4 +181,5 @@ class MakeraProtocol(CommunicationProtocol):
         self._footer_buffer = bytearray(2)
         self._bytes_needed = 2
         self._expected_length = 0
+        self._normal_info_line.clear()
         self.ready = False

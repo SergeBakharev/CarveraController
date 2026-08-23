@@ -1,3 +1,21 @@
+
+[2.2.0-RC2]
+- Enhancement: Adds "Allow Jogging When Spindle or Laser Is On" option (disabled by default). "Allow Jogging When Machine Running" will now be enabled by default. Existing configs that already allowed jogging while the machine is running also enable the new spindle/laser option.
+- Enhancement: Windows and Android artifacts are now signed
+- Enhancement: Abort CMM workbench operations when an invalid machine state is detected
+- Fixed: Prevent a probing modal crash if E is not provided when using the angle operation
+- Fixed: Default Values on Probing screens caused probing to fail unexpectedly 
+- Fixed: Remaining job time no longer resumes counting after aborting playback and disconnecting
+- Fixed: Z1 machine settings tabs now load
+- Fixed: Z1 machine config backup option added to settings matching other models
+- Fixed: Switching between different machines no longer reuses the previous machine's settings panels or cached config.txt
+- Fixed: Fix G-Code files not being properly loaded when they end with comments
+- Fixed: Makera protocol now buffers PTYPE_NORMAL_INFO frames until a newline so the MDI terminal and logs show complete lines instead of one line per frame
+- Fixed: Machine time sync now includes daylight saving, SD card timestamps now match the PC clock when daylight savings is in effect
+- Changed: added help button to probing screen confirmation/error popup for clarity
+- Changed: Moved Z1 Camera to a collapsible area in the Gcode Viewer. Collapsible splitter is only shown if a supported camera is found.
+- Change: Moved tools visibility controls to the color scheme panel
+
 [2.2.0-RC1]
 - Enhancement: Read tool definitions from post-processor outputs and use them in the G-code viewer
 - Enhancement: Add multi-select to the remote file browser

@@ -14,6 +14,14 @@ CONFIG_FILES_TO_BACK_UP = [
     "/sd/flex_compensation.dat",
 ]
 
+MACHINE_CONFIG_FILES = {
+    "C1": "config_c1.json",
+    "CA1": "config_ca1.json",
+    "Z1": "config_z1.json",
+}
+
+MAX_CONFIG_DOWNLOAD_ATTEMPTS = 3
+
 
 def is_android():
     return "ANDROID_ARGUMENT" in os.environ or "ANDROID_PRIVATE" in os.environ or "ANDROID_APP_PATH" in os.environ
@@ -203,8 +211,6 @@ from .addons.tool_visualization import (
     extract_tool_table,
     format_tool_tooltip,
 )
-from .addons.tool_visualization.icon_builder import build_tool_tooltip_icon
-from .addons.tool_visualization.icon_geometry import build_icon_geometry
 from .addons.tooltips.Tooltips import Tooltip, ToolTipButton, ToolTipDropDown
 from .CNC import (
     CNC,
@@ -235,7 +241,15 @@ from .Controller import (
     STATECOLORDEF,
     Controller,
 )
-from .GcodeViewer import GCodeViewer
+from .GcodeViewer import (
+    COLOR_SCHEME_BY_SPEED,
+    COLOR_SCHEME_BY_TOOL,
+    COLOR_SCHEME_BY_TYPE,
+    COLOR_SCHEME_BY_Z,
+    VISIBILITY_ALL_BUCKET_BITS,
+    VISIBILITY_MAX_TOOLS,
+    GCodeViewer,
+)
 from .ui import widget_helpers
 from .ui.PlayProgressBar import play_percent_from_line, tool_change_markers_to_percents
 from .ui.popups.adv_calibrate import AdvCalibratePopup
@@ -435,9 +449,15 @@ class FloatBox(FloatLayout):
     touch_interval = 0
     color_scheme_panel = ObjectProperty(None)
     camera_controls = ObjectProperty(None)
+    camera_view = ObjectProperty(None)
+    tool_bar = ObjectProperty(None)
 
     def _viewer_chrome_hit(self, touch):
         if self.gcode_ctl_bar.collide_point(*touch.pos):
+            return True
+        if self.tool_bar is not None and self.tool_bar.collide_point(*touch.pos):
+            return True
+        if self.camera_view is not None and self.camera_view.collide_point(*touch.pos):
             return True
         return any(
             panel is not None and panel.collide_point(*touch.pos)
@@ -1867,10 +1887,12 @@ class IconButton(BoxLayout, ToolTipButton):
 
 class TransparentButton(BoxLayout, ToolTipButton):
     icon = StringProperty("fresk.png")
+    active = BooleanProperty(False)
 
 
 class TransparentGrayButton(BoxLayout, ToolTipButton):
     icon = StringProperty("fresk.png")
+    active = BooleanProperty(True)
 
 
 class WiFiButton(BoxLayout, ToolTipButton):
@@ -2967,7 +2989,12 @@ class Makera(RelativeLayout):
     tool_change_markers = []
     tool_table = {}
     document_unit = "mm"
-    show_tool_button_icons = BooleanProperty(False)
+
+    # Path visibility filters for the G-code viewer color-scheme panel.
+    path_show_rapid = True
+    path_show_feed = True
+    path_speed_bits = VISIBILITY_ALL_BUCKET_BITS
+    path_z_bits = VISIBILITY_ALL_BUCKET_BITS
 
     # Custom property to monitor CNC light state
     light_state = LightProperty(False)
@@ -3031,7 +3058,8 @@ class Makera(RelativeLayout):
     status_index = 0
     past_machine_addr = None
     allow_mdi_while_machine_running = "0"
-    allow_jogging_while_machine_running = "0"
+    allow_jogging_while_machine_running = "1"
+    allow_jogging_while_spindle_on = "0"
     _selected_file_machine_key = None
     _last_loaded_file_key = None  # used to track if a different file is selected
 
@@ -3144,12 +3172,7 @@ class Makera(RelativeLayout):
         self.gcode_viewer.set_error_popup_callback(self._on_gcode_cannot_visualise)
         self.gcode_viewer.time_estimate_progress_callback = self._on_time_estimate_progress
         self.float_layout.tool_bar.show_grid = self.gcode_viewer.is_grid_visible()
-
-        # Handle tool button icons visibility when the window is resized
-        self.bind(show_tool_button_icons=self._refresh_tool_filter_buttons)
-        self.float_layout.tool_bar.bind(width=self._update_tool_button_icon_visibility)
-        Window.bind(on_resize=self._update_tool_button_icon_visibility)
-        Clock.schedule_once(lambda _dt: self._refresh_tool_filter_buttons(), 0)
+        self.path_hidden_tools = set()
 
         # init camera live view
         self.camera_checked = False
@@ -3159,17 +3182,22 @@ class Makera(RelativeLayout):
             on_streaming=self._set_camera_streaming,
             on_error=partial(self.show_message_popup, btn_disabled=False),
         )
+        self.ids.camera_splitter.bind(collapsed=self._on_camera_splitter_collapsed)
+        self.ids.camera_splitter.collapse()
 
         # init settings
         self.config = ConfigParser()
         self.config_popup = ConfigPopup()
         self.config_loaded = False
         self.config_loading = False
+        self._config_apply_failed = False
+        self._config_download_failures = 0
         self.setting_list = {}
         self.setting_type_list = {}
         self.setting_default_list = {}
         self.machine_config_data = None
         self.machine_config_data_model = None
+        self.machine_settings_model = None
         self.controller_setting_change_list = {}
         self.load_controller_config()
         self.load_gcode_viewer_config()
@@ -3200,6 +3228,11 @@ class Makera(RelativeLayout):
 
         if Config.has_option("carvera", "allow_jogging_while_machine_running"):
             self.allow_jogging_while_machine_running = Config.get("carvera", "allow_jogging_while_machine_running")
+
+        if Config.has_option("carvera", "allow_jogging_while_spindle_on"):
+            self.allow_jogging_while_spindle_on = Config.get("carvera", "allow_jogging_while_spindle_on")
+
+        self._bind_jog_control_deps()
 
         # Setup pendant
         self.refresh_pendant_settings()
@@ -4150,7 +4183,7 @@ class Makera(RelativeLayout):
 
                     remote_time = re.search("time = [0-9]+", line)
                     if remote_time != None:
-                        if abs(int(time.time()) - time.timezone - int(remote_time[0].split("=")[1])) > 10:
+                        if abs(Utils.local_unix_time() - int(remote_time[0].split("=")[1])) > 10:
                             self.controller.syncTime()
 
                     remote_version = re.search(r"version = [0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9\-_]*", line)
@@ -4779,7 +4812,7 @@ class Makera(RelativeLayout):
         self.downloading_config = True
         remote_path = "/sd/config.txt"
         self.downloading_file = remote_path
-        local_path = os.path.join(self.temp_dir, "config.txt")
+        local_path = self._machine_config_cache_path()
         threading.Thread(target=self.doDownload, args=(remote_path, local_path)).start()
 
     # -----------------------------------------------------------------------
@@ -4790,7 +4823,7 @@ class Makera(RelativeLayout):
                 self.setting_list.clear()
                 self.load_machine_config_defaults()
                 # caching config file
-                config_path = os.path.join(self.temp_dir, "config.txt")
+                config_path = self._machine_config_cache_path()
                 if not os.path.exists(config_path):
                     raise FileNotFoundError(f"Cached config not found: {config_path}")
                 with open(config_path) as f:
@@ -4823,16 +4856,27 @@ class Makera(RelativeLayout):
                 self.setting_change_list = {}
 
                 self.config_loaded = self.load_machine_config()
+                self._config_download_failures = 0
+                if not self.config_loaded:
+                    # Applying settings failed; retrying the download cannot fix panel/schema mismatches.
+                    self._config_apply_failed = True
                 self.config_popup.btn_apply.disabled = len(self.setting_change_list) == 0
             except Exception as e:
                 logger.exception("Failed to load machine config")
                 self.config_loaded = False
+                self._config_apply_failed = True
                 self.controller.log.put((Controller.MSG_ERROR, tr._("Failed to load config file: {}").format(e)))
             finally:
                 self.config_loading = False
         else:
             self.config_loading = False
+            self._config_download_failures += 1
             self.controller.log.put((Controller.MSG_ERROR, tr._("Download config file error")))
+            if self._config_download_failures >= MAX_CONFIG_DOWNLOAD_ATTEMPTS:
+                logger.error(
+                    "Giving up config download after %s failed attempts",
+                    self._config_download_failures,
+                )
             # self.controller.close()
 
         # Preserve selected file only when reconnecting to the same machine.
@@ -4868,6 +4912,12 @@ class Makera(RelativeLayout):
         if conn_type == CONN_USB:
             return f"usb:{addr}" if addr else "usb"
         return str(conn_type)
+
+    def _machine_config_cache_path(self):
+        """Return a per-machine path for the cached /sd/config.txt copy."""
+        key = self._get_current_machine_connection_key() or "unknown"
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(key))
+        return os.path.join(self.temp_dir, f"config_{safe}.txt")
 
     # -----------------------------------------------------------------------
     def doDownload(self, remote_path, local_path, show_progress=True):
@@ -5151,7 +5201,15 @@ class Makera(RelativeLayout):
         app.has_atc = bool(CNC.vars["FuncSetting"] & 4)
         # The first machine config load must happen after /sd/config.txt is parsed.
         if model_changed and self.config_loaded:
-            Clock.schedule_once(lambda dt: self.load_machine_config(), 0.1)
+
+            def _reload_machine_config(_dt):
+                self.config_loading = True
+                try:
+                    self.load_machine_config()
+                finally:
+                    self.config_loading = False
+
+            Clock.schedule_once(_reload_machine_config, 0.1)
 
     # -----------------------------------------------------------------------
     def downloadCallback(self, remote_path, packet_size, success_count, error_count):
@@ -5293,11 +5351,7 @@ class Makera(RelativeLayout):
         if self.machine_config_data_model == app.model:
             return self.machine_config_data
 
-        config_files = {
-            "C1": "config_c1.json",
-            "CA1": "config_ca1.json",
-        }
-        config_file = config_files.get(app.model)
+        config_file = MACHINE_CONFIG_FILES.get(app.model)
         if config_file is None:
             return None
 
@@ -5841,6 +5895,8 @@ class Makera(RelativeLayout):
             self.progressUpdate(percent, "", True)
         elif state == "done":
             self.progressFinish()
+            # Legend row durations become available once line_times are applied.
+            self.refresh_gcode_color_legend()
 
     # --------------------------------------------------------------`---------
     _PROGRESS_TIMER_PAUSED_STATES = frozenset({"Hold", "Pause", "Wait", "Tool"})
@@ -5853,11 +5909,12 @@ class Makera(RelativeLayout):
         app = App.get_running_app()
         if (
             not app.playing
+            or app.state == NOT_CONNECTED
             or (not app.selected_remote_filename and not app.selected_local_filename)
             or not self.selected_file_line_count
             or app.state in self._PROGRESS_TIMER_PAUSED_STATES
         ):
-            # While held/paused, leave the last progress_info unchanged so both timers freeze.
+            # While held/paused/disconnected, leave the last progress_info unchanged so both timers freeze.
             return
         remaining_display = self._current_remaining_sec()
         filename = os.path.basename(app.selected_remote_filename or app.selected_local_filename)
@@ -5922,6 +5979,8 @@ class Makera(RelativeLayout):
                     self.status_drop_down.btn_disconnect.disabled = True
                     self.config_loaded = False
                     self.config_loading = False
+                    self._config_apply_failed = False
+                    self._config_download_failures = 0
                     self.fw_version_checked = False
                     self.fw_version = ""
                     app.model = ""
@@ -5995,7 +6054,14 @@ class Makera(RelativeLayout):
                     self.status_drop_down.btn_unlock.text = "Unlock"
 
             # load config, only one time per connection
-            if not app.playing and not self.config_loaded and not self.config_loading and app.state == "Idle":
+            if (
+                not app.playing
+                and not self.config_loaded
+                and not self.config_loading
+                and not self._config_apply_failed
+                and self._config_download_failures < MAX_CONFIG_DOWNLOAD_ATTEMPTS
+                and app.state == "Idle"
+            ):
                 if not app.model or not self.fw_version:
                     if now - self.machine_metadata_query_time > 1:
                         self.check_model_metadata()
@@ -6102,6 +6168,11 @@ class Makera(RelativeLayout):
                     v.minr_text = "{:.1f}".format(CNC.vars["spindletemp"]) + " °C"
                 else:
                     v.minr_text = "Vac: {}".format("On" if CNC.vars["vacuummode"] else "Off")
+
+            app.spindle_or_laser_is_on = app.state not in (NOT_CONNECTED, CONNECTED) and (
+                (not CNC.vars["lasermode"] and CNC.vars["curspindle"] > 0.0)
+                or (CNC.vars["lasermode"] and CNC.vars["laserpower"] > 0.0)
+            )
 
             elapsed = now - self.control_list["vacuum_mode"][0]
             if elapsed < 2:
@@ -6244,7 +6315,12 @@ class Makera(RelativeLayout):
             use_cf_playing_flag = app.is_community_firmware and app.fw_version_digitized >= Utils.digitize_v(
                 "2.1.0"
             )  # in community firmware > 2.1.0 the machine state has a is_playing attribute
-            machine_not_playing = CNC.vars["is_playing"] == 0 if use_cf_playing_flag else CNC.vars["playedlines"] <= 0
+            if CNC.vars["state"] == NOT_CONNECTED:
+                machine_not_playing = True
+            elif use_cf_playing_flag:
+                machine_not_playing = CNC.vars["is_playing"] == 0
+            else:
+                machine_not_playing = CNC.vars["playedlines"] <= 0
 
             # update progress bar and set selected
             if machine_not_playing:
@@ -6612,13 +6688,62 @@ class Makera(RelativeLayout):
         self.updateStatus()
 
     # -----------------------------------------------------------------------
+    def _clear_machine_settings_panels(self):
+        """Remove Machine-* settings tabs from a previous model so they can be rebuilt."""
+        settings = self.config_popup.settings_panel
+        interface = getattr(settings, "interface", None)
+        content = getattr(interface, "content", None) if interface is not None else None
+        if content is None:
+            self.machine_settings_model = None
+            return
+
+        menu = getattr(interface, "menu", None)
+        machine_uids = [uid for uid, panel in list(content.panels.items()) if panel.config is self.config]
+        if not machine_uids:
+            self.machine_settings_model = None
+            return
+
+        remaining = next(
+            (uid for uid, panel in content.panels.items() if panel.config is not self.config),
+            None,
+        )
+        if getattr(content, "current_uid", None) in machine_uids:
+            if remaining is not None:
+                content.current_uid = remaining
+                if menu is not None:
+                    menu.selected_uid = remaining
+            else:
+                if content.current_panel is not None:
+                    try:
+                        content.remove_widget(content.current_panel)
+                    except Exception:
+                        pass
+                content.current_panel = None
+                content.current_uid = 0
+
+        for uid in machine_uids:
+            content.panels.pop(uid, None)
+            buttons_layout = getattr(menu, "buttons_layout", None) if menu is not None else None
+            if buttons_layout is not None:
+                for child in list(buttons_layout.children):
+                    if getattr(child, "uid", None) == uid:
+                        buttons_layout.remove_widget(child)
+
+        for section in list(self.config.sections()):
+            self.config.remove_section(section)
+        self.machine_settings_model = None
+        self.setting_type_list.clear()
+
+    # -----------------------------------------------------------------------
     def load_machine_config(self):
+        app = App.get_running_app()
         panels = self.config_popup.settings_panel.interface.content.panels
 
         # Filter panels that are bound to the machine config
         machine_panels = [panel for panel in panels.values() if panel.config is self.config]
+        same_model = bool(machine_panels) and self.machine_settings_model == getattr(app, "model", None)
 
-        if machine_panels:
+        if same_model:
             # already have panels, update data
             for panel in machine_panels:
                 children = panel.children
@@ -6664,6 +6789,9 @@ class Makera(RelativeLayout):
                             self.updateStatus()
                             return False
         else:
+            if machine_panels:
+                self._clear_machine_settings_panels()
+
             data = self.load_machine_config_data()
             if data is None:
                 return True
@@ -6747,10 +6875,11 @@ class Makera(RelativeLayout):
             self.config_popup.settings_panel.add_json_panel(
                 "Machine - Restore", self.config, data=json.dumps(restore_config)
             )
-            if kivy_platform not in ["android", "ios"]:
+            if backup_config and kivy_platform not in ["android", "ios"]:
                 self.config_popup.settings_panel.add_json_panel(
                     "Machine - Backup", self.config, data=json.dumps(backup_config)
                 )
+            self.machine_settings_model = getattr(app, "model", None)
         return True
 
     # -----------------------------------------------------------------------
@@ -6791,21 +6920,37 @@ class Makera(RelativeLayout):
             modals.append(self.cmm_workbench_popup)
         return self._is_popup_open() and not any(m.allows_external_jog() for m in modals)
 
-    def is_jogging_enabled(self):
+    def _bind_jog_control_deps(self):
         app = App.get_running_app()
+        if app is not None:
+            app.bind(
+                state=self.update_jog_controls_enabled,
+                playing=self.update_jog_controls_enabled,
+                spindle_or_laser_is_on=self.update_jog_controls_enabled,
+            )
+        self.update_jog_controls_enabled()
 
-        # Keyboard/pendant jogging is normally blocked whenever a modal popup is open,
-        # except for probing and the probe-scan jog overlay (see allows_external_jog).
-        popup_prevents_jogging = self._popup_prevents_jogging()
+    def update_jog_controls_enabled(self, *args):
+        app = App.get_running_app()
+        if app is None:
+            return
+        app.jog_controls_enabled = self._machine_allows_jogging()
 
+    def _machine_allows_jogging(self):
+        app = App.get_running_app()
         return (
             (not app.playing or app.state == "Pause")
             and (
                 app.state in ["Idle", "Pause"]
                 or (app.state == "Run" and self.allow_jogging_while_machine_running == "1")
             )
-            and not popup_prevents_jogging
+            and (not app.spindle_or_laser_is_on or self.allow_jogging_while_spindle_on == "1")
         )
+
+    def is_jogging_enabled(self):
+        # Keyboard/pendant jogging is normally blocked whenever a modal popup is open,
+        # except for probing and the probe-scan jog overlay (see allows_external_jog).
+        return self._machine_allows_jogging() and not self._popup_prevents_jogging()
 
     def is_pendant_jogging_enabled(self):
         # If the user disabled pendant, respect it.
@@ -7092,13 +7237,19 @@ class Makera(RelativeLayout):
                 "allow_mdi_while_machine_running"
             )
 
-        if (
-            self.controller_setting_change_list.get("allow_jogging_while_machine_running")
-            != self.allow_jogging_while_machine_running
-        ):
-            self.allow_jogging_while_machine_running = self.controller_setting_change_list.get(
+        if "allow_jogging_while_machine_running" in self.controller_setting_change_list:
+            self.allow_jogging_while_machine_running = self.controller_setting_change_list[
                 "allow_jogging_while_machine_running"
-            )
+            ]
+
+        if "allow_jogging_while_spindle_on" in self.controller_setting_change_list:
+            self.allow_jogging_while_spindle_on = self.controller_setting_change_list["allow_jogging_while_spindle_on"]
+
+        if (
+            "allow_jogging_while_machine_running" in self.controller_setting_change_list
+            or "allow_jogging_while_spindle_on" in self.controller_setting_change_list
+        ):
+            self.update_jog_controls_enabled()
 
         if self.controller_setting_change_list.get("invert_y_axis_jogging"):
             App.get_running_app().invert_y_axis_jogging = (
@@ -7145,9 +7296,22 @@ class Makera(RelativeLayout):
             self.controller.log_sent_receive = self.controller_setting_change_list.get("log_sent_receive")
 
         if "high_precision_reamining_time_estimate" in self.controller_setting_change_list:
-            self.gcode_viewer.high_precision_time_estimate = self.controller_setting_change_list.get(
-                "high_precision_reamining_time_estimate"
-            )
+            raw_enabled = self.controller_setting_change_list.get("high_precision_reamining_time_estimate")
+            if isinstance(raw_enabled, str):
+                enabled = raw_enabled not in ("0", "false", "False", "")
+            else:
+                enabled = bool(raw_enabled)
+            self.gcode_viewer.high_precision_time_estimate = enabled
+            if enabled:
+                if self.gcode_viewer.raw_linenumbers and self.gcode_viewer.raw_feed_rates:
+                    self.gcode_viewer._compute_line_times_async()
+                else:
+                    self.refresh_gcode_color_legend()
+            else:
+                self.gcode_viewer.line_times = []
+                self.gcode_viewer.total_time = 0.0
+                self.gcode_viewer._invalidate_legend_durations()
+                self.refresh_gcode_color_legend()
 
         gcode_hl_changed = False
         if "gcode_highlight_enabled" in self.controller_setting_change_list:
@@ -7360,9 +7524,24 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def toggle_camera_stream(self):
+        splitter = self.ids.get("camera_splitter")
+        if splitter is not None:
+            splitter.toggle_collapsed()
+            return
         if self.camera_stream.is_streaming():
             self.camera_stream.stop()
         elif App.get_running_app().supports_camera:
+            self.camera_stream.start(self.controller.connection_address.split(":")[0])
+
+    # -----------------------------------------------------------------------
+    def _on_camera_splitter_collapsed(self, _splitter, collapsed):
+        if collapsed:
+            if self.camera_stream.is_streaming():
+                self.camera_stream.stop()
+            controls = self.ids.get("camera_controls")
+            if controls is not None:
+                controls.adjust_open = False
+        elif App.get_running_app().supports_camera and not self.camera_stream.is_streaming():
             self.camera_stream.start(self.controller.connection_address.split(":")[0])
 
     # -----------------------------------------------------------------------
@@ -7376,6 +7555,13 @@ class Makera(RelativeLayout):
         if probe != self.camera_probe:
             return
         App.get_running_app().supports_camera = found
+        splitter = self.ids.get("camera_splitter")
+        if splitter is None:
+            return
+        if found and splitter.collapsed:
+            splitter.height = splitter.strip_size
+        elif not found:
+            splitter.collapse()
 
     # -----------------------------------------------------------------------
     def set_camera_resolution(self, label):
@@ -7407,6 +7593,9 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def _set_camera_streaming(self, streaming):
         App.get_running_app().camera_streaming = streaming
+        splitter = self.ids.get("camera_splitter")
+        if splitter is not None and not streaming and not splitter.collapsed:
+            splitter.collapse()
 
     # -----------------------------------------------------------------------
     def clear_selection(self):
@@ -7420,7 +7609,7 @@ class Makera(RelativeLayout):
         self.document_unit = "mm"
         self.gcode_viewer.tool_table = {}
         self.gcode_viewer.tool_unit_scale = 1.0
-        self._refresh_tool_filter_buttons()
+        self.init_path_visibility()
         self._clear_tool_change_markers()
         app = App.get_running_app()
         app.curr_page = 1
@@ -7453,8 +7642,9 @@ class Makera(RelativeLayout):
         self.cmd_manager.transition.direction = "right"
         self.cmd_manager.current = "gcode_cmd_page"
         self.gcode_rv.data = []
-        self.init_tool_filter()
+        self.init_path_visibility()
         self.gcode_viewer.clearDisplay()
+        self.gcode_viewer.begin_new_file_load()
         self.gcode_viewer.set_display_offset(self.content.x, self.content.y)
         self.gcode_viewer.set_move_speed(GCODE_VIEW_SPEED)
         self.gcode_playing = False
@@ -7505,8 +7695,9 @@ class Makera(RelativeLayout):
 
     # ------------------------------------------------------------------------
     def load_gcodes(self, line_no, parsed_list, *args):
-        if len(parsed_list) > 0:
-            self.gcode_viewer.load_array(parsed_list, line_no == self.selected_file_line_count)
+        is_end = line_no == self.selected_file_line_count
+        if parsed_list or is_end:
+            self.gcode_viewer.load_array(parsed_list, is_end)
 
         self.progress_popup.cancel = self.cancel_load_gcodes
         self.progress_popup.btn_cancel.disabled = False
@@ -7552,6 +7743,7 @@ class Makera(RelativeLayout):
             self.gcode_viewer_distance = self.gcode_viewer.get_total_distance()
             self.gcode_viewer.show_all()
 
+        self._push_path_visibility()
         self.refresh_gcode_color_legend()
 
         app = App.get_running_app()
@@ -7648,7 +7840,6 @@ class Makera(RelativeLayout):
             self.tool_table = extract_tool_table(self.lines)
             self.gcode_viewer.tool_table = self.tool_table
             self.gcode_viewer.tool_unit_scale = unit_scale_to_mm(self.document_unit)
-            self._refresh_tool_filter_buttons()
             app = App.get_running_app()
             app.total_pages = int(self.selected_file_line_count / MAX_LOAD_LINES) + (
                 0 if self.selected_file_line_count % MAX_LOAD_LINES == 0 else 1
@@ -7717,119 +7908,197 @@ class Makera(RelativeLayout):
         Clock.schedule_once(self.load_end, 0)
 
     # -----------------------------------------------------------------------
-    def _update_tool_button_icon_visibility(self, *_args):
-        tool_bar = self.float_layout.tool_bar
-        # Keep in sync with the '74dp' width on the six T buttons in makera.kv.
-        tool_bar_icons_required_width = dp(438 + 6 * 74)
-        if tool_bar.width <= 0:
+    def init_path_visibility(self):
+        """Reset all path visibility filters to show everything."""
+        self.path_show_rapid = True
+        self.path_show_feed = True
+        self.path_speed_bits = VISIBILITY_ALL_BUCKET_BITS
+        self.path_z_bits = VISIBILITY_ALL_BUCKET_BITS
+        self.path_hidden_tools = set()
+        if getattr(self, "gcode_viewer", None) is not None:
+            self._push_path_visibility()
+
+    def _tool_filter_ids(self):
+        return sorted({int(t) for t in (self.used_tools or []) if int(t) >= 0})[:VISIBILITY_MAX_TOOLS]
+
+    def _hidden_tools(self):
+        hidden = getattr(self, "path_hidden_tools", None)
+        if hidden is None:
+            hidden = set()
+            self.path_hidden_tools = hidden
+        return hidden
+
+    def _push_path_visibility(self):
+        if getattr(self, "gcode_viewer", None) is None:
             return
-        has_parsed_tools = bool(self.tool_table)
-        show_icons = has_parsed_tools and tool_bar.width >= tool_bar_icons_required_width
-        if show_icons != self.show_tool_button_icons:
-            self.show_tool_button_icons = show_icons
+        tools = self._tool_filter_ids()
+        hidden = self._hidden_tools()
+        # Drop stale hidden ids when the file's tool list changes.
+        if tools:
+            allowed = set(tools)
+            self.path_hidden_tools = {t for t in hidden if t in allowed}
+            hidden = self.path_hidden_tools
+        bits = 0
+        for index, tool in enumerate(tools):
+            if tool not in hidden:
+                bits |= 1 << index
+        self.gcode_viewer.set_visibility_filters(
+            show_rapid=self.path_show_rapid,
+            show_feed=self.path_show_feed,
+            speed_bucket_bits=self.path_speed_bits,
+            z_bucket_bits=self.path_z_bits,
+            tool_ids=tools,
+            tool_bits=bits,
+        )
 
-    @mainthread
-    def _refresh_tool_filter_buttons(self, *_args):
-        """Update T1..T6 toolbar icons and tooltips from the current tool table."""
-        tool_buttons = [
-            self.float_layout.t1,
-            self.float_layout.t2,
-            self.float_layout.t3,
-            self.float_layout.t4,
-            self.float_layout.t5,
-            self.float_layout.t6,
-        ]
-        self._update_tool_button_icon_visibility()
-        for number, tool_button in enumerate(tool_buttons, start=1):
-            tool_def = self.tool_table.get(number)
-            if self.show_tool_button_icons:
-                tool_button.tool_icon_geometry = build_icon_geometry(tool_def)
+    def is_legend_entry_visible(self, kind, key):
+        if kind == "rapid":
+            return bool(self.path_show_rapid)
+        if kind == "feed":
+            return bool(self.path_show_feed)
+        if kind == "tool":
+            return int(key) not in self._hidden_tools()
+        if kind == "speed_bucket":
+            return bool(self.path_speed_bits & (1 << int(key)))
+        if kind == "z_bucket":
+            return bool(self.path_z_bits & (1 << int(key)))
+        return True
+
+    def _current_scheme_any_visible(self):
+        viewer = getattr(self, "gcode_viewer", None)
+        scheme = getattr(viewer, "color_scheme", COLOR_SCHEME_BY_TYPE) if viewer else COLOR_SCHEME_BY_TYPE
+        if scheme == COLOR_SCHEME_BY_TYPE:
+            return self.path_show_rapid or self.path_show_feed
+        if scheme == COLOR_SCHEME_BY_TOOL:
+            tools = self._tool_filter_ids()
+            if not tools:
+                return True
+            hidden = self._hidden_tools()
+            return any(t not in hidden for t in tools)
+        if scheme == COLOR_SCHEME_BY_SPEED:
+            return self.path_show_rapid or bool(self.path_speed_bits)
+        if scheme == COLOR_SCHEME_BY_Z:
+            return bool(self.path_z_bits)
+        return True
+
+    def toggle_gcode_visibility_entry(self, kind, key):
+        if kind == "rapid":
+            self.path_show_rapid = not self.path_show_rapid
+        elif kind == "feed":
+            self.path_show_feed = not self.path_show_feed
+        elif kind == "tool":
+            tool = int(key)
+            hidden = self._hidden_tools()
+            if tool in hidden:
+                hidden.discard(tool)
             else:
-                tool_button.tool_icon_geometry = None
+                hidden.add(tool)
+        elif kind == "speed_bucket":
+            bit = 1 << int(key)
+            self.path_speed_bits ^= bit
+            self.path_speed_bits &= VISIBILITY_ALL_BUCKET_BITS
+        elif kind == "z_bucket":
+            bit = 1 << int(key)
+            self.path_z_bits ^= bit
+            self.path_z_bits &= VISIBILITY_ALL_BUCKET_BITS
+        else:
+            return
+        self._push_path_visibility()
+        self.refresh_gcode_visibility_legend()
 
-            if tool_def:
-                tool_button.tooltip_markup = True
-                tool_button.tooltip_horizontal = True
-                tool_button.tooltip_image = ""
-                tool_button.tooltip_texture = None
-                tool_button.tooltip_image_size = None
-                tool_button.tooltip_texture_provider = partial(build_tool_tooltip_icon, tool_def)
-                tool_button.tooltip_txt = format_tool_tooltip(tool_def, unit=self.document_unit)
+    def toggle_gcode_visibility_all(self):
+        viewer = getattr(self, "gcode_viewer", None)
+        if viewer is None:
+            return
+        show = not self._current_scheme_any_visible()
+        scheme = getattr(viewer, "color_scheme", COLOR_SCHEME_BY_TYPE)
+        if scheme == COLOR_SCHEME_BY_TYPE:
+            self.path_show_rapid = show
+            self.path_show_feed = show
+        elif scheme == COLOR_SCHEME_BY_TOOL:
+            if show:
+                self.path_hidden_tools = set()
             else:
-                tool_button.tooltip_txt = ""
-                tool_button.tooltip_image = ""
-                tool_button.tooltip_texture = None
-                tool_button.tooltip_texture_provider = None
-                tool_button.tooltip_image_size = None
-                tool_button.tooltip_horizontal = False
-                tool_button.tooltip_markup = False
+                self.path_hidden_tools = set(self._tool_filter_ids())
+        elif scheme == COLOR_SCHEME_BY_SPEED:
+            self.path_speed_bits = VISIBILITY_ALL_BUCKET_BITS if show else 0
+            self.path_show_rapid = show
+        elif scheme == COLOR_SCHEME_BY_Z:
+            self.path_z_bits = VISIBILITY_ALL_BUCKET_BITS if show else 0
+        self._push_path_visibility()
+        self.refresh_gcode_visibility_legend()
 
-    # -----------------------------------------------------------------------
-    def init_tool_filter(self):
-        tool_buttons = [
-            self.float_layout.t1,
-            self.float_layout.t2,
-            self.float_layout.t3,
-            self.float_layout.t4,
-            self.float_layout.t5,
-            self.float_layout.t6,
-            self.float_layout.laser,
-        ]
-        for tool_button in tool_buttons:
-            tool_button.min_active = True
-        self.show_other_tools = True
-        self.float_layout.hide_all.active = True
+    def refresh_gcode_visibility_legend(self):
+        """Update legend eye states without rebuilding rows (preserves scroll)."""
+        panel = self.ids.get("color_scheme_panel")
+        if panel is not None:
+            panel.apply_visibility(self)
 
     def refresh_gcode_color_legend(self, *_args):
         panel = self.ids.get("color_scheme_panel")
         if panel is not None:
             panel.refresh(self)
 
+    def _scheme_visibility_modified(self, scheme):
+        """True when that scheme's visibility filters differ from all-visible defaults."""
+        if scheme == COLOR_SCHEME_BY_TYPE:
+            return not (self.path_show_rapid and self.path_show_feed)
+        if scheme == COLOR_SCHEME_BY_TOOL:
+            hidden = self._hidden_tools()
+            if not hidden:
+                return False
+            return any(t in hidden for t in self._tool_filter_ids())
+        if scheme == COLOR_SCHEME_BY_SPEED:
+            # Rapid is shared with Move type but also listed under Speed.
+            return (self.path_speed_bits != VISIBILITY_ALL_BUCKET_BITS) or (not self.path_show_rapid)
+        if scheme == COLOR_SCHEME_BY_Z:
+            return self.path_z_bits != VISIBILITY_ALL_BUCKET_BITS
+        return False
+
+    def gcode_scheme_spinner_label(self, scheme):
+        if scheme == COLOR_SCHEME_BY_TOOL:
+            base = tr._("Tool")
+        elif scheme == COLOR_SCHEME_BY_SPEED:
+            base = tr._("Speed")
+        elif scheme == COLOR_SCHEME_BY_Z:
+            base = tr._("Height")
+        else:
+            base = tr._("Move type")
+        if self._scheme_visibility_modified(scheme):
+            return f"{base} *"
+        return base
+
+    def gcode_scheme_spinner_labels(self):
+        return [
+            self.gcode_scheme_spinner_label(COLOR_SCHEME_BY_TOOL),
+            self.gcode_scheme_spinner_label(COLOR_SCHEME_BY_TYPE),
+            self.gcode_scheme_spinner_label(COLOR_SCHEME_BY_SPEED),
+            self.gcode_scheme_spinner_label(COLOR_SCHEME_BY_Z),
+        ]
+
+    def _scheme_from_spinner_text(self, text):
+        base = text[:-2].rstrip() if text.endswith(" *") else text
+        if base == tr._("Tool"):
+            return COLOR_SCHEME_BY_TOOL
+        if base == tr._("Speed"):
+            return COLOR_SCHEME_BY_SPEED
+        if base == tr._("Height"):
+            return COLOR_SCHEME_BY_Z
+        return COLOR_SCHEME_BY_TYPE
+
     def on_gcode_color_scheme_changed(self, text):
-        if text == tr._("Tool"):
+        scheme = self._scheme_from_spinner_text(text)
+        if getattr(self.gcode_viewer, "color_scheme", None) == scheme:
+            return
+        if scheme == COLOR_SCHEME_BY_TOOL:
             self.gcode_viewer.set_color_scheme("by_tool")
-        elif text == tr._("Speed"):
+        elif scheme == COLOR_SCHEME_BY_SPEED:
             self.gcode_viewer.set_color_scheme("by_speed")
-        elif text == tr._("Height"):
+        elif scheme == COLOR_SCHEME_BY_Z:
             self.gcode_viewer.set_color_scheme("by_z")
         else:
             self.gcode_viewer.set_color_scheme("by_type")
         self.refresh_gcode_color_legend()
-
-    # -----------------------------------------------------------------------
-    def filter_tool(self):
-        # Build the mask for tool visibility
-        #   1..1_000_000 -> T1..T6 + laser (1 digit per tool)
-        #   10_000_000   -> Other tools without a button (T0, T7, T8, ...)
-        OTHER_TOOLS_FLAG = 10000000.0
-
-        tool_buttons = [
-            self.float_layout.t1,
-            self.float_layout.t2,
-            self.float_layout.t3,
-            self.float_layout.t4,
-            self.float_layout.t5,
-            self.float_layout.t6,
-            self.float_layout.laser,
-        ]
-        visible_tools = []
-        for index, tool_button in enumerate(tool_buttons, start=1):
-            if not tool_button.disabled and tool_button.min_active:
-                visible_tools.append(index)
-
-        show_other_tools = getattr(self, "show_other_tools", True)
-
-        # The show/hide-all button is "on" whenever anything is visible. Clicking
-        # it then hides everything, and shows everything when nothing is visible.
-        self.float_layout.hide_all.active = show_other_tools or len(visible_tools) > 0
-
-        mask = 0.0
-        for tool in visible_tools:
-            mask = mask + 10 ** (tool - 1)
-        if show_other_tools:
-            mask = mask + OTHER_TOOLS_FLAG
-
-        self.gcode_viewer.set_display_mask(mask)
 
     # -----------------------------------------------------------------------
     def send_cmd(self):
@@ -7870,6 +8139,8 @@ class Makera(RelativeLayout):
 class MakeraApp(App):
     state = StringProperty(NOT_CONNECTED)
     playing = BooleanProperty(False)
+    spindle_or_laser_is_on = BooleanProperty(False)
+    jog_controls_enabled = BooleanProperty(False)
     has_4axis = BooleanProperty(False)
     has_atc = BooleanProperty(False)
     lasering = BooleanProperty(False)
@@ -8048,6 +8319,14 @@ def set_config_defaults(default_lang):
         Config.set("carvera", "custom_bkg_img_dir", "")
     if not Config.has_option("carvera", "invert_y_axis_jogging"):
         Config.set("carvera", "invert_y_axis_jogging", "0")
+    had_jogging_while_running = Config.has_option("carvera", "allow_jogging_while_machine_running")
+    if not had_jogging_while_running:
+        Config.set("carvera", "allow_jogging_while_machine_running", "1")
+    if not Config.has_option("carvera", "allow_jogging_while_spindle_on"):
+        migrate_spindle_on = had_jogging_while_running and Config.getboolean(
+            "carvera", "allow_jogging_while_machine_running", fallback=False
+        )
+        Config.set("carvera", "allow_jogging_while_spindle_on", "1" if migrate_spindle_on else "0")
     if not Config.has_option("carvera", "allow_manual_usb_device"):
         Config.set("carvera", "allow_manual_usb_device", "0")
     if not Config.has_option("carvera", "manual_usb_device"):
