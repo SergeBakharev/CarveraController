@@ -3812,12 +3812,12 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def open_comports_drop_down(self, button):
-        """Show USB serial devices that have a VID/PID; labels are the USB serial number."""
+        """Show USB serial and vendor-class bulk devices; labels are the USB serial number."""
         self.comports_drop_down.clear_widgets()
-        devices = Utils.list_identifiable_usb_serial_ports()
+        devices = Utils.list_identifiable_usb_devices()
         if not devices:
             btn = Button(
-                text=tr._("No USB serial devices found"),
+                text=tr._("No USB devices found"),
                 size_hint_y=None,
                 height="35dp",
                 color=(180 / 255, 180 / 255, 180 / 255, 1),
@@ -3987,10 +3987,16 @@ class Makera(RelativeLayout):
         Config.write()
 
     def _store_usb_device_id_for_path(self, device_path):
-        for entry in Utils.list_identifiable_usb_serial_ports():
+        for entry in Utils.list_identifiable_usb_devices():
             if Utils.same_usb_device_path(entry["device_path"], device_path):
                 self._store_usb_device_identity(entry["device_id"], entry["serial"])
                 return
+        from carveracontroller.USBBulkStream import parse_usb_bulk_address
+
+        parsed = parse_usb_bulk_address(device_path)
+        if parsed:
+            vid, pid, serial = parsed
+            self._store_usb_device_identity(f"{vid:04X}:{pid:04X}", serial)
 
     def _resolve_usb_reconnect_path(self):
         """Resolve configured VID:PID (+ preferred serial) to a current OS path."""
@@ -4004,7 +4010,7 @@ class Makera(RelativeLayout):
         # Fall back to last path only if that path still maps to an identifiable USB device.
         last_path = getattr(self.controller, "connection_address", None)
         if last_path:
-            for entry in Utils.list_identifiable_usb_serial_ports():
+            for entry in Utils.list_identifiable_usb_devices():
                 if Utils.same_usb_device_path(entry["device_path"], last_path):
                     return entry["device_path"]
         return None
@@ -6597,7 +6603,7 @@ class Makera(RelativeLayout):
         # Keep VID:PID + serial in sync even when reconnecting by resolved path.
         self._store_usb_device_id_for_path(device)
         label = device
-        for entry in Utils.list_identifiable_usb_serial_ports():
+        for entry in Utils.list_identifiable_usb_devices():
             if Utils.same_usb_device_path(entry["device_path"], device):
                 label = entry["label"]
                 break
@@ -6609,15 +6615,17 @@ class Makera(RelativeLayout):
 
     def _open_usb_worker(self, device):
         success = False
+        error_message = None
         try:
             success = bool(self.controller.open(CONN_USB, device))
             self.controller.connection_type = CONN_USB
-        except Exception:
+        except Exception as exc:
             logger.exception("USB connection failed for %s", device)
+            error_message = str(exc)
             success = False
-        Clock.schedule_once(lambda dt, ok=success: self._finish_usb_open(ok), 0)
+        Clock.schedule_once(lambda dt, ok=success, err=error_message: self._finish_usb_open(ok, err), 0)
 
-    def _finish_usb_open(self, success):
+    def _finish_usb_open(self, success, error_message=None):
         self._usb_connect_in_progress = False
         if self.progress_popup._is_open:
             self.progress_popup.dismiss()
@@ -6628,6 +6636,8 @@ class Makera(RelativeLayout):
             Clock.schedule_once(self.attempt_usb_baud_upgrade_if_eligible, 10)
         else:
             logger.error("USB connection attempt finished without an active link")
+            if error_message:
+                self.show_message_popup(error_message, False)
         self.updateStatus()
 
     def attempt_usb_baud_upgrade_if_eligible(self, dt):

@@ -1,4 +1,5 @@
 [unreleased]
+- Enhancement: Support for connect to the Makera Z1 over USB
 - Change: Moved tools visibility controls to the color scheme panel
 - Enhancement: Windows and Android artifacts are now signed
 
