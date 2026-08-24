@@ -206,6 +206,15 @@ from .addons.camera.Z1Camera import (
     has_camera,
     set_resolution,
 )
+from .addons.intellisense.ui import (
+    cancel_gcode_hover,
+    handle_mdi_intellisense_key,
+    hide_gcode_explain,
+    hide_mdi_intellisense,
+    schedule_gcode_hover,
+    show_gcode_explain,
+    update_mdi_intellisense,
+)
 from .addons.probing.ProbingControls import ProbeButton
 from .addons.tool_visualization import (
     extract_tool_table,
@@ -329,14 +338,29 @@ class MDITextInput(TextInput):
         self.past_mdi_commands = []
         self.active_past_mdi_index = 0
         self.bind(focus=self.on_focus)
+        self.bind(text=self._on_mdi_text)
 
     def on_focus(self, instance, have_focus):
         if have_focus:
             Window.bind(on_key_down=self.on_keyboard_down)
+            Clock.schedule_once(lambda _dt: update_mdi_intellisense(self), 0)
         else:
             Window.unbind(on_key_down=self.on_keyboard_down)
+            hide_mdi_intellisense()
+
+    def _on_mdi_text(self, _instance, _value):
+        if self.focus:
+            update_mdi_intellisense(self)
+
+    def keyboard_on_key_down(self, window, keycode, text, modifiers):
+        key = keycode[0] if isinstance(keycode, (tuple, list)) else keycode
+        if handle_mdi_intellisense_key(self, key, modifiers):
+            return True
+        return super().keyboard_on_key_down(window, keycode, text, modifiers)
 
     def on_keyboard_down(self, window, key, scancode, codepoint, modifiers):
+        if handle_mdi_intellisense_key(self, key, modifiers):
+            return True
         ENTER_KEY = 13
         UP_ARROW_KEY = 273
         DOWN_ARROW_KEY = 274
@@ -381,6 +405,7 @@ class MDITextInput(TextInput):
         cmd_to_send = self.text.strip()
         if not cmd_to_send:
             return
+        hide_mdi_intellisense()
         self.past_mdi_commands.append(cmd_to_send)
         self.active_past_mdi_index = len(self.past_mdi_commands)
         app = App.get_running_app()
@@ -2272,9 +2297,19 @@ class GCodeRow(RecycleDataViewBehavior, BoxLayout):
     touch_start_time = 0
     touch_start_pos = None
     _resume_bind_uids = None  # [txt_uid, cbx_uid] for unbind on recycle
+    _intel_user_selected = False
+    _intel_hover_bound = False
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if sys.platform != "ios" and not self._intel_hover_bound:
+            Window.bind(mouse_pos=self._on_intel_mouse_pos)
+            self._intel_hover_bound = True
 
     def refresh_view_attrs(self, rv, index, data):
         self.index = index
+        cancel_gcode_hover(self)
+        self._intel_user_selected = False
         # Unbind previous resume-line updates when recycled
         if self._resume_bind_uids:
             app = App.get_running_app()
@@ -2346,7 +2381,16 @@ class GCodeRow(RecycleDataViewBehavior, BoxLayout):
                 return True
         return super().on_touch_up(touch)
 
+    def _on_intel_mouse_pos(self, _window, pos):
+        if not self.get_root_window() or not self.text:
+            return
+        if self.collide_point(*self.to_widget(*pos)):
+            schedule_gcode_hover(self)
+        else:
+            cancel_gcode_hover(self)
+
     def _show_context_menu(self, pos):
+        hide_gcode_explain()
         app = App.get_running_app()
         for child in app.root.children:
             if isinstance(child, GCodeLineContextMenu):
@@ -2368,12 +2412,16 @@ class GCodeRow(RecycleDataViewBehavior, BoxLayout):
         self.selected = is_selected
         if not is_selected:
             Window.unbind(on_key_down=self.on_keyboard_down)
+            self._intel_user_selected = False
+            hide_gcode_explain(self)
         else:
             Window.bind(on_key_down=self.on_keyboard_down)
             for key in rv.view_adapter.views:
                 view = rv.view_adapter.views[key]
                 if view and hasattr(view, "selected") and view.selected is not None:
                     view.selected = key == index
+            self._intel_user_selected = True
+            Clock.schedule_once(lambda dt: show_gcode_explain(self, reason="select"), 0)
             Clock.schedule_once(lambda dt: self._update_3d_viewer_and_slider(selected_index=index), 0)
 
     def _update_3d_viewer_and_slider(self, selected_index=None):
@@ -2810,6 +2858,10 @@ class GCodeRV(RecycleView):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.bind(scroll_y=self._on_intel_scroll)
+
+    def _on_intel_scroll(self, *_args):
+        hide_gcode_explain()
 
     def on_scroll_stop(self, touch):
         super().on_scroll_stop(touch)
@@ -8119,6 +8171,7 @@ class Makera(RelativeLayout):
                     )
                 self.controller.executeCommand(sanitized_to_send)
         self.manual_cmd.text = ""
+        hide_mdi_intellisense()
         Clock.schedule_once(self.refocus_cmd)
 
     # -----------------------------------------------------------------------
