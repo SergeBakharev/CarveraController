@@ -519,7 +519,8 @@
                                     center: 0.5, 0.5
                                     size_hint_y: None
                                     height: '30dp'
-                                    text: '10'
+                                    text: app.jog_step_xy
+                                    on_text: app.jog_step_xy = self.text
                                     values: '10', '1', '0.1', '0.01', '0.005'
                                 Label:
                             GridBoxLayout:
@@ -574,7 +575,8 @@
                                 center: 0.5, 0.5
                                 size_hint_y: 0.9
                                 height: '30dp'
-                                text: '90'
+                                text: app.jog_step_a
+                                on_text: app.jog_step_a = self.text
                                 values: '90', '10', '1', '0.1'
                             Label:
                         GridBoxLayout:
@@ -584,7 +586,8 @@
                                 center: 0.5, 0.5
                                 size_hint_y: 0.9
                                 height: '30dp'
-                                text: '1'
+                                text: app.jog_step_z
+                                on_text: app.jog_step_z = self.text
                                 values: '10', '1', '0.1', '0.01', '0.005'
                             Label:
                         GridBoxLayout:
