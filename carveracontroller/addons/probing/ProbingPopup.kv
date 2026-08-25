@@ -503,8 +503,8 @@
                             GridBoxLayout:
                             GridBoxLayout:
                                 SmallRoundButton:
-                                    text: 'Y-'
-                                    on_press: app.root.controller.jog("Y-{}".format(step_xy.text))
+                                    text: 'Y+' if app.invert_y_axis_jogging else 'Y-'
+                                    on_press: app.root.controller.jog("Y{}{}".format('' if app.invert_y_axis_jogging else '-', step_xy.text))
                                     on_release: app.root.controller.stopContinuousJog()
                             GridBoxLayout:
                             GridBoxLayout:
@@ -531,8 +531,8 @@
                             GridBoxLayout:
                             GridBoxLayout:
                                 SmallRoundButton:
-                                    text: 'Y+'
-                                    on_press: app.root.controller.jog("Y{}".format(step_xy.text))
+                                    text: 'Y-' if app.invert_y_axis_jogging else 'Y+'
+                                    on_press: app.root.controller.jog("Y{}{}".format('-' if app.invert_y_axis_jogging else '', step_xy.text))
                                     on_release: app.root.controller.stopContinuousJog()
                             GridBoxLayout:
                 BoxLayout:
