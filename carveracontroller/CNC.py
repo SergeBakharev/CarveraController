@@ -59,6 +59,7 @@ GCODE_DEFAULT_COLORS = {
     "o_keyword": "#DCDCAA",
     "param_ref": "#B5CEA8",
     "math_keyword": "#D7BA7D",
+    "shell_command": "#2F75B5",
 }
 
 

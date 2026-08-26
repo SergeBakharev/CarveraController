@@ -221,6 +221,14 @@ from .addons.camera.Z1Camera import (
     has_camera,
     set_resolution,
 )
+from .addons.intellisense.engine import highlight_mdi_line
+from .addons.intellisense.ui import (
+    IntellisenseExplainRowMixin,
+    handle_mdi_intellisense_key,
+    hide_gcode_explain,
+    hide_mdi_intellisense,
+    update_mdi_intellisense,
+)
 from .addons.probing.ProbingControls import ProbeButton
 from .addons.tool_visualization import (
     extract_tool_table,
@@ -344,14 +352,27 @@ class MDITextInput(TextInput):
         self.past_mdi_commands = []
         self.active_past_mdi_index = 0
         self.bind(focus=self.on_focus)
+        self.bind(text=self._on_mdi_text)
 
     def on_focus(self, instance, have_focus):
         if have_focus:
-            Window.bind(on_key_down=self.on_keyboard_down)
+            Clock.schedule_once(lambda _dt: update_mdi_intellisense(self), 0)
         else:
-            Window.unbind(on_key_down=self.on_keyboard_down)
+            hide_mdi_intellisense()
 
-    def on_keyboard_down(self, window, key, scancode, codepoint, modifiers):
+    def _on_mdi_text(self, _instance, _value):
+        if self.focus:
+            update_mdi_intellisense(self)
+
+    def keyboard_on_key_down(self, window, keycode, text, modifiers):
+        key = keycode[0] if isinstance(keycode, (tuple, list)) else keycode
+        if handle_mdi_intellisense_key(self, key, modifiers):
+            return True
+        if self._handle_navigation_key(key, modifiers):
+            return True
+        return super().keyboard_on_key_down(window, keycode, text, modifiers)
+
+    def _handle_navigation_key(self, key, modifiers):
         ENTER_KEY = 13
         UP_ARROW_KEY = 273
         DOWN_ARROW_KEY = 274
@@ -396,6 +417,7 @@ class MDITextInput(TextInput):
         cmd_to_send = self.text.strip()
         if not cmd_to_send:
             return
+        hide_mdi_intellisense()
         self.past_mdi_commands.append(cmd_to_send)
         self.active_past_mdi_index = len(self.past_mdi_commands)
         app = App.get_running_app()
@@ -2136,8 +2158,9 @@ class SelectableLabel(RecycleDataViewBehavior, Label):
     def on_keyboard_down(self, instance, keyboard, keycode, text, modifiers):
         mod = "ctrl" if sys.platform == "win32" else "meta"
         if text == "c" and self.selected and mod in modifiers:
-            if hasattr(self, "text"):
-                Clipboard.copy(self.text.strip())
+            line = getattr(self, "plain_text", None) or getattr(self, "text", "")
+            if line:
+                Clipboard.copy(line.strip())
             return True
         return False
 
@@ -2161,7 +2184,8 @@ class SelectableLabel(RecycleDataViewBehavior, Label):
                 return True
             if touch.is_double_tap:
                 app = App.get_running_app()
-                app.root.manual_cmd.text = self.text.strip()
+                line = getattr(self, "plain_text", None) or self.text
+                app.root.manual_cmd.text = line.strip()
                 Clock.schedule_once(app.root.refocus_cmd)
             return self.parent.select_with_touch(self.index, touch)
 
@@ -2237,43 +2261,40 @@ class SelectableLabel(RecycleDataViewBehavior, Label):
                 view = rv.view_adapter.views[key]
                 if view and hasattr(view, "selected") and view.selected is not None:
                     view.selected = key == index
-            # Defer only 3D viewer and slider update to avoid re-entry.
-            Clock.schedule_once(lambda dt: self._update_3d_viewer_and_slider(selected_index=index), 0)
-
-    def _update_3d_viewer_and_slider(self, selected_index=None):
-        """Update the 3D viewer and progress slider when a line is selected in the file viewer.
-        selected_index: when provided (e.g. from a scheduled callback), use this instead of self.index
-        since RecycleView may have recycled the widget by the time the callback runs."""
-        app = App.get_running_app()
-        if hasattr(app.root, "gcode_viewer") and app.root.gcode_viewer:
-            # Check if gcode_viewer has valid data before trying to use it
-            gcode_viewer = app.root.gcode_viewer
-            if not hasattr(gcode_viewer, "raw_linenumbers") or not gcode_viewer.raw_linenumbers:
-                return
-            if not hasattr(gcode_viewer, "lengths") or not gcode_viewer.lengths:
-                return
-
-            # Use provided index when from deferred callback (RecycleView reuses views)
-            index = selected_index if selected_index is not None else self.index
-            current_page = app.curr_page
-            actual_line_number = (current_page - 1) * MAX_LOAD_LINES + index + 1
-
-            # Skip set_selected_line in frame callback: GcodeViewer calls it from set_pos_by_distance
-            # before cur_line_index is updated, so it would overwrite our selection with the old line.
-            app.root._skip_next_set_selected_line_from_callback = True
-            try:
-                app.root.gcode_viewer.set_distance_by_lineidx(actual_line_number, 0.5)
-            except (IndexError, AttributeError):
-                pass
-
-            # Schedule the progress slider update for the next frame
-            if hasattr(app.root, "gcode_play_slider") and app.root.gcode_play_slider:
-                distance = app.root.gcode_viewer.get_distance_by_lineidx(actual_line_number, 0.5)
-                slider_value = distance * 1000.0 / app.root.gcode_viewer_distance
-                Clock.schedule_once(lambda dt: setattr(app.root.gcode_play_slider, "value", slider_value), 0)
 
 
-class GCodeRow(RecycleDataViewBehavior, BoxLayout):
+class Row(IntellisenseExplainRowMixin, SelectableLabel):
+    """MDI history row with command-explanation hover and selection popups."""
+
+    highlighted_text = StringProperty("")
+    plain_text = StringProperty("")
+    highlight = BooleanProperty(False)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind_intellisense_hover()
+
+    def refresh_view_attrs(self, rv, index, data):
+        self.intellisense_on_recycle()
+        result = super().refresh_view_attrs(rv, index, data)
+        self.plain_text = data.get("text", "") or ""
+        self.highlighted_text = data.get("highlighted_text") or ""
+        self.highlight = bool(data.get("highlight", False))
+        return result
+
+    def apply_selection(self, rv, index, is_selected):
+        super().apply_selection(rv, index, is_selected)
+        self.intellisense_on_selection(is_selected)
+
+    def _show_context_menu(self, pos):
+        hide_gcode_explain()
+        super()._show_context_menu(pos)
+
+
+Factory.register("Row", cls=Row)
+
+
+class GCodeRow(IntellisenseExplainRowMixin, RecycleDataViewBehavior, BoxLayout):
     """Single row in GCodeRV: line number, optional resume-flag icon, gcode text."""
 
     index = None
@@ -2288,8 +2309,13 @@ class GCodeRow(RecycleDataViewBehavior, BoxLayout):
     touch_start_pos = None
     _resume_bind_uids = None  # [txt_uid, cbx_uid] for unbind on recycle
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind_intellisense_hover()
+
     def refresh_view_attrs(self, rv, index, data):
         self.index = index
+        self.intellisense_on_recycle()
         # Unbind previous resume-line updates when recycled
         if self._resume_bind_uids:
             app = App.get_running_app()
@@ -2362,6 +2388,7 @@ class GCodeRow(RecycleDataViewBehavior, BoxLayout):
         return super().on_touch_up(touch)
 
     def _show_context_menu(self, pos):
+        hide_gcode_explain()
         app = App.get_running_app()
         for child in app.root.children:
             if isinstance(child, GCodeLineContextMenu):
@@ -2383,12 +2410,14 @@ class GCodeRow(RecycleDataViewBehavior, BoxLayout):
         self.selected = is_selected
         if not is_selected:
             Window.unbind(on_key_down=self.on_keyboard_down)
+            self.intellisense_on_selection(False)
         else:
             Window.bind(on_key_down=self.on_keyboard_down)
             for key in rv.view_adapter.views:
                 view = rv.view_adapter.views[key]
                 if view and hasattr(view, "selected") and view.selected is not None:
                     view.selected = key == index
+            self.intellisense_on_selection(True)
             Clock.schedule_once(lambda dt: self._update_3d_viewer_and_slider(selected_index=index), 0)
 
     def _update_3d_viewer_and_slider(self, selected_index=None):
@@ -2825,6 +2854,10 @@ class GCodeRV(RecycleView):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.bind(scroll_y=self._on_intel_scroll)
+
+    def _on_intel_scroll(self, *_args):
+        hide_gcode_explain()
 
     def on_scroll_stop(self, touch):
         super().on_scroll_stop(touch)
@@ -2869,6 +2902,10 @@ class GCodeRV(RecycleView):
 class ManualRV(RecycleView):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.bind(scroll_y=self._on_intel_scroll)
+
+    def _on_intel_scroll(self, *_args):
+        hide_gcode_explain()
 
 
 class TopBar(BoxLayout):
@@ -4264,11 +4301,19 @@ class Makera(RelativeLayout):
 
                     if msg == Controller.MSG_NORMAL:
                         logger.info(f"MDI Received: {line}")
-                        entry = {"text": line, "color": (103 / 255, 150 / 255, 186 / 255, 1)}
+                        entry = {
+                            "text": line,
+                            "color": (103 / 255, 150 / 255, 186 / 255, 1),
+                            "entry_type": "output",
+                        }
                         self._append_to_mdi([entry], log_to_mdi_data=line not in [" ", "ok", "Done ATC"])
                     elif msg == Controller.MSG_ERROR:
                         logger.error(f"MDI Received: {line}")
-                        entry = {"text": line, "color": (250 / 255, 105 / 255, 102 / 255, 1)}
+                        entry = {
+                            "text": line,
+                            "color": (250 / 255, 105 / 255, 102 / 255, 1),
+                            "entry_type": "output",
+                        }
                         self._append_to_mdi([entry], log_to_mdi_data=line not in [" ", "ok", "Done ATC"])
                 except:
                     logger.error(sys.exc_info()[1])
@@ -6602,12 +6647,51 @@ class Makera(RelativeLayout):
 
     def execCallback(self, line):
         logger.info(f"MDI Sent: {line}")
-        entries = [{"text": cmd, "color": (200 / 255, 200 / 255, 200 / 255, 1)} for cmd in line.strip().split("\n")]
+        entries = [
+            {
+                "text": cmd,
+                "color": (200 / 255, 200 / 255, 200 / 255, 1),
+                "entry_type": "command",
+            }
+            for cmd in line.strip().split("\n")
+        ]
         self._append_to_mdi(entries, scroll_to_bottom=True)
+
+    def _format_mdi_entry(self, entry):
+        """Syntax-highlight sent MDI commands; keep machine output in status colors."""
+        text = str(entry.get("text") or "")
+        original_color = tuple(entry.get("original_color") or entry.get("color") or (1, 1, 1, 1))
+        plain = text.strip()
+        color = original_color
+        entry_type = entry.get("entry_type")
+        if entry_type is not None:
+            should_highlight = entry_type == "command"
+        elif "highlight" in entry:
+            should_highlight = bool(entry.get("highlight"))
+        else:
+            # Compatibility with MDI history entries saved before entry_type existed.
+            should_highlight = tuple(original_color[:3]) == (200 / 255, 200 / 255, 200 / 255)
+        entry_type = "command" if should_highlight else "output"
+        hl_enabled = getattr(self, "gcode_highlight_enabled", False)
+        hl_colors = getattr(self, "gcode_highlight_colors", None)
+        if hl_enabled and should_highlight and plain:
+            highlighted = highlight_mdi_line(plain, hl_colors)
+            if "[color=" in highlighted:
+                color = (1.0, 1.0, 1.0, 1.0)
+        else:
+            highlighted = escape_gcode_markup(plain)
+        formatted = dict(entry)
+        formatted["text"] = text
+        formatted["highlighted_text"] = highlighted
+        formatted["color"] = color
+        formatted["original_color"] = original_color
+        formatted["entry_type"] = entry_type
+        formatted["highlight"] = should_highlight
+        return formatted
 
     @mainthread
     def _append_to_mdi(self, entries, log_to_mdi_data=False, scroll_to_bottom=False):
-        self.manual_rv.data.extend(entries)
+        self.manual_rv.data.extend([self._format_mdi_entry(entry) for entry in entries])
         if log_to_mdi_data:
             App.get_running_app().mdi_data.extend(entries)
         if scroll_to_bottom:
@@ -7363,6 +7447,8 @@ class Makera(RelativeLayout):
             app = App.get_running_app()
             if hasattr(self, "gcode_rv") and self.gcode_rv.data:
                 self.load_page(app.curr_page)
+            if hasattr(self, "manual_rv") and self.manual_rv.data:
+                self.manual_rv.data = [self._format_mdi_entry(entry) for entry in self.manual_rv.data]
 
         if "show_playbar_tool_change_markers" in self.controller_setting_change_list:
             raw_enabled = self.controller_setting_change_list["show_playbar_tool_change_markers"]
@@ -8143,13 +8229,16 @@ class Makera(RelativeLayout):
                 sanitized_to_send = "\n".join([line for line in to_send.split("\n") if line.strip().lower() != "clear"])
                 if sanitized_to_send != to_send:
                     self.manual_rv.data.append(
-                        {
-                            "text": "clear command can't be used together with other commands",
-                            "color": (250 / 255, 105 / 255, 102 / 255, 1),
-                        }
+                        self._format_mdi_entry(
+                            {
+                                "text": "clear command can't be used together with other commands",
+                                "color": (250 / 255, 105 / 255, 102 / 255, 1),
+                            }
+                        )
                     )
                 self.controller.executeCommand(sanitized_to_send)
         self.manual_cmd.text = ""
+        hide_mdi_intellisense()
         Clock.schedule_once(self.refocus_cmd)
 
     # -----------------------------------------------------------------------
@@ -8428,6 +8517,8 @@ def set_config_defaults(default_lang):
         Config.set("carvera", "gcode_color_param_ref", "181,206,168,255")
     if not Config.has_option("carvera", "gcode_color_math_keyword"):
         Config.set("carvera", "gcode_color_math_keyword", "215,186,125,255")
+    if not Config.has_option("carvera", "gcode_color_shell_command"):
+        Config.set("carvera", "gcode_color_shell_command", "47,117,181,255")
 
     Config.write()
 

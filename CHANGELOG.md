@@ -1,4 +1,5 @@
 [unreleased]
+- Enhancement: Intellisense-like popups explaining commands in lines selected in the gcode viewer and MDI terminal
 - Enhancement: Support for connect to the Makera Z1 over USB
 - Enhancement: The step size is now synchronized between the main screen and the Probing screen
 - Fixed: Y+/Y- jogging buttons on the Probing screen respect the configured Y axis inversion setting

@@ -14,6 +14,7 @@
 #:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
 #:include ui/GcodeColorSchemePanel.kv
 #:include addons/tooltips/Tooltips.kv
+#:include addons/intellisense/Intellisense.kv
 #:include ui/LocalFilePicker.kv
 #:include ui/DirectoryView.kv
 #:include ui/DropDownSplitter.kv
@@ -189,7 +190,9 @@
 <ButtonLabel@ButtonBehavior+Label>:
     valign: 'center'
 
-<Row@SelectableLabel>:
+<Row>:
+    markup: True
+    text: root.highlighted_text or root.plain_text
     canvas.before:
         Color:
             rgba: (80/255, 80/255, 80/255, 1) if self.selected else (50/255, 50/255, 50/255, 1)
@@ -199,6 +202,7 @@
     text_size: self.size
     halign: 'left'
     shorten: True
+    shorten_from: 'right'
 
 <GCodeRow>:
     orientation: 'horizontal'
@@ -231,6 +235,7 @@
         valign: 'middle'
         text_size: self.size
         shorten: True
+        shorten_from: 'right'
 
 <DataRow@SelectableBoxLayout>:
     canvas.before:
