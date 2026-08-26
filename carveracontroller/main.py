@@ -8167,6 +8167,9 @@ class MakeraApp(App):
     tooltip_delay = NumericProperty(0.5)
     mdi_data = ListProperty([])
     invert_y_axis_jogging = BooleanProperty(False)
+    jog_step_xy = StringProperty("10")
+    jog_step_z = StringProperty("1")
+    jog_step_a = StringProperty("90")
     active_color = ListProperty([0, 1, 1, 1])  # Default cyan (0, 255, 255) in 0-1 range
     jog_mode_text = StringProperty(tr._("Jog Mode:Step"))
     jog_speed_text = StringProperty(tr._("Jog Speed:Max"))
