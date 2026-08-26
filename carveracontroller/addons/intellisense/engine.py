@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,6 +24,8 @@ SUGGESTION_LIMIT = 12
 _GM_TOKEN_RE = re.compile(r"^([GMgm])(\d+)(?:\.(\d+))?$")
 _WORD_RE = re.compile(r"([A-Za-z])\s*([-+]?(?:\d+\.?\d*|\.\d+))")
 _GCODE_TOKEN_RE = re.compile(r"^[A-Za-z][-+]?(?:\d+\.?\d*|\.\d+)$")
+_MOTION_COMMANDS = frozenset({"G0", "G1", "G2", "G3"})
+_BARE_MOTION_WORDS = frozenset({"X", "Y", "Z", "A", "B", "C", "U", "V", "W", "I", "J", "K", "R"})
 _LETTER_CATEGORY = {
     "G": "g_command",
     "M": "m_command",
@@ -81,6 +84,8 @@ class ParsedLine:
     commands: list[ParsedCommand] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
     prefix: str = ""
+    params: dict[str, str] = field(default_factory=dict)
+    modal_note: str | None = None
 
 
 @dataclass(frozen=True)
@@ -184,7 +189,7 @@ def parse_line(line: str, catalog: CommandCatalog | None = None) -> ParsedLine:
     first = code.split(None, 1)[0]
     if _looks_like_gcode(code):
         parsed = _parse_gcode(raw, code, catalog)
-        if parsed.commands or parsed.unknown:
+        if parsed.commands or parsed.unknown or parsed.params:
             return parsed
 
     command = catalog.lookup(first)
@@ -192,7 +197,7 @@ def parse_line(line: str, catalog: CommandCatalog | None = None) -> ParsedLine:
         return _parse_shell(raw, code, catalog, command)
 
     gcode_parsed = _parse_gcode(raw, code, catalog)
-    if gcode_parsed.commands:
+    if gcode_parsed.commands or gcode_parsed.params:
         return gcode_parsed
     return ParsedLine(raw=raw, prefix=first, unknown=[first] if first else [])
 
@@ -239,9 +244,12 @@ def explain_line(
     catalog: CommandCatalog | None = None,
     settings: dict[str, Any] | None = None,
     colors: dict[str, str] | None = None,
+    preceding_lines: Iterable[str] | None = None,
 ) -> str | None:
     catalog = catalog or get_catalog()
     parsed = parse_line(line, catalog)
+    if not parsed.commands:
+        parsed = _apply_modal_motion(parsed, preceding_lines or (), catalog)
     if not parsed.commands:
         return None
     return _format_explanation(parsed, settings or {}, colors, include_omitted=False)
@@ -275,6 +283,48 @@ def highlight_param_name(name: str, colors: dict[str, str] | None = None) -> str
         category = _LETTER_CATEGORY.get(letter, "parameter")
     hex_color = effective.get(category, "#C8C8C8")
     return f"[color={hex_color}]{escape_gcode_markup(name)}[/color]"
+
+
+def highlight_mdi_line(line: str, colors: dict[str, str] | None = None, catalog: CommandCatalog | None = None) -> str:
+    """Highlight a sent MDI line, including SimpleShell commands."""
+    token, _has_trailer = _first_token(line)
+    if not token:
+        return highlight_gcode_line(line, colors)
+    catalog = catalog or get_catalog()
+    command = catalog.lookup(token)
+    if command is not None and not command.is_word_command:
+        return _highlight_shell_line(line, colors)
+    return highlight_gcode_line(line, colors)
+
+
+def highlight_suggestion_name(command: Command, colors: dict[str, str] | None = None) -> str:
+    """Color G/M command names in the MDI suggestion list; leave SimpleShell plain."""
+    if command.is_word_command:
+        return highlight_gcode_line(command.name, colors)
+    return escape_gcode_markup(command.name)
+
+
+def _highlight_shell_line(line: str, colors: dict[str, str] | None) -> str:
+    match = re.match(r"^(\s*)(\S+)(.*)$", line)
+    if not match:
+        return highlight_gcode_line(line, colors)
+    lead, raw_name, rest = match.groups()
+    effective = {**GCODE_DEFAULT_COLORS, **(colors or {})}
+    command_color = effective.get("g_command", "#569CD6")
+    flag_color = effective.get("parameter", "#9CDCFE")
+    parts = [escape_gcode_markup(lead), f"[color={command_color}]{escape_gcode_markup(raw_name)}[/color]"]
+    for piece in re.finditer(r"(\s+)|(\S+)", rest):
+        space, tok = piece.group(1), piece.group(2)
+        if space:
+            parts.append(escape_gcode_markup(space))
+            continue
+        if tok.startswith("-"):
+            parts.append(f"[color={flag_color}]{escape_gcode_markup(tok)}[/color]")
+        elif _GCODE_TOKEN_RE.fullmatch(tok):
+            parts.append(highlight_gcode_line(tok, colors))
+        else:
+            parts.append(escape_gcode_markup(tok))
+    return "".join(parts)
 
 
 def _command_from_raw(name: str, raw_cmd: dict[str, Any]) -> Command:
@@ -342,6 +392,8 @@ def _looks_like_gcode(code: str) -> bool:
     if not tokens:
         return False
     first = tokens[0]
+    if first.startswith("$"):
+        return False
     if _normalize_gm(first) or _GCODE_TOKEN_RE.fullmatch(first):
         return True
     return all(_GCODE_TOKEN_RE.fullmatch(tok) or tok.startswith("$") for tok in tokens)
@@ -370,7 +422,7 @@ def _parse_gcode(raw: str, code: str, catalog: CommandCatalog) -> ParsedLine:
 
     if not commands:
         prefix = code.split(None, 1)[0] if code else ""
-        return ParsedLine(raw=raw, unknown=unknown, prefix=prefix)
+        return ParsedLine(raw=raw, unknown=unknown, prefix=prefix, params=params)
 
     owners: dict[str, int] = {}
     for index, command in enumerate(commands):
@@ -464,6 +516,43 @@ def _command_name_complete(exact: Command | None, suggestions: tuple[Command, ..
     return not longer
 
 
+def _apply_modal_motion(
+    parsed: ParsedLine, preceding_lines: Iterable[str], catalog: CommandCatalog
+) -> ParsedLine:
+    if not _is_bare_motion_line(parsed):
+        return parsed
+    motion = _last_motion_command(preceding_lines, catalog)
+    if motion is None:
+        return parsed
+    return ParsedLine(
+        raw=parsed.raw,
+        commands=[ParsedCommand(command=motion, params=dict(parsed.params))],
+        unknown=parsed.unknown,
+        prefix=parsed.prefix,
+        params=parsed.params,
+        modal_note=f"This is a modal movement based on the previous {motion.name} command.",
+    )
+
+
+def _is_bare_motion_line(parsed: ParsedLine) -> bool:
+    if parsed.commands:
+        return False
+    return any(name.upper() in _BARE_MOTION_WORDS for name in parsed.params)
+
+
+def _last_motion_command(lines: Iterable[str], catalog: CommandCatalog) -> Command | None:
+    sequence = lines if isinstance(lines, (list, tuple)) else list(lines)
+    for line in reversed(sequence):
+        parsed = parse_line(line, catalog)
+        motion = None
+        for item in parsed.commands:
+            if item.command.name in _MOTION_COMMANDS:
+                motion = item.command
+        if motion is not None:
+            return motion
+    return None
+
+
 def _format_explanation(
     parsed: ParsedLine,
     settings: dict[str, Any],
@@ -472,15 +561,13 @@ def _format_explanation(
     include_omitted: bool,
 ) -> str:
     blocks: list[str] = []
-    source = parsed.raw.strip()
-    if source and source != parsed.commands[0].command.name:
-        blocks.append(highlight_gcode_line(source, colors))
-        blocks.append("")
 
     for item in parsed.commands:
         command = item.command
-        title = highlight_gcode_line(command.name, colors)
+        title = highlight_mdi_line(command.name, colors)
         blocks.append(f"{title}  {escape_gcode_markup(command.description)}")
+        if parsed.modal_note:
+            blocks.append(escape_gcode_markup(parsed.modal_note))
         if command.notes:
             blocks.append(escape_gcode_markup(command.notes))
 
@@ -506,7 +593,7 @@ def _parameter_rows(
 
     for name, spec in command.parameters.items():
         value = _provided_value(provided, name)
-        if value is None and not include_omitted:
+        if value is None and not include_omitted and not _param_has_default(spec):
             continue
         seen.add(name.upper())
         rows.append(_format_param_row(spec, value, settings, colors))
@@ -520,6 +607,10 @@ def _parameter_rows(
         fake = Parameter(name=name, required=False, description="")
         rows.append(_format_param_row(fake, value, settings, colors))
     return rows
+
+
+def _param_has_default(spec: Parameter) -> bool:
+    return spec.default_source is not None or spec.default is not None
 
 
 def _provided_value(provided: dict[str, str], name: str) -> str | None:
@@ -564,17 +655,12 @@ def _format_param_row(
 
 
 def _format_default(resolved: ResolvedDefault, spec: Parameter) -> str:
-    parts: list[str] = []
-    if resolved.value is not None:
-        formatted = _format_default_value(resolved.value)
-        if spec.unit:
-            formatted = f"{formatted} {spec.unit}"
-        parts.append(f"default {formatted}")
-    elif resolved.source:
-        parts.append(f"default from {resolved.source}")
-    if resolved.source and (resolved.from_settings or resolved.value is not None):
-        parts.append(resolved.source)
-    return " · ".join(parts)
+    if resolved.value is None:
+        return ""
+    formatted = _format_default_value(resolved.value)
+    if spec.unit:
+        formatted = f"{formatted} {spec.unit}"
+    return f"default {formatted}"
 
 
 def _format_default_value(value: Any) -> str:

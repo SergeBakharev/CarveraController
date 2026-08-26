@@ -190,7 +190,8 @@
 <ButtonLabel@ButtonBehavior+Label>:
     valign: 'center'
 
-<Row@SelectableLabel>:
+<Row>:
+    markup: True
     canvas.before:
         Color:
             rgba: (80/255, 80/255, 80/255, 1) if self.selected else (50/255, 50/255, 50/255, 1)
@@ -200,6 +201,7 @@
     text_size: self.size
     halign: 'left'
     shorten: True
+    shorten_from: 'right'
 
 <GCodeRow>:
     orientation: 'horizontal'
@@ -232,6 +234,7 @@
         valign: 'middle'
         text_size: self.size
         shorten: True
+        shorten_from: 'right'
 
 <DataRow@SelectableBoxLayout>:
     canvas.before:

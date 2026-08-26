@@ -17,8 +17,8 @@ from carveracontroller.addons.intellisense.engine import (
     analyze_mdi_input,
     explain_line,
     explain_signature,
+    highlight_suggestion_name,
 )
-from carveracontroller.CNC import highlight_gcode_line
 
 _POPUP_MAX_WIDTH = 440
 _POPUP_MAX_HEIGHT = 320
@@ -138,7 +138,7 @@ class MDICompletionPopup(BoxLayout):
                     MDISuggestionRow(
                         command_name=command.name,
                         summary=command.description,
-                        highlighted_name=highlight_gcode_line(command.name, colors),
+                        highlighted_name=highlight_suggestion_name(command, colors),
                         selected=index == self.selected_index,
                     )
                 )
@@ -208,8 +208,17 @@ class _IntellisenseHost:
         self._window_bound = True
 
     def show_gcode(self, row: Widget, reason: str = "select"):
-        text = getattr(row, "text", "") or ""
-        explanation = explain_line(text, settings=machine_settings(), colors=highlight_colors())
+        if not _row_explainable(row):
+            if reason == "select":
+                self.hide_gcode(row)
+            return
+        text = _row_plain_text(row)
+        explanation = explain_line(
+            text,
+            settings=machine_settings(),
+            colors=highlight_colors(),
+            preceding_lines=_preceding_lines(row),
+        )
         if not explanation:
             if reason == "select":
                 self.hide_gcode(row)
@@ -318,6 +327,37 @@ def get_host() -> _IntellisenseHost:
     return _host
 
 
+class IntellisenseExplainRowMixin:
+    """Hover and selection command-explanation popup for recycle-view rows."""
+
+    def bind_intellisense_hover(self):
+        if getattr(self, "_intel_hover_bound", False) or sys.platform == "ios":
+            return
+        Window.bind(mouse_pos=self._on_intel_mouse_pos)
+        self._intel_hover_bound = True
+
+    def _on_intel_mouse_pos(self, _window, pos):
+        if not self.get_root_window() or not _row_explainable(self):
+            cancel_gcode_hover(self)
+            return
+        if self.collide_point(*self.to_widget(*pos)):
+            schedule_gcode_hover(self)
+        else:
+            cancel_gcode_hover(self)
+
+    def intellisense_on_recycle(self):
+        cancel_gcode_hover(self)
+        self._intel_user_selected = False
+
+    def intellisense_on_selection(self, is_selected: bool):
+        if not is_selected or not _row_explainable(self):
+            self._intel_user_selected = False
+            hide_gcode_explain(self)
+            return
+        self._intel_user_selected = True
+        Clock.schedule_once(lambda _dt: show_gcode_explain(self, reason="select"), 0)
+
+
 def show_gcode_explain(row: Widget, reason: str = "select"):
     get_host().show_gcode(row, reason)
 
@@ -391,6 +431,51 @@ def _mdi_line_at_cursor(textinput) -> str:
     return lines[row]
 
 
+def _row_plain_text(row: Widget) -> str:
+    return (getattr(row, "plain_text", None) or getattr(row, "text", "") or "").strip()
+
+
+def _preceding_lines(row: Widget) -> list[str]:
+    line_no = getattr(row, "line_no", None)
+    if line_no:
+        try:
+            app = App.get_running_app()
+            root = getattr(app, "root", None) if app else None
+            lines = getattr(root, "lines", None) or []
+            end = max(int(line_no) - 1, 0)
+            return [str(line).rstrip("\r\n") for line in lines[:end]]
+        except (TypeError, ValueError):
+            return []
+    index = getattr(row, "index", None)
+    rv = _recycle_view_of(row)
+    if index is None or rv is None:
+        return []
+    preceding: list[str] = []
+    for entry in rv.data[: int(index)]:
+        if not entry.get("highlight"):
+            continue
+        preceding.append(str(entry.get("text") or ""))
+    return preceding
+
+
+def _recycle_view_of(row: Widget):
+    widget = getattr(row, "parent", None)
+    while widget is not None:
+        if hasattr(widget, "data") and hasattr(widget, "view_adapter"):
+            return widget
+        widget = getattr(widget, "parent", None)
+    return None
+
+
+def _row_explainable(row: Widget) -> bool:
+    """G-code file rows always explain. MDI history only explains sent commands."""
+    if not _row_plain_text(row):
+        return False
+    if not hasattr(row, "highlight"):
+        return True
+    return bool(row.highlight)
+
+
 def _anchor_contains(anchor: Widget, window_pos) -> bool:
     if not anchor.get_root_window():
         return False
@@ -407,7 +492,7 @@ def schedule_gcode_hover(row: Widget):
         delay = float(getattr(app, "tooltip_delay", 0.5) or 0.5)
 
     def _show(_dt):
-        if row.get_root_window() and getattr(row, "text", ""):
+        if row.get_root_window() and _row_explainable(row):
             show_gcode_explain(row, reason="hover")
 
     row._intel_hover_show = _show

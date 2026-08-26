@@ -12,6 +12,7 @@ from carveracontroller.addons.intellisense.engine import (
     explain_line,
     explain_signature,
     get_catalog,
+    highlight_mdi_line,
     parse_line,
     resolve_param_default,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "explain_line",
     "explain_signature",
     "get_catalog",
+    "highlight_mdi_line",
     "parse_line",
     "resolve_param_default",
 ]
