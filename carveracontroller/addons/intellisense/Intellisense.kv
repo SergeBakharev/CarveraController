@@ -1,7 +1,7 @@
-<IntellisensePopup>:
+<IntellisensePopupBase>:
     orientation: 'vertical'
     size_hint: None, None
-    padding: dp(10), dp(10)
+    padding: dp(6), dp(6)
     canvas.before:
         Color:
             rgba: 0.1, 0.1, 0.1, 0.94
@@ -13,6 +13,9 @@
         Line:
             width: 1.2
             rectangle: (self.x, self.y, self.width, self.height)
+
+<IntellisensePopup>:
+    padding: dp(10), dp(10)
     ScrollView:
         do_scroll_x: False
         bar_width: dp(6)
@@ -28,20 +31,6 @@
             color: 0.92, 0.92, 0.92, 1
 
 <MDICompletionPopup>:
-    orientation: 'vertical'
-    size_hint: None, None
-    padding: dp(6), dp(6)
-    canvas.before:
-        Color:
-            rgba: 0.1, 0.1, 0.1, 0.94
-        Rectangle:
-            pos: self.pos
-            size: self.size
-        Color:
-            rgba: 0.8, 0.8, 0.8, 1
-        Line:
-            width: 1.2
-            rectangle: (self.x, self.y, self.width, self.height)
     BoxLayout:
         id: body
         orientation: 'vertical'

@@ -356,10 +356,8 @@ class MDITextInput(TextInput):
 
     def on_focus(self, instance, have_focus):
         if have_focus:
-            Window.bind(on_key_down=self.on_keyboard_down)
             Clock.schedule_once(lambda _dt: update_mdi_intellisense(self), 0)
         else:
-            Window.unbind(on_key_down=self.on_keyboard_down)
             hide_mdi_intellisense()
 
     def _on_mdi_text(self, _instance, _value):
@@ -370,11 +368,11 @@ class MDITextInput(TextInput):
         key = keycode[0] if isinstance(keycode, (tuple, list)) else keycode
         if handle_mdi_intellisense_key(self, key, modifiers):
             return True
+        if self._handle_navigation_key(key, modifiers):
+            return True
         return super().keyboard_on_key_down(window, keycode, text, modifiers)
 
-    def on_keyboard_down(self, window, key, scancode, codepoint, modifiers):
-        if handle_mdi_intellisense_key(self, key, modifiers):
-            return True
+    def _handle_navigation_key(self, key, modifiers):
         ENTER_KEY = 13
         UP_ARROW_KEY = 273
         DOWN_ARROW_KEY = 274
@@ -2274,16 +2272,13 @@ class Row(IntellisenseExplainRowMixin, SelectableLabel):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.markup = True
         self.bind_intellisense_hover()
 
     def refresh_view_attrs(self, rv, index, data):
         self.intellisense_on_recycle()
         result = super().refresh_view_attrs(rv, index, data)
-        plain = data.get("text", "") or ""
-        self.plain_text = plain
-        highlighted = data.get("highlighted_text") or ""
-        self.text = highlighted if highlighted else plain
+        self.plain_text = data.get("text", "") or ""
+        self.highlighted_text = data.get("highlighted_text") or ""
         self.highlight = bool(data.get("highlight", False))
         return result
 
@@ -4306,11 +4301,19 @@ class Makera(RelativeLayout):
 
                     if msg == Controller.MSG_NORMAL:
                         logger.info(f"MDI Received: {line}")
-                        entry = {"text": line, "color": (103 / 255, 150 / 255, 186 / 255, 1)}
+                        entry = {
+                            "text": line,
+                            "color": (103 / 255, 150 / 255, 186 / 255, 1),
+                            "entry_type": "output",
+                        }
                         self._append_to_mdi([entry], log_to_mdi_data=line not in [" ", "ok", "Done ATC"])
                     elif msg == Controller.MSG_ERROR:
                         logger.error(f"MDI Received: {line}")
-                        entry = {"text": line, "color": (250 / 255, 105 / 255, 102 / 255, 1)}
+                        entry = {
+                            "text": line,
+                            "color": (250 / 255, 105 / 255, 102 / 255, 1),
+                            "entry_type": "output",
+                        }
                         self._append_to_mdi([entry], log_to_mdi_data=line not in [" ", "ok", "Done ATC"])
                 except:
                     logger.error(sys.exc_info()[1])
@@ -6645,7 +6648,11 @@ class Makera(RelativeLayout):
     def execCallback(self, line):
         logger.info(f"MDI Sent: {line}")
         entries = [
-            {"text": cmd, "color": (200 / 255, 200 / 255, 200 / 255, 1), "highlight": True}
+            {
+                "text": cmd,
+                "color": (200 / 255, 200 / 255, 200 / 255, 1),
+                "entry_type": "command",
+            }
             for cmd in line.strip().split("\n")
         ]
         self._append_to_mdi(entries, scroll_to_bottom=True)
@@ -6656,10 +6663,15 @@ class Makera(RelativeLayout):
         original_color = tuple(entry.get("original_color") or entry.get("color") or (1, 1, 1, 1))
         plain = text.strip()
         color = original_color
-        if "highlight" in entry:
+        entry_type = entry.get("entry_type")
+        if entry_type is not None:
+            should_highlight = entry_type == "command"
+        elif "highlight" in entry:
             should_highlight = bool(entry.get("highlight"))
         else:
+            # Compatibility with MDI history entries saved before entry_type existed.
             should_highlight = tuple(original_color[:3]) == (200 / 255, 200 / 255, 200 / 255)
+        entry_type = "command" if should_highlight else "output"
         hl_enabled = getattr(self, "gcode_highlight_enabled", False)
         hl_colors = getattr(self, "gcode_highlight_colors", None)
         if hl_enabled and should_highlight and plain:
@@ -6673,6 +6685,7 @@ class Makera(RelativeLayout):
         formatted["highlighted_text"] = highlighted
         formatted["color"] = color
         formatted["original_color"] = original_color
+        formatted["entry_type"] = entry_type
         formatted["highlight"] = should_highlight
         return formatted
 

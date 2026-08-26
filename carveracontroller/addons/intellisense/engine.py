@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Reversible
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -187,12 +187,20 @@ def parse_line(line: str, catalog: CommandCatalog | None = None) -> ParsedLine:
         return ParsedLine(raw=raw)
 
     first = code.split(None, 1)[0]
+    command = catalog.lookup(first)
+    if command and _is_passthrough_command(command):
+        return _parse_passthrough(raw, code, command)
+
+    if first.startswith("$"):
+        command = catalog.lookup(first.split("=", 1)[0])
+        if command and not command.is_word_command:
+            return _parse_shell(raw, code, catalog, command)
+
     if _looks_like_gcode(code):
         parsed = _parse_gcode(raw, code, catalog)
         if parsed.commands or parsed.unknown or parsed.params:
             return parsed
 
-    command = catalog.lookup(first)
     if command and not command.is_word_command:
         return _parse_shell(raw, code, catalog, command)
 
@@ -494,6 +502,17 @@ def _parse_shell(raw: str, code: str, _catalog: CommandCatalog, command: Command
     return ParsedLine(raw=raw, commands=[ParsedCommand(command=command, params=provided)], unknown=unused)
 
 
+def _is_passthrough_command(command: Command) -> bool:
+    return command.is_word_command and tuple(command.parameters) == ("command",)
+
+
+def _parse_passthrough(raw: str, code: str, command: Command) -> ParsedLine:
+    parts = code.split(None, 1)
+    remainder = parts[1] if len(parts) == 2 else ""
+    params = {"command": remainder} if remainder else {}
+    return ParsedLine(raw=raw, commands=[ParsedCommand(command=command, params=params)])
+
+
 def _active_mdi_line(text: str) -> str:
     if not text:
         return ""
@@ -516,9 +535,7 @@ def _command_name_complete(exact: Command | None, suggestions: tuple[Command, ..
     return not longer
 
 
-def _apply_modal_motion(
-    parsed: ParsedLine, preceding_lines: Iterable[str], catalog: CommandCatalog
-) -> ParsedLine:
+def _apply_modal_motion(parsed: ParsedLine, preceding_lines: Iterable[str], catalog: CommandCatalog) -> ParsedLine:
     if not _is_bare_motion_line(parsed):
         return parsed
     motion = _last_motion_command(preceding_lines, catalog)
@@ -541,8 +558,10 @@ def _is_bare_motion_line(parsed: ParsedLine) -> bool:
 
 
 def _last_motion_command(lines: Iterable[str], catalog: CommandCatalog) -> Command | None:
-    sequence = lines if isinstance(lines, (list, tuple)) else list(lines)
-    for line in reversed(sequence):
+    # Reversible collections are expected in chronological order. One-shot
+    # iterables may provide nearest-first lines to avoid copying large files.
+    nearest_first = reversed(lines) if isinstance(lines, Reversible) else iter(lines)
+    for line in nearest_first:
         parsed = parse_line(line, catalog)
         motion = None
         for item in parsed.commands:

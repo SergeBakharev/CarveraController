@@ -192,6 +192,7 @@
 
 <Row>:
     markup: True
+    text: root.highlighted_text or root.plain_text
     canvas.before:
         Color:
             rgba: (80/255, 80/255, 80/255, 1) if self.selected else (50/255, 50/255, 50/255, 1)
