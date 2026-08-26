@@ -305,22 +305,18 @@ def highlight_mdi_line(line: str, colors: dict[str, str] | None = None, catalog:
     return highlight_gcode_line(line, colors)
 
 
-def highlight_suggestion_name(command: Command, colors: dict[str, str] | None = None) -> str:
-    """Color G/M command names in the MDI suggestion list; leave SimpleShell plain."""
-    if command.is_word_command:
-        return highlight_gcode_line(command.name, colors)
-    return escape_gcode_markup(command.name)
-
-
 def _highlight_shell_line(line: str, colors: dict[str, str] | None) -> str:
     match = re.match(r"^(\s*)(\S+)(.*)$", line)
     if not match:
         return highlight_gcode_line(line, colors)
     lead, raw_name, rest = match.groups()
     effective = {**GCODE_DEFAULT_COLORS, **(colors or {})}
-    command_color = effective.get("g_command", "#569CD6")
+    command_color = effective.get("shell_command", GCODE_DEFAULT_COLORS["shell_command"])
     flag_color = effective.get("parameter", "#9CDCFE")
-    parts = [escape_gcode_markup(lead), f"[color={command_color}]{escape_gcode_markup(raw_name)}[/color]"]
+    parts = [
+        escape_gcode_markup(lead),
+        f"[color={command_color}]{escape_gcode_markup(raw_name)}[/color]",
+    ]
     for piece in re.finditer(r"(\s+)|(\S+)", rest):
         space, tok = piece.group(1), piece.group(2)
         if space:

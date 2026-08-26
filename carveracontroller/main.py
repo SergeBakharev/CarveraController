@@ -8517,6 +8517,8 @@ def set_config_defaults(default_lang):
         Config.set("carvera", "gcode_color_param_ref", "181,206,168,255")
     if not Config.has_option("carvera", "gcode_color_math_keyword"):
         Config.set("carvera", "gcode_color_math_keyword", "215,186,125,255")
+    if not Config.has_option("carvera", "gcode_color_shell_command"):
+        Config.set("carvera", "gcode_color_shell_command", "47,117,181,255")
 
     Config.write()
 

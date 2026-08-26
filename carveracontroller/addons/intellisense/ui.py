@@ -19,7 +19,7 @@ from carveracontroller.addons.intellisense.engine import (
     analyze_mdi_input,
     explain_line,
     explain_signature,
-    highlight_suggestion_name,
+    highlight_mdi_line,
 )
 
 _POPUP_MAX_WIDTH = 440
@@ -145,7 +145,7 @@ class MDICompletionPopup(IntellisensePopupBase):
                     MDISuggestionRow(
                         command_name=command.name,
                         summary=command.description,
-                        highlighted_name=highlight_suggestion_name(command, colors),
+                        highlighted_name=highlight_mdi_line(command.name, colors),
                         selected=index == self.selected_index,
                     )
                 )
