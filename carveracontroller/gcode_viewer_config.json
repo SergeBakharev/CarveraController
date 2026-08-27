@@ -118,5 +118,13 @@
         "section": "carvera",
         "key": "gcode_color_math_keyword",
         "default": "215,186,125,255"
+    },
+    {
+        "type": "colorpicker",
+        "title": "Shell Commands",
+        "desc": "Color for Shell command names in the MDI history and IntelliSense popups (ls, cat, $J, etc.).",
+        "section": "carvera",
+        "key": "gcode_color_shell_command",
+        "default": "47,117,181,255"
     }
 ]

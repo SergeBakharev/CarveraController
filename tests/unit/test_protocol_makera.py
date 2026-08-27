@@ -9,6 +9,7 @@ from carveracontroller.protocols.framing import (
 )
 from carveracontroller.protocols.makera import MakeraProtocol
 from carveracontroller.protocols.messages import MessageKind
+from carveracontroller.protocols.session import ProtocolSession
 
 
 def test_encode_realtime_and_command():
@@ -52,6 +53,58 @@ def test_feed_normal_info_and_load():
     msgs = proto.feed(build_frame(PTYPE_LOAD_INFO, b"file.nc\n"))
     assert msgs[0].kind == MessageKind.LOAD_CHUNK
     assert "file.nc" in msgs[0].text
+
+
+def test_feed_normal_info_buffers_until_newline():
+    proto = MakeraProtocol()
+    assert proto.feed(build_frame(PTYPE_NORMAL_INFO, b"hel")) == []
+    assert proto.feed(build_frame(PTYPE_NORMAL_INFO, b"lo")) == []
+
+    msgs = proto.feed(build_frame(PTYPE_NORMAL_INFO, b" world\r\n"))
+    assert len(msgs) == 1
+    assert msgs[0].kind == MessageKind.LINE
+    assert msgs[0].text == "hello world\r"
+
+
+def test_feed_normal_info_splits_on_embedded_newlines():
+    proto = MakeraProtocol()
+    msgs = proto.feed(build_frame(PTYPE_NORMAL_INFO, b"one\ntwo\npartial"))
+    assert [m.text for m in msgs] == ["one", "two"]
+
+    msgs = proto.feed(build_frame(PTYPE_NORMAL_INFO, b" line\n"))
+    assert len(msgs) == 1
+    assert msgs[0].text == "partial line"
+
+
+def test_feed_normal_info_reset_discards_partial_line():
+    proto = MakeraProtocol()
+    assert proto.feed(build_frame(PTYPE_NORMAL_INFO, b"leftover")) == []
+    proto.reset()
+    msgs = proto.feed(build_frame(PTYPE_NORMAL_INFO, b"fresh\n"))
+    assert len(msgs) == 1
+    assert msgs[0].text == "fresh"
+
+
+def test_session_emits_one_mdi_line_for_buffered_normal_info():
+    session = ProtocolSession()
+    session.select("makera")
+    assert session.feed(build_frame(PTYPE_NORMAL_INFO, b"Build version: ")) == []
+    assert session.feed(build_frame(PTYPE_NORMAL_INFO, b"edge-")) == []
+    msgs = session.feed(build_frame(PTYPE_NORMAL_INFO, b"123\r\n"))
+    assert len(msgs) == 1
+    assert msgs[0].kind == MessageKind.LINE
+    assert msgs[0].text == "Build version: edge-123"
+
+
+def test_feed_status_is_not_held_by_normal_info_buffer():
+    proto = MakeraProtocol()
+    assert proto.feed(build_frame(PTYPE_NORMAL_INFO, b"partial")) == []
+    msgs = proto.feed(build_frame(PTYPE_STATUS_RES, b"<Idle>"))
+    assert len(msgs) == 1
+    assert msgs[0].text == "<Idle>"
+    msgs = proto.feed(build_frame(PTYPE_NORMAL_INFO, b" line\n"))
+    assert len(msgs) == 1
+    assert msgs[0].text == "partial line"
 
 
 def test_feed_load_finish_and_error():
