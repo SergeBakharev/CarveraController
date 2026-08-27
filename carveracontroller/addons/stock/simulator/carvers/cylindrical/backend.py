@@ -39,9 +39,18 @@ from carveracontroller.addons.stock.stock_shape import (
 
 _EMPTY_R = np.float32(-1.0)
 _INF = 1.0e30
+# Past-center cuts store r=0. Drawing that pinches every θ vertex onto the
+# axis (black shards); dropping those dexels opens a hole in the skin. Inflate
+# to this floor at mesh time so the tube stays closed and non-degenerate.
+_MIN_SHELL_R = 0.02
 # Safety net if a tiny cell_size is passed directly (puck + High used to
 # explode to tens of thousands of θ samples).
 MAX_CYLINDRICAL_N_THETA = 4096
+
+
+def shell_floor_radius_mm(cell_size_mm: float) -> float:
+    """Smallest remaining radius that still meshes as a closed tube."""
+    return max(_MIN_SHELL_R, 0.25 * float(cell_size_mm))
 
 
 def pick_cylindrical_dims(bounds: StockBounds, cell_size_mm: float, diameter_mm: float) -> tuple[int, int, float]:
@@ -1196,7 +1205,11 @@ def _mesh_cylindrical_field(backend: CylindricalBackend) -> list[tuple[list[floa
     cos_t = backend._cos_t.astype(np.float64, copy=False)
     gx0 = ox
     xs = wx0 + (np.arange(gx0, gx0 + nx_win, dtype=np.float64) + 0.5) * vs
-    r = radii.astype(np.float64, copy=False)
+    r_occ = radii.astype(np.float64, copy=False)
+    floor = shell_floor_radius_mm(vs)
+    # Occupancy may be r=0 (past the axis). Draw a hairline tube so the skin
+    # stays closed without collapsing every θ onto the axis.
+    r = np.where(r_occ >= 0.0, np.maximum(r_occ, floor), r_occ)
 
     parts_c: list[np.ndarray] = []
     parts_n: list[np.ndarray] = []
@@ -1206,7 +1219,7 @@ def _mesh_cylindrical_field(backend: CylindricalBackend) -> list[tuple[list[floa
         pts[:, :, 0] = xs[:, None]
         pts[:, :, 1] = (ay + r * sin_t[None, :]).astype(np.float32)
         pts[:, :, 2] = (az + r * cos_t[None, :]).astype(np.float32)
-        r0, r1 = r[:-1], r[1:]
+        r0, r1 = r_occ[:-1], r_occ[1:]
         r0n = np.roll(r0, -1, axis=1)
         r1n = np.roll(r1, -1, axis=1)
         ok = (r0 >= 0.0) & (r1 >= 0.0) & (r0n >= 0.0) & (r1n >= 0.0)
@@ -1229,11 +1242,13 @@ def _mesh_cylindrical_field(backend: CylindricalBackend) -> list[tuple[list[floa
         if li < 0 or li >= nx_win:
             return
         ring = r[li]
-        ok = ring >= 0.0
+        occ = r_occ[li]
+        rn = np.roll(ring, -1)
+        occ_n = np.roll(occ, -1)
+        ok = (occ >= 0.0) & (occ_n >= 0.0)
         if not ok.any():
             return
         x = wx0 + (ix + 0.5) * vs
-        rn = np.roll(ring, -1)
         p_it = np.stack((np.full(n_theta, x), ay + ring * sin_t, az + ring * cos_t), axis=1).astype(np.float32)
         p_n = np.stack(
             (np.full(n_theta, x), ay + rn * np.roll(sin_t, -1), az + rn * np.roll(cos_t, -1)),

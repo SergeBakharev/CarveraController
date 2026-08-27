@@ -12,6 +12,7 @@ from carveracontroller.addons.stock.simulator.carvers.cylindrical.backend import
     _xyz_inside_tool,
     pick_cylindrical_dims,
     pose_ts_cell_aligned,
+    shell_floor_radius_mm,
 )
 from carveracontroller.addons.stock.stock_geometry import StockBounds, rotate_yz
 from carveracontroller.addons.stock.stock_shape import RotaryCylindricalStock
@@ -324,6 +325,85 @@ def test_cylindrical_plunge_clears_far_theta():
     cyl.carve_segment((20.0, 0.0, 14.0), (20.0, 0.0, -14.0), tool, a0=0.0, a1=0.0)
     assert not cyl.is_solid_at_world(20.0, 0.0, 10.0)
     assert not cyl.is_solid_at_world(20.0, 0.0, -10.0)
+
+
+def _shell_triangle_stats(cyl: CylindricalBackend) -> tuple[int, int, int, int]:
+    """Return (checked, flipped, near-axis, degenerate) counts for shell triangles."""
+    meshes = cyl.mesh_tiles(cyl.initial_surface_keys())
+    flipped = 0
+    axis_hits = 0
+    degen = 0
+    checked = 0
+    ay, az = float(cyl.axis_y), float(cyl.axis_z)
+    for packed in meshes.values():
+        if not packed:
+            continue
+        verts = np.asarray(packed[0], dtype=np.float32).reshape(-1, 12)
+        idx = np.asarray(packed[1], dtype=np.int32)
+        pos = verts[:, :3]
+        for i in range(0, idx.size, 3):
+            a, b, c = pos[idx[i]], pos[idx[i + 1]], pos[idx[i + 2]]
+            n = np.cross(b - a, c - a)
+            if abs(a[0] - b[0]) < 1e-4 and abs(a[0] - c[0]) < 1e-4:
+                continue
+            if np.linalg.norm(n) < 1e-10:
+                degen += 1
+                continue
+            mid = (a + b + c) / 3.0
+            hint = np.array((0.0, mid[1] - ay, mid[2] - az), dtype=np.float64)
+            checked += 1
+            if float(np.dot(n, hint)) <= 0.0:
+                flipped += 1
+            rs = [float(np.hypot(p[1] - ay, p[2] - az)) for p in (a, b, c)]
+            if min(rs) < 0.5 * shell_floor_radius_mm(cyl.cell_size):
+                axis_hits += 1
+    return checked, flipped, axis_hits, degen
+
+
+def test_cylindrical_through_axis_does_not_pinch_mesh():
+    """Past-center wrapping must keep a closed tube, not pinch onto the A-axis.
+
+    Occupancy may go to r=0; the mesh inflates that to a hairline radius so θ
+    vertices stay distinct. Dropping those dexels opened a hole in the skin.
+    """
+    bounds = StockBounds(min_x=0, min_y=-10, min_z=-10, max_x=40, max_y=10, max_z=10)
+    shape = RotaryCylindricalStock(diameter_mm=20.0, length_mm=40.0)
+    cyl = CylindricalBackend(bounds, 0.4, shape)
+    x = 20.0
+    z_vals = np.linspace(3.0, -5.0, 9)
+    poses = [((x, 0.0, float(z)), 45.0 * i) for i, z in enumerate(z_vals)]
+    for i in range(1, len(poses)):
+        (p0, a0), (p1, a1) = poses[i - 1], poses[i]
+        cyl.carve_segment(p0, p1, _vbit(), a0=a0, a1=a1)
+    ix = cyl._x_index(x)
+    ring = cyl.radii[ix]
+    assert np.any(ring <= 1e-6)
+    meshes = cyl.mesh_tiles(cyl.initial_surface_keys())
+    n_verts = sum(len(m[0]) // 12 for m in meshes.values() if m)
+    n_quads = (cyl.nx - 1) * cyl.n_theta + 2 * cyl.n_theta
+    assert n_verts == n_quads * 4
+    checked, flipped, axis_hits, degen = _shell_triangle_stats(cyl)
+    assert checked > 0
+    assert flipped == 0
+    assert axis_hits == 0
+    assert degen == 0
+
+
+def test_cylindrical_thin_waist_still_meshes():
+    """A uniform leftover radius well above the through-cut floor stays a tube."""
+    bounds = StockBounds(min_x=0, min_y=-10, min_z=-10, max_x=20, max_y=10, max_z=10)
+    shape = RotaryCylindricalStock(diameter_mm=20.0, length_mm=20.0)
+    cyl = CylindricalBackend(bounds, 2.0, shape)
+    cyl.radii[:, :] = np.float32(0.3)
+    meshes = cyl.mesh_tiles(cyl.initial_surface_keys())
+    n_verts = sum(len(m[0]) // 12 for m in meshes.values() if m)
+    n_quads = (cyl.nx - 1) * cyl.n_theta + 2 * cyl.n_theta
+    assert n_verts == n_quads * 4
+    checked, flipped, axis_hits, degen = _shell_triangle_stats(cyl)
+    assert checked > 0
+    assert flipped == 0
+    assert axis_hits == 0
+    assert degen == 0
 
 
 def test_pick_cylindrical_dims_caps_n_theta_on_puck():
