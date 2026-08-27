@@ -2475,7 +2475,8 @@ class GCodeRow(IntellisenseExplainRowMixin, RecycleDataViewBehavior, BoxLayout):
                 pass
             if hasattr(app.root, "gcode_play_slider") and app.root.gcode_play_slider:
                 distance = app.root.gcode_viewer.get_distance_by_lineidx(actual_line_number, 0.5)
-                slider_value = distance * 1000.0 / app.root.gcode_viewer_distance
+                total = app.root.gcode_viewer_distance
+                slider_value = (distance * 1000.0 / total) if total else 0.0
                 Clock.schedule_once(lambda dt: setattr(app.root.gcode_play_slider, "value", slider_value), 0)
 
     def on_keyboard_down(self, instance, keyboard, keycode, text, modifiers):
@@ -7662,7 +7663,8 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def gcode_play_call_back(self, distance, line_number):
         if not self.loading_file:
-            self.gcode_play_slider.value = distance * 1000.0 / self.gcode_viewer_distance
+            total = self.gcode_viewer_distance
+            self.gcode_play_slider.value = (distance * 1000.0 / total) if total else 0.0
             # Update line highlighting in file viewer during playback.
             # Skip when callback was triggered by a user click (set_distance_by_lineidx from click
             # invokes this before GcodeViewer updates cur_line_index, so line_number would be stale).
