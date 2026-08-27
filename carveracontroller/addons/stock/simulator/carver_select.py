@@ -13,7 +13,7 @@ from carveracontroller.addons.tool_visualization.mesh_builder import (
     resolve_section_lengths,
     tool_profile,
 )
-from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition
+from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition, ToolType
 
 # Backends the worker can run.
 BACKEND_HEIGHTMAP = "heightmap"
@@ -112,10 +112,12 @@ def profile_undercuts(
 
 
 def tool_table_has_undercut(tool_table: dict | None, tool_unit_scale: float = 1.0) -> bool:
-    """True if any tool in the table has a re-entrant cutting profile."""
+    """True if any tool in the table has a re-entrant cutting profile (excl. thread mills)."""
     if not tool_table:
         return False
     for tool_def in tool_table.values():
+        if getattr(tool_def, "tool_type", None) is ToolType.THREAD_MILL:
+            continue
         profile = resolve_cutting_profile(tool_def, tool_unit_scale=tool_unit_scale)
         if profile_undercuts(profile):
             return True

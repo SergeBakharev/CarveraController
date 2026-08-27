@@ -141,22 +141,38 @@ def test_auto_4axis_cylindrical():
     assert BACKEND_HEIGHTMAP not in rec.allowed
 
 
-def test_thread_mill_recommends_voxel_allows_heightmap():
+def test_thread_mill_recommends_heightmap():
     rec = recommend_carver(
         mode=MODE_AUTO,
         has_4axis=False,
         tool_table={1: _thread_mill()},
     )
-    assert rec.has_undercut
-    assert rec.backend == BACKEND_VOXEL
+    assert not rec.has_undercut
+    assert rec.backend == BACKEND_HEIGHTMAP
     assert BACKEND_HEIGHTMAP in rec.allowed
-    override = recommend_carver(
-        mode=MODE_HEIGHTMAP,
-        has_4axis=False,
+    assert BACKEND_VOXEL in rec.allowed
+    assert not rec.accuracy_tradeoff
+
+
+def test_thread_mill_4axis_recommends_cylindrical():
+    rec = recommend_carver(
+        mode=MODE_AUTO,
+        has_4axis=True,
         tool_table={1: _thread_mill()},
     )
-    assert override.backend == BACKEND_HEIGHTMAP
-    assert override.accuracy_tradeoff
+    assert not rec.has_undercut
+    assert rec.backend == BACKEND_CYLINDRICAL
+    assert BACKEND_VOXEL in rec.allowed
+
+
+def test_thread_mill_with_lollipop_recommends_voxel():
+    rec = recommend_carver(
+        mode=MODE_AUTO,
+        has_4axis=False,
+        tool_table={1: _thread_mill(), 2: _lollipop()},
+    )
+    assert rec.has_undercut
+    assert rec.backend == BACKEND_VOXEL
 
 
 def test_lollipop_recommends_voxel():
@@ -165,17 +181,6 @@ def test_lollipop_recommends_voxel():
         has_4axis=False,
         tool_table={1: _lollipop()},
     )
-    assert rec.backend == BACKEND_VOXEL
-
-
-def test_thread_mill_undercut_does_not_depend_on_cell_size():
-    """Shallow grooves must still select voxels — dexels cannot store them."""
-    rec = recommend_carver(
-        mode=MODE_AUTO,
-        has_4axis=False,
-        tool_table={1: _thread_mill()},
-    )
-    assert rec.has_undercut
     assert rec.backend == BACKEND_VOXEL
 
 
