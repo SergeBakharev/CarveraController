@@ -1143,6 +1143,9 @@ class CoordPopup(ModalView):
     mode = StringProperty()
     vacuummode = ObjectProperty()
     extoutmode = ObjectProperty()
+    autoblowmode = ObjectProperty()
+    autobedcleanmode = ObjectProperty()
+    ionizermode = ObjectProperty()
     origin_popup = ObjectProperty()
     zprobe_popup = ObjectProperty()
     auto_level_popup = ObjectProperty()
@@ -1270,6 +1273,21 @@ class CoordPopup(ModalView):
             self.extoutmode = True
         else:
             self.extoutmode = False
+
+        if CNC.vars["autoblowmode"] == 1:
+            self.autoblowmode = True
+        else:
+            self.autoblowmode = False
+
+        if CNC.vars["autobedcleanmode"] == 1:
+            self.autobedcleanmode = True
+        else:
+            self.autobedcleanmode = False
+
+        if CNC.vars["ionizermode"] == 1:
+            self.ionizermode = True
+        else:
+            self.ionizermode = False
 
         # init margin widgets
         self.cbx_margin.active = self.config["margin"]["active"]
@@ -3091,6 +3109,9 @@ class Makera(RelativeLayout):
         "spindle_scale": [0.0, 100],
         "vacuum_mode": [0.0, 0],
         "extout_mode": [0.0, 0],
+        "autoblow_mode": [0.0, 0],
+        "autobedclean_mode": [0.0, 0],
+        "ionizer_mode": [0.0, 0],
         "laser_mode": [0.0, 0],
         "laser_scale": [0.0, 100],
         "laser_test": [0.0, 0],
@@ -6270,6 +6291,27 @@ class Makera(RelativeLayout):
                     if extout_switch_play.active != CNC.vars["extoutmode"]:
                         extout_switch_play.set_flag = True
                         extout_switch_play.active = CNC.vars["extoutmode"]
+
+            for control_name, setter, var_name, switch_id in (
+                ("autoblow_mode", self.controller.setAutoBlowMode, "autoblowmode", "autoblow_switch_play"),
+                (
+                    "autobedclean_mode",
+                    self.controller.setAutoBedCleanMode,
+                    "autobedcleanmode",
+                    "autobedclean_switch_play",
+                ),
+                ("ionizer_mode", self.controller.setIonizerMode, "ionizermode", "ionizer_switch_play"),
+            ):
+                elapsed = now - self.control_list[control_name][0]
+                if elapsed < 2:
+                    if elapsed > 0.5:
+                        setter(self.control_list[control_name][1])
+                        self.control_list[control_name][0] = now - 2
+                elif elapsed > 3 and self.coord_popup._is_open:
+                    switch = self.coord_popup.ids[switch_id]
+                    if switch.active != CNC.vars[var_name]:
+                        switch.set_flag = True
+                        switch.active = CNC.vars[var_name]
 
             elapsed = now - self.control_list["spindle_scale"][0]
             if elapsed < 2:

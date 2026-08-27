@@ -561,6 +561,27 @@ class Controller:
         else:
             self.executeCommand("M332.3\n")
 
+    def setAutoBlowMode(self, mode):
+        CNC.vars["autoblowmode"] = 1 if mode else 0
+        if mode:
+            self.executeCommand("M331.1\n")
+        else:
+            self.executeCommand("M332.1\n")
+
+    def setAutoBedCleanMode(self, mode):
+        CNC.vars["autobedcleanmode"] = 1 if mode else 0
+        if mode:
+            self.executeCommand("M331.2\n")
+        else:
+            self.executeCommand("M332.2\n")
+
+    def setIonizerMode(self, mode):
+        CNC.vars["ionizermode"] = 1 if mode else 0
+        if mode:
+            self.executeCommand("M331.4\n")
+        else:
+            self.executeCommand("M332.4\n")
+
     def setLaserMode(self, mode):
         if mode:
             self.executeCommand("M321\n")
