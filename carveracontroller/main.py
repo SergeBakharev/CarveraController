@@ -1139,6 +1139,35 @@ class FilePopup(ModalView):
         self.btn_select.disabled = (not single_select) or select_dir
 
 
+def background_image_model(name):
+    """Return the machine model a built-in background belongs to, or None if unknown."""
+    if name.startswith("CA1") or name.startswith("Air "):
+        return "CA1"
+    if name.startswith("C1"):
+        return "C1"
+    if name.startswith("Z1"):
+        return "Z1"
+    return None
+
+
+def filter_background_images(builtin_names, custom_names, model):
+    """Built-ins matching `model`, then unprefixed custom images (always shown)."""
+    matching = [name for name in builtin_names if background_image_model(name) == model]
+    matching.sort(key=str.casefold)
+    custom = sorted(custom_names, key=str.casefold)
+    return matching + custom
+
+
+def select_background_image(saved, matching):
+    """Pick a spinner value. persist is False when falling back so a mismatched saved setting is kept."""
+    values = ["None"] + list(matching)
+    if saved in values:
+        return saved, True
+    if matching:
+        return matching[0], False
+    return "None", False
+
+
 class CoordPopup(ModalView):
     config = {}
     mode = StringProperty()
@@ -1173,33 +1202,54 @@ class CoordPopup(ModalView):
         self.mode = "Run"  # 'Margin' / 'ZProbe' / 'Leveling'
         super().__init__(**kwargs)
         self.user_play_file_image_dir = Config.get("carvera", "custom_bkg_img_dir")
-        self.background_image_files = []
+        self.custom_background_image_files = []
+        self.builtin_background_image_files = []
+        self._suppress_background_image_config_write = False
 
         default_bkg_images = os.path.join(os.path.dirname(__file__), "data/play_file_image_backgrounds")
 
         if os.path.exists(self.user_play_file_image_dir):
-            self.background_image_files = [
+            self.custom_background_image_files = [
                 f.replace(".png", "") for f in os.listdir(self.user_play_file_image_dir) if f.endswith(".png")
             ]
 
         for f in os.listdir(default_bkg_images):
             if f.endswith(".png"):
-                self.background_image_files.append(f.replace(".png", ""))
+                self.builtin_background_image_files.append(f.replace(".png", ""))
 
-        # Ensure the spinner is updated after initialization
         Clock.schedule_once(self.populate_spinner, 0)
+        app = App.get_running_app()
+        if app is not None:
+            app.bind(model=self._on_machine_model_changed)
 
-    def populate_spinner(self, dt):
-        if "background_image_spinner" in self.ids:
-            self.ids.background_image_spinner.values = ["None"] + self.background_image_files
-            saved_image = Config.get("carvera", "background_image")
-            if saved_image in self.ids.background_image_spinner.values:
-                self.ids.background_image_spinner.text = saved_image
-                self.update_background_image(saved_image)
+    def _on_machine_model_changed(self, _instance, _value):
+        self.populate_spinner()
+
+    def populate_spinner(self, dt=None):
+        if "background_image_spinner" not in self.ids:
+            return
+        app = App.get_running_app()
+        model = app.model if app is not None else ""
+        matching = filter_background_images(
+            self.builtin_background_image_files, self.custom_background_image_files, model
+        )
+        saved_image = Config.get("carvera", "background_image")
+        selected, persist = select_background_image(saved_image, matching)
+        spinner = self.ids.background_image_spinner
+        self._suppress_background_image_config_write = not persist
+        try:
+            spinner.values = ["None"] + matching
+            if spinner.text != selected:
+                spinner.text = selected
+            else:
+                self.update_background_image(selected)
+        finally:
+            self._suppress_background_image_config_write = False
 
     def update_background_image(self, filename):
-        Config.set("carvera", "background_image", filename)
-        Config.write()
+        if not self._suppress_background_image_config_write:
+            Config.set("carvera", "background_image", filename)
+            Config.write()
 
         if filename != "None":
             old_source = os.path.join(os.path.dirname(__file__), "data/play_file_image_backgrounds", filename)
