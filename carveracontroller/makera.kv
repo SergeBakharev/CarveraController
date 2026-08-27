@@ -59,8 +59,8 @@
 <CNCWorkspace>:
     size_hint_x: None
     size_hint_y: None
-    width: self.parent.width if self.parent.width > 0 and self.parent.height / self.parent.width > 0.7 else self.parent.height / 0.7
-    height: self.parent.height if self.parent.width > 0 and self.parent.height / self.parent.width < 0.7 else self.parent.width * 0.7
+    width: self.parent.width if self.parent.width > 0 and self.parent.height / self.parent.width > self.workspace_aspect else self.parent.height / self.workspace_aspect
+    height: self.parent.height if self.parent.width > 0 and self.parent.height / self.parent.width < self.workspace_aspect else self.parent.width * self.workspace_aspect
 
 <IconButton>:
     width: '50dp'
@@ -1712,13 +1712,13 @@
                         group: 'anchor'
                         active: False
                         on_press: root.update_offsets()
-                        disabled: app.has_4axis
+                        disabled: app.has_4axis or not app.has_anchor2
                     MCQLabel:
                         on_press: 
                             cbx_anchor2._do_press()
                             root.update_offsets()
                         text: tr._('Anchor2')
-                        disabled: app.has_4axis
+                        disabled: app.has_4axis or not app.has_anchor2
                     MCQCheckBox:
                         id: cbx_4axis_origin
                         group: 'anchor'
@@ -4036,7 +4036,7 @@
                                                 height: '35dp'
                                                 disabled: app.state != 'Idle'
                                                 text: tr._('Goto...')
-                                                values: 'Clearance', 'Work Origin', 'Path Origin', 'Anchor1', 'Anchor2'
+                                                values: ['Clearance', 'Work Origin', 'Path Origin', 'Anchor1', 'Anchor2'] if app.has_anchor2 else ['Clearance', 'Work Origin', 'Path Origin', 'Anchor1']
                                                 on_text:
                                                     if self.text != tr._("Goto..."): app.root.controller.gotoPosition(self.text)
                                                     if self.text != tr._("Goto..."): self.text = tr._('Goto...')
