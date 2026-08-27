@@ -2364,3 +2364,242 @@ def test_reset_seeds_rotary_cylindrical_occupancy():
         assert not sim.grid.is_solid_at_world(40.0, 19.0, 19.0)
     finally:
         sim.stop()
+
+
+def test_take_pending_mesh_keys_caps_and_flush_takes_all():
+    from carveracontroller.addons.stock.simulator.worker import _take_pending_mesh_keys
+
+    pending = {(2, 0, 0), (0, 0, 0), (1, 0, 0), (3, 0, 0)}
+    batch = _take_pending_mesh_keys(pending, unlimited=False, cap=2)
+    assert len(batch) == 2
+    assert batch == {(0, 0, 0), (1, 0, 0)}
+    assert pending == {(2, 0, 0), (3, 0, 0)}
+    rest = _take_pending_mesh_keys(pending, unlimited=True, cap=2)
+    assert rest == {(2, 0, 0), (3, 0, 0)}
+    assert pending == set()
+
+
+def test_take_pending_mesh_keys_prefers_connected_blob_around_tool():
+    from carveracontroller.addons.stock.simulator.worker import _take_pending_mesh_keys
+
+    pending = {(0, 0, 0), (10, 0, 0), (11, 0, 0), (12, 0, 0)}
+    batch = _take_pending_mesh_keys(pending, unlimited=False, cap=2, around=(11, 0, 0))
+    assert batch == {(10, 0, 0), (11, 0, 0)} or batch == {(11, 0, 0), (12, 0, 0)}
+    assert (11, 0, 0) in batch
+    assert (0, 0, 0) not in batch
+    assert (0, 0, 0) in pending
+
+
+def test_take_pending_mesh_keys_fills_cap_from_nearest_leftover():
+    """After the live blob, leftover tiles nearest the tool fill the rest of the cap."""
+    from carveracontroller.addons.stock.simulator.worker import _take_pending_mesh_keys
+
+    pending = {(0, 0, 0), (8, 0, 0), (9, 0, 0)}
+    batch = _take_pending_mesh_keys(pending, unlimited=False, cap=2, around=(0, 0, 0))
+    assert batch == {(0, 0, 0), (8, 0, 0)}
+    assert pending == {(9, 0, 0)}
+
+
+def test_play_mesh_throttle_matches_pause():
+    from carveracontroller.addons.stock.simulator import DEFAULT_MESH_THROTTLE_S, PLAY_MESH_THROTTLE_S
+
+    assert PLAY_MESH_THROTTLE_S == DEFAULT_MESH_THROTTLE_S
+    assert PLAY_MESH_THROTTLE_S <= 0.15
+
+
+def test_display_follow_yields_for_mesh_while_behind():
+    """Playhead-ahead follow must remesh before occupancy catches up."""
+    from carveracontroller.addons.stock.simulator import StockSimulator
+
+    bounds = StockBounds(min_x=-10, min_y=-5, min_z=-5, max_x=10, max_y=5, max_z=0)
+    tool = _flat_tool()
+    n_steps = 40
+    positions, vertex_types, tools = _linear_x_toolpath(n_steps, x0=-8.0, dx=0.4)
+    events: list[tuple[dict, int]] = []
+
+    sim = StockSimulator(
+        on_meshes_ready=lambda m: events.append((dict(m), sim.carved_vertex)),
+        mesh_throttle_s=0.05,
+    )
+    try:
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, carver_mode="voxel")
+        assert _wait_until(lambda: not sim.resimulating, timeout=2.0)
+        orig = sim._carve_one
+
+        def _slow(backend, job, tool_unit_scale=1.0):
+            time.sleep(0.03)
+            return orig(backend, job, tool_unit_scale)
+
+        sim._carve_one = _slow  # type: ignore[method-assign]
+        events.clear()
+        sim.set_toolpath(positions, vertex_types, tools, {1: tool})
+        sim.set_idle_ahead_allowed(False)
+        sim.set_display_vertex(n_steps)
+
+        def _patch_while_behind():
+            return any(
+                "__replace__" not in meshes and "__clear_all__" not in meshes and carved < n_steps
+                for meshes, carved in events
+            )
+
+        assert _wait_until(_patch_while_behind, timeout=5.0)
+        assert sim.carved_vertex < n_steps
+        assert _wait_until(lambda: sim.carved_vertex >= n_steps, timeout=5.0)
+    finally:
+        sim.stop()
+
+
+def test_mesh_emit_caps_dirty_tiles_during_follow(monkeypatch):
+    import carveracontroller.addons.stock.simulator.worker as worker_mod
+    from carveracontroller.addons.stock.simulator import StockSimulator
+
+    monkeypatch.setattr(worker_mod, "MAX_MESH_TILES_PER_EMIT", 2)
+    bounds = StockBounds(min_x=-20, min_y=-8, min_z=-5, max_x=20, max_y=8, max_z=0)
+    tool = _flat_tool(diameter=4.0, flute_length=6.0)
+    n_steps = 80
+    positions, vertex_types, tools = _linear_x_toolpath(n_steps, x0=-16.0, dx=0.4)
+    patch_dirty: list[int] = []
+
+    sim = StockSimulator(on_meshes_ready=lambda _m: None, mesh_throttle_s=0.02)
+    orig = sim._try_mesh_and_emit
+
+    def _count(backend, dirty, gen, *, replace, force_emit=False):
+        if not replace:
+            patch_dirty.append(len(dirty))
+        return orig(backend, dirty, gen, replace=replace, force_emit=force_emit)
+
+    try:
+        sim.reset(bounds, cell_size_mm=1.0, enable=True, carver_mode="voxel")
+        assert _wait_until(lambda: not sim.resimulating, timeout=2.0)
+        sim._try_mesh_and_emit = _count  # type: ignore[method-assign]
+        patch_dirty.clear()
+        sim.set_toolpath(positions, vertex_types, tools, {1: tool})
+        sim.set_idle_ahead_allowed(False)
+        sim.set_display_vertex(n_steps)
+        assert _wait_until(lambda: sim.carved_vertex >= n_steps, timeout=5.0)
+        time.sleep(0.1)
+        assert patch_dirty, "expected incremental mesh patches"
+        assert max(patch_dirty) <= 2
+        assert len(patch_dirty) >= 2
+    finally:
+        sim.stop()
+
+
+def test_mesh_flush_emits_all_dirty_tiles(monkeypatch):
+    import carveracontroller.addons.stock.simulator.worker as worker_mod
+    from carveracontroller.addons.stock.simulator import StockSimulator
+
+    monkeypatch.setattr(worker_mod, "MAX_MESH_TILES_PER_EMIT", 1)
+    bounds = StockBounds(min_x=-20, min_y=-8, min_z=-5, max_x=20, max_y=8, max_z=0)
+    tool = _flat_tool(diameter=4.0, flute_length=6.0)
+    n_steps = 80
+    positions, vertex_types, tools = _linear_x_toolpath(n_steps, x0=-16.0, dx=0.4)
+    flush_dirty: list[int] = []
+
+    sim = StockSimulator(on_meshes_ready=lambda _m: None, mesh_throttle_s=0.02)
+    orig = sim._try_mesh_and_emit
+
+    def _count(backend, dirty, gen, *, replace, force_emit=False):
+        if force_emit:
+            flush_dirty.append(len(dirty))
+        return orig(backend, dirty, gen, replace=replace, force_emit=force_emit)
+
+    try:
+        sim.reset(bounds, cell_size_mm=1.0, enable=True, carver_mode="voxel")
+        assert _wait_until(lambda: not sim.resimulating, timeout=2.0)
+        sim._try_mesh_and_emit = _count  # type: ignore[method-assign]
+        sim.set_mesh_updates_enabled(False)
+        sim.set_toolpath(positions, vertex_types, tools, {1: tool})
+        sim.set_display_vertex(n_steps)
+        assert _wait_until(lambda: sim.carved_vertex >= n_steps, timeout=5.0)
+        flush_dirty.clear()
+        sim.set_mesh_updates_enabled(True)
+        sim.request_mesh_flush()
+        assert _wait_until(lambda: any(n > 1 for n in flush_dirty), timeout=5.0)
+    finally:
+        sim.stop()
+
+
+def test_cylindrical_display_follow_emits_patches_not_replace():
+    from carveracontroller.addons.stock.simulator import StockSimulator
+    from carveracontroller.addons.stock.stock_shape import RotaryCylindricalStock
+
+    bounds = StockBounds(min_x=0, min_y=-14, min_z=-14, max_x=40, max_y=14, max_z=14)
+    shape = RotaryCylindricalStock(diameter_mm=28.0, length_mm=40.0)
+    tool = _flat_tool(diameter=6.0, flute_length=8.0)
+    n_steps = 16
+    positions: list[float] = []
+    vertex_types: list[float] = []
+    tools: list[int] = []
+    angles: list[float] = []
+    for i in range(n_steps + 1):
+        positions.extend((8.0 + i * 1.0, 0.0, 8.0))
+        vertex_types.append(1.0)
+        tools.append(1)
+        angles.append(0.0)
+    vertex_types[0] = 2.0
+    meshes_received: list[dict] = []
+
+    sim = StockSimulator(on_meshes_ready=lambda m: meshes_received.append(m), mesh_throttle_s=0.02)
+    try:
+        sim.reset(
+            bounds,
+            cell_size_mm=1.0,
+            enable=True,
+            carver_mode="cylindrical",
+            shape=shape,
+        )
+        assert _wait_until(lambda: any("__replace__" in m for m in meshes_received), timeout=2.0)
+        meshes_received.clear()
+        sim.set_toolpath(
+            positions,
+            vertex_types,
+            tools,
+            {1: tool},
+            angles=angles,
+            has_4axis=True,
+        )
+        sim.set_display_vertex(n_steps)
+        assert _wait_until(lambda: sim.carved_vertex >= n_steps, timeout=5.0)
+        time.sleep(0.12)
+        assert meshes_received, "expected cylindrical mesh patches while following the playhead"
+        assert all("__replace__" not in m and "__clear_all__" not in m for m in meshes_received)
+    finally:
+        sim.stop()
+
+
+def test_paused_scrub_emits_mesh_before_idle_bake(monkeypatch):
+    """Pause/scrub must remesh immediately; idle bake must not swallow the emit."""
+    import carveracontroller.addons.stock.simulator.worker as worker_mod
+    from carveracontroller.addons.stock.simulator import StockSimulator
+
+    monkeypatch.setattr(worker_mod, "MAX_MESH_TILES_PER_EMIT", 1)
+    bounds = StockBounds(min_x=-20, min_y=-8, min_z=-5, max_x=20, max_y=8, max_z=0)
+    tool = _flat_tool(diameter=4.0, flute_length=6.0)
+    n_steps = 80
+    positions, vertex_types, tools = _linear_x_toolpath(n_steps, x0=-16.0, dx=0.4)
+    patches: list[dict] = []
+
+    def _is_patch(meshes: dict) -> bool:
+        return bool(meshes) and "__replace__" not in meshes and "__clear_all__" not in meshes
+
+    # Throttle longer than the wait: without pause-immediate emit this would hang.
+    sim = StockSimulator(on_meshes_ready=lambda m: patches.append(dict(m)), mesh_throttle_s=5.0)
+    try:
+        sim.reset(bounds, cell_size_mm=1.0, enable=True, carver_mode="voxel")
+        assert _wait_until(lambda: not sim.resimulating, timeout=2.0)
+        sim.set_idle_ahead_allowed(True)
+        sim.set_toolpath(positions, vertex_types, tools, {1: tool})
+        sim.submit_idle_precompute(0)
+        patches.clear()
+        sim.set_display_vertex(n_steps)
+        assert _wait_until(lambda: sim.carved_vertex >= n_steps, timeout=5.0)
+        assert _wait_until(lambda: any(_is_patch(m) for m in patches), timeout=2.0)
+
+        patches.clear()
+        sim.set_display_vertex(10)
+        far_x = -16.0 + 70 * 0.4
+        assert _wait_until(lambda: sim.grid.is_solid_at_world(far_x, 0.0, -0.5), timeout=5.0)
+        assert _wait_until(lambda: any(_is_patch(m) for m in patches), timeout=2.0)
+    finally:
+        sim.stop()

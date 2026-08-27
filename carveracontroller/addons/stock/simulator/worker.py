@@ -7,6 +7,7 @@ import math
 import queue
 import threading
 import time
+from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Callable
@@ -26,7 +27,7 @@ from carveracontroller.addons.stock.simulator.simulation_quality import (
     DEFAULT_VOXEL_RESOLUTION,
     pick_cell_size_mm,
 )
-from carveracontroller.addons.stock.stock_geometry import StockBounds
+from carveracontroller.addons.stock.stock_geometry import StockBounds, rotate_yz
 from carveracontroller.addons.stock.stock_shape import RectangularStock, StockShape
 from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition
 from carveracontroller.CNC import LASER_TOOL_NUMBER
@@ -41,14 +42,93 @@ _DISPLAY_FOLLOW = object()
 _MESH_FLUSH = object()
 
 # Throttle while the carved mesh is following playback (pause uses constructor default).
+# Play matches pause: occupancy has headroom, so smaller patches track the tool.
 DEFAULT_MESH_THROTTLE_S = 0.15
-PLAY_MESH_THROTTLE_S = 0.5
+PLAY_MESH_THROTTLE_S = 0.15
+# Playback remesh budget (flush / replace / pause / cylindrical shell ignore this).
+MAX_MESH_TILES_PER_EMIT = 32
 
 # Cut-segment merge knobs
 _MERGE_TOL_VOXEL_FRAC = 0.25
 _MERGE_MAX_MM_FLOOR = 8.0
 _MERGE_MAX_MM_VOXEL_MULT = 16.0
 _MERGE_MAX_SPAN = 64
+
+
+def _chebyshev_tile(
+    a: tuple[int, int, int],
+    b: tuple[int, int, int],
+) -> int:
+    return max(abs(a[0] - b[0]), abs(a[1] - b[1]), abs(a[2] - b[2]))
+
+
+def _take_pending_mesh_keys(
+    pending: set[tuple[int, int, int]],
+    *,
+    unlimited: bool,
+    cap: int = MAX_MESH_TILES_PER_EMIT,
+    around: tuple[int, int, int] | None = None,
+) -> set[tuple[int, int, int]]:
+    """Pop dirty keys to remesh. ``unlimited`` (flush / replace / pause / cylindrical) takes all.
+
+    Capped play takes a connected blob around ``around`` (tool tile) so the live
+    cut remeshes as one region instead of lexicographic slices that leave holes.
+    """
+    if unlimited or cap <= 0 or len(pending) <= cap:
+        batch = set(pending)
+        pending.clear()
+        return batch
+    if around is not None and around in pending:
+        seed = around
+    elif around is not None:
+        seed = min(pending, key=lambda key: (_chebyshev_tile(key, around), key))
+    else:
+        seed = min(pending)
+    batch: set[tuple[int, int, int]] = set()
+    queued: set[tuple[int, int, int]] = {seed}
+    q: deque[tuple[int, int, int]] = deque([seed])
+    while q and len(batch) < cap:
+        key = q.popleft()
+        if key not in pending:
+            continue
+        batch.add(key)
+        x, y, z = key
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    if dx == 0 and dy == 0 and dz == 0:
+                        continue
+                    nbr = (x + dx, y + dy, z + dz)
+                    if nbr in pending and nbr not in queued:
+                        queued.add(nbr)
+                        q.append(nbr)
+    if len(batch) < cap:
+        rest = sorted(pending - batch, key=lambda key: (_chebyshev_tile(key, seed), key))
+        for key in rest:
+            if len(batch) >= cap:
+                break
+            batch.add(key)
+    pending.difference_update(batch)
+    return batch
+
+
+def _world_tile_key(backend, x: float, y: float, z: float) -> tuple[int, int, int] | None:
+    """Occupancy tile/chunk containing world ``(x, y, z)``, or None."""
+    kind = str(getattr(backend, "kind", ""))
+    bounds = getattr(backend, "bounds", None)
+    if bounds is None:
+        return None
+    if kind == BACKEND_HEIGHTMAP:
+        ts = max(int(getattr(backend, "tile_size", 16)), 1)
+        cell = float(getattr(backend, "cell_size", 1.0)) or 1.0
+        tx = int(math.floor((float(x) - float(bounds.min_x)) / cell)) // ts
+        ty = int(math.floor((float(y) - float(bounds.min_y)) / cell)) // ts
+        return (tx, ty, 0)
+    grid = getattr(backend, "grid", None)
+    if grid is None:
+        return None
+    ix, iy, iz = grid.world_to_voxel(float(x), float(y), float(z))
+    return grid.chunk_of_voxel(ix, iy, iz).as_tuple()
 
 
 def _xyz_dist(
@@ -318,10 +398,11 @@ class StockSimulator:
     Kivy clock before touching GL/widgets.
 
     Occupancy follows :meth:`set_display_vertex` (latest-wins) so the carved
-    mesh can patch during play. Idle ahead-carve uses a second sparse bake
-    grid so bookmarks can be recorded past the playhead without moving the
-    displayed occupancy. It is skipped when :meth:`set_idle_ahead_allowed`
-    is False.
+    mesh can patch during play. Display-follow yields after the mesh throttle
+    so remesh can run when the playhead stays ahead. Idle ahead-carve uses a
+    second sparse bake grid so bookmarks can be recorded past the playhead
+    without moving the displayed occupancy. It is skipped when
+    :meth:`set_idle_ahead_allowed` is False.
     """
 
     def __init__(
@@ -361,6 +442,8 @@ class StockSimulator:
         self._mesh_flush = False
         # Next mesh emit replaces all GPU chunks (after reset / recarve clear).
         self._force_mesh_replace = False
+        # Packed cylindrical draw keys from the last emit (to tombstone extras).
+        self._coalesce_gpu_keys: set[tuple[int, int, int]] = set()
         # Toolpath published from UI; worker copies refs per job under lock.
         self._path_positions: list[float] | None = None
         self._path_vertex_types: list[float] | None = None
@@ -566,6 +649,7 @@ class StockSimulator:
             self._mesh_flush = False
             self._force_mesh_replace = True
             self._mesh_updates_enabled = True
+            self._coalesce_gpu_keys.clear()
         self._drain_queue()
         self.start()
         self._emit_checkpoints()
@@ -586,6 +670,7 @@ class StockSimulator:
             self._mesh_flush = False
             self._force_mesh_replace = False
             self._mesh_updates_enabled = True
+            self._coalesce_gpu_keys.clear()
             if self._checkpoints is not None:
                 self._checkpoints.clear()
         self._drain_queue()
@@ -754,6 +839,8 @@ class StockSimulator:
         with self._lock:
             if not self._enabled or not self._idle_ahead_allowed or self._backend is None:
                 return
+            if int(self._display_vertex) != int(self._grid_carved_vertex):
+                return
             hint = int(self._display_vertex)
         self.submit_idle_precompute(hint)
 
@@ -911,6 +998,20 @@ class StockSimulator:
         if not angs or idx < 0 or idx >= len(angs):
             return 0.0
         return float(angs[idx])
+
+    def _mesh_focus_key(self, backend, path: PathSnapshot | None, vertex: int) -> tuple[int, int, int] | None:
+        """Tile under the playhead, used to prefer live-cut remesh over leftover tiles."""
+        if backend is None or path is None or not path.positions:
+            return None
+        n = path.vertex_count()
+        if n <= 0:
+            return None
+        idx = max(0, min(int(vertex), n - 1))
+        x, y, z = self._raw_xyz(path, idx)
+        ang = self._raw_angle(path, idx)
+        if abs(ang) > 1e-9:
+            y, z = rotate_yz(y, z, ang)
+        return _world_tile_key(backend, x, y, z)
 
     def _carve_job(
         self,
@@ -1105,8 +1206,12 @@ class StockSimulator:
         *,
         idle: bool = False,
         follow_display: bool = False,
+        deadline: float | None = None,
     ) -> tuple[int, bool]:
-        """Carve ``(start_vertex, to_vertex]``. Returns ``(last_end, interrupted)``."""
+        """Carve ``(start_vertex, to_vertex]``. Returns ``(last_end, interrupted)``.
+
+        ``deadline`` (monotonic) stops a display-follow pass so the worker can remesh.
+        """
         last_end_vertex = start_vertex
         interrupted = False
         last_progress_t = 0.0
@@ -1131,6 +1236,9 @@ class StockSimulator:
                 with self._lock:
                     live_target = int(self._display_vertex)
                 if live_target < seg.end_vertex:
+                    interrupted = True
+                    break
+                if deadline is not None and time.monotonic() >= deadline:
                     interrupted = True
                     break
             # Carve outside the lock so HUD/playhead can progress during long wraps.
@@ -1183,8 +1291,20 @@ class StockSimulator:
         pending_dirty: set[tuple[int, int, int]],
         changed_since_cp: set[tuple[int, int, int]],
     ) -> None:
-        """Carve or rewind the live occupancy to ``_display_vertex``."""
+        """Carve or rewind the live occupancy toward ``_display_vertex``.
+
+        While playing, yields after ``_mesh_throttle_s`` so remesh can run even if
+        still behind. Pause/scrub (idle-ahead allowed) and mesh-off carve until
+        caught up so the displayed stock can remesh in one shot.
+        """
+        with self._lock:
+            budget = max(float(self._mesh_throttle_s), 0.0)
+            mesh_updates = bool(self._mesh_updates_enabled)
+            playing = not bool(self._idle_ahead_allowed)
+        deadline = None if (budget <= 0.0 or not mesh_updates or not playing) else time.monotonic() + budget
         while self._generation == gen and not self._resimulating:
+            if deadline is not None and time.monotonic() >= deadline:
+                return
             with self._lock:
                 if self._generation != gen:
                     return
@@ -1223,6 +1343,7 @@ class StockSimulator:
                 pending_dirty,
                 changed_since_cp,
                 follow_display=True,
+                deadline=deadline,
             )
             if self._generation != gen:
                 return
@@ -1233,6 +1354,8 @@ class StockSimulator:
             if not interrupted:
                 self._emit_progress(target)
             if live_target == target and not interrupted:
+                return
+            if deadline is not None and time.monotonic() >= deadline:
                 return
             # Target moved (ahead or behind) or a mid-carve interrupt: loop.
 
@@ -1271,6 +1394,7 @@ class StockSimulator:
                 pending_dirty.clear()
                 display_changed_since_cp.clear()
                 bake_changed_since_cp.clear()
+                self._coalesce_gpu_keys.clear()
                 dirty_gen = gen
 
             live = backend
@@ -1344,6 +1468,14 @@ class StockSimulator:
             elif isinstance(item, CarveRangeJob) and item.low_priority:
                 if self._generation != gen or self._resimulating:
                     continue
+                # Idle bake ``continue``s past the shared remesh step. Flush any
+                # leftover display-dirty tiles first or paused scrub stays stale.
+                if mesh_updates and (pending_dirty or bool(getattr(live, "_laser_dirty", False))):
+                    batch = _take_pending_mesh_keys(pending_dirty, unlimited=True)
+                    if self._try_mesh_and_emit(live, batch, gen, replace=False):
+                        last_emit = time.monotonic()
+                    else:
+                        pending_dirty.update(batch)
                 if self._idle_cancel.is_set():
                     continue
                 prepared = self._prepare_bake_grid(gen, item.from_vertex)
@@ -1411,9 +1543,20 @@ class StockSimulator:
                 do_flush = self._mesh_flush
                 force_replace = self._force_mesh_replace
                 throttle = self._mesh_throttle_s
+                idle_ahead = bool(self._idle_ahead_allowed)
+                caught_up = int(self._display_vertex) == int(self._grid_carved_vertex)
+                focus_vertex = int(self._display_vertex)
             replace = finished_recarve or force_replace
             laser_pending = bool(getattr(live, "_laser_dirty", False))
-            should_emit = replace or do_flush or ((pending_dirty or laser_pending) and (now - last_emit) >= throttle)
+            coalesce = str(getattr(live, "kind", "")) == BACKEND_CYLINDRICAL
+            # Pause/scrub must remesh as soon as follow returns: idle bake is
+            # queued next and would skip this emit via ``continue``.
+            pause_follow_emit = idle_ahead and did_display_follow
+            should_emit = (
+                replace
+                or do_flush
+                or ((pending_dirty or laser_pending) and (pause_follow_emit or (now - last_emit) >= throttle))
+            )
             if should_emit:
                 if not mesh_updates:
                     # Keep dirty so pause can flush visited chunks without a
@@ -1422,15 +1565,44 @@ class StockSimulator:
                     with self._lock:
                         self._mesh_flush = False
                 else:
-                    dirty = set(pending_dirty)
-                    pending_dirty.clear()
-                    if self._try_mesh_and_emit(live, dirty, gen, replace=replace, force_emit=do_flush):
-                        last_emit = now
-                        with self._lock:
-                            if replace:
-                                self._force_mesh_replace = False
-                            self._mesh_flush = False
-
+                    unlimited = replace or do_flush or coalesce or idle_ahead
+                    focus = self._mesh_focus_key(live, path, focus_vertex)
+                    drain_until = time.monotonic() + max(float(throttle), 0.0)
+                    while True:
+                        batch = _take_pending_mesh_keys(
+                            pending_dirty,
+                            unlimited=unlimited,
+                            cap=MAX_MESH_TILES_PER_EMIT,
+                            around=focus,
+                        )
+                        halo: set[tuple[int, int, int]] = set()
+                        if batch and not unlimited:
+                            # expand_dirty remeshes neighbours (pocket walls / floor).
+                            # Drop them from pending so leftover drain is only tiles
+                            # this emit did not cover.
+                            halo = set(live.expand_dirty(batch))
+                            pending_dirty.difference_update(halo)
+                        if self._try_mesh_and_emit(live, batch, gen, replace=replace, force_emit=do_flush):
+                            last_emit = time.monotonic()
+                            with self._lock:
+                                if replace:
+                                    self._force_mesh_replace = False
+                                self._mesh_flush = False
+                        else:
+                            pending_dirty.update(batch)
+                            pending_dirty.update(halo)
+                            break
+                        if unlimited or not pending_dirty:
+                            break
+                        if not batch and not do_flush:
+                            break
+                        # Play leftover: keep remeshing while occupancy matches the
+                        # playhead (rapids/dwell). One batch per window while behind.
+                        if not caught_up or idle_ahead or time.monotonic() >= drain_until:
+                            break
+                        replace = False
+                        do_flush = False
+                        unlimited = False
             if recarve_finished:
                 with self._lock:
                     if self._generation == gen:
@@ -1441,7 +1613,15 @@ class StockSimulator:
                     self._queue.put(_DISPLAY_FOLLOW)
 
             if did_display_follow:
-                self._maybe_rearm_idle_bake()
+                with self._lock:
+                    still_behind = int(self._display_vertex) != int(self._grid_carved_vertex)
+                    already = self._display_poke_pending
+                    if still_behind and not already:
+                        self._display_poke_pending = True
+                if still_behind and not already:
+                    self._queue.put(_DISPLAY_FOLLOW)
+                elif not still_behind and not pending_dirty:
+                    self._maybe_rearm_idle_bake()
 
         if pending_dirty or bool(getattr(self._backend, "_laser_dirty", False)):
             with self._lock:
@@ -1469,7 +1649,7 @@ class StockSimulator:
         viewer can swap AABB fill for carved stock.
         """
         if not self._on_meshes_ready:
-            return False
+            return True
 
         with self._lock:
             if self._generation != gen or not self._enabled or self._backend is None:
@@ -1477,9 +1657,10 @@ class StockSimulator:
             if backend is not self._backend:
                 return False
             dirty_keys = set(dirty)
-            # Cylindrical wraps in θ and is drawn as one field. Heightmap tiles
-            # patch incrementally like voxels so playback does not stall on a
-            # full-mesh replace every segment.
+            # Cylindrical wraps in θ and is drawn as one field. Playback patches
+            # that field in place (no __replace__) so the viewer does not
+            # destroy GPU meshes every throttle window. Heightmap/voxel tiles
+            # patch incrementally.
             coalesce = str(getattr(backend, "kind", "")) == BACKEND_CYLINDRICAL
             if dirty_keys:
                 if coalesce:
@@ -1492,7 +1673,6 @@ class StockSimulator:
             else:
                 mesh_keys = set()
                 tmp = None
-            replace = replace or (coalesce and bool(dirty_keys))
 
         if dirty_keys and tmp is not None:
             meshes = tmp.mesh_tiles(mesh_keys)
@@ -1513,6 +1693,12 @@ class StockSimulator:
                 include_laser = True
                 laser_payload = get()
             try:
+                if coalesce and meshes:
+                    current = {k for k, packed in meshes.items() if packed is not None}
+                    if not replace:
+                        for old in self._coalesce_gpu_keys - current:
+                            meshes[old] = None
+                    self._coalesce_gpu_keys = current
                 out: dict = {}
                 if replace:
                     if dirty_keys or meshes:

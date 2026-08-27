@@ -12,6 +12,7 @@ from .carvers.voxel.occupancy import _expand_dirty_with_neighbors
 from .worker import (
     _MERGE_TOL_VOXEL_FRAC,
     DEFAULT_MESH_THROTTLE_S,
+    MAX_MESH_TILES_PER_EMIT,
     PLAY_MESH_THROTTLE_S,
     PathSnapshot,
     StockSimulator,
@@ -22,6 +23,7 @@ from .worker import (
 
 __all__ = [
     "DEFAULT_MESH_THROTTLE_S",
+    "MAX_MESH_TILES_PER_EMIT",
     "PLAY_MESH_THROTTLE_S",
     "PathSnapshot",
     "StockSimulator",
