@@ -153,22 +153,6 @@
     },
     {
         "type": "numeric",
-        "title": "Anchor2 X Offset",
-        "desc": "Anchor2 X Offset relative to anchor1",
-        "section": "Advanced",
-        "key": "coordinate.anchor2_offset_x",
-        "default": "20.0"
-    },
-    {
-        "type": "numeric",
-        "title": "Anchor2 Y Offset",
-        "desc": "Anchor2 Y Offset relative to anchor1",
-        "section": "Advanced",
-        "key": "coordinate.anchor2_offset_y",
-        "default": "20.0"
-    },
-    {
-        "type": "numeric",
         "title": "Rotation X Offset",
         "desc": "Rotation module X Offset relative to anchor1",
         "section": "Advanced",

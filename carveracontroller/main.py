@@ -745,7 +745,7 @@ class OriginPopup(ModalView):
         else:
             laser_x = CNC.vars["laser_module_offset_x"] if CNC.vars["lasermode"] else 0.0
             laser_y = CNC.vars["laser_module_offset_y"] if CNC.vars["lasermode"] else 0.0
-            if self.coord_popup.config["origin"]["anchor"] == 2:
+            if self.coord_popup.config["origin"]["anchor"] == 2 and app.has_anchor2:
                 x = round(CNC.vars["wcox"] + laser_x - CNC.vars["anchor1_x"] - CNC.vars["anchor2_offset_x"], 4)
                 y = round(CNC.vars["wcoy"] + laser_y - CNC.vars["anchor1_y"] - CNC.vars["anchor2_offset_y"], 4)
             elif self.coord_popup.config["origin"]["anchor"] == 1:
@@ -760,7 +760,8 @@ class OriginPopup(ModalView):
         widget_helpers.bind_auto_select_to_text_input(self.txt_y_offset)
 
     def selected_anchor(self):
-        if self.cbx_anchor2.active:
+        app = App.get_running_app()
+        if self.cbx_anchor2.active and app.has_anchor2:
             return 2
         if self.cbx_4axis_origin.active:
             return 3
@@ -782,7 +783,7 @@ class OriginPopup(ModalView):
             if self.cbx_anchor1.active:
                 x = round(CNC.vars["wcox"] + laser_x - CNC.vars["anchor1_x"], 4)
                 y = round(CNC.vars["wcoy"] + laser_y - CNC.vars["anchor1_y"], 4)
-            elif self.cbx_anchor2.active:
+            elif self.cbx_anchor2.active and app.has_anchor2:
                 x = round(CNC.vars["wcox"] + laser_x - CNC.vars["anchor1_x"] - CNC.vars["anchor2_offset_x"], 4)
                 y = round(CNC.vars["wcoy"] + laser_y - CNC.vars["anchor1_y"] - CNC.vars["anchor2_offset_y"], 4)
             elif self.cbx_current_position.active:
@@ -1255,10 +1256,14 @@ class CoordPopup(ModalView):
         Clock.schedule_once(self.cnc_workspace.draw, 0)
 
         # init origin popup
-        self.origin_popup.cbx_anchor1.active = self.config["origin"]["anchor"] == 1
-        self.origin_popup.cbx_anchor2.active = self.config["origin"]["anchor"] == 2
-        self.origin_popup.cbx_4axis_origin.active = self.config["origin"]["anchor"] == 3
-        self.origin_popup.cbx_current_position.active = self.config["origin"]["anchor"] == 4
+        origin_anchor = self.config["origin"]["anchor"]
+        if origin_anchor == 2 and not App.get_running_app().has_anchor2:
+            origin_anchor = 1
+            self.config["origin"]["anchor"] = 1
+        self.origin_popup.cbx_anchor1.active = origin_anchor == 1
+        self.origin_popup.cbx_anchor2.active = origin_anchor == 2
+        self.origin_popup.cbx_4axis_origin.active = origin_anchor == 3
+        self.origin_popup.cbx_current_position.active = origin_anchor == 4
         self.origin_popup.txt_x_offset.text = str(self.config["origin"]["x_offset"])
         self.origin_popup.txt_y_offset.text = str(self.config["origin"]["y_offset"])
 
@@ -1320,7 +1325,7 @@ class CoordPopup(ModalView):
         else:
             laser_x = CNC.vars["laser_module_offset_x"] if CNC.vars["lasermode"] else 0.0
             laser_y = CNC.vars["laser_module_offset_y"] if CNC.vars["lasermode"] else 0.0
-            if self.config["origin"]["anchor"] == 2:
+            if self.config["origin"]["anchor"] == 2 and app.has_anchor2:
                 self.lb_origin.text = "(%g, %g) " % (
                     round(CNC.vars["wcox"] + laser_x - CNC.vars["anchor1_x"] - CNC.vars["anchor2_offset_x"], 4),
                     round(CNC.vars["wcoy"] + laser_y - CNC.vars["anchor1_y"] - CNC.vars["anchor2_offset_y"], 4),
@@ -1961,6 +1966,8 @@ class CNCWorkspace(Widget):
     config = {}
     bg_rect = ObjectProperty(None)
     bg_image = ""
+    # Height/width of the preview. C1 is ~0.7 (240/340); Z1 is square (200/200).
+    workspace_aspect = NumericProperty(0.7)
 
     # -----------------------------------------------------------------------
     def __init__(self, **kwargs):
@@ -1971,8 +1978,16 @@ class CNCWorkspace(Widget):
     def on_resize(self, *args):
         self.draw()
 
+    def _sync_workspace_aspect(self):
+        wx = float(CNC.vars.get("worksize_x") or 0)
+        wy = float(CNC.vars.get("worksize_y") or 0)
+        aspect = (wy / wx) if wx > 0 else 0.7
+        if abs(self.workspace_aspect - aspect) > 1e-4:
+            self.workspace_aspect = aspect
+
     def load_config(self, config):
         self.config = config
+        self._sync_workspace_aspect()
 
     def update_background_image(self, new_source):
         if new_source != "None":
@@ -1984,6 +1999,10 @@ class CNCWorkspace(Widget):
         self.draw()
 
     def draw(self, *args):
+        old_aspect = self.workspace_aspect
+        self._sync_workspace_aspect()
+        if abs(old_aspect - self.workspace_aspect) > 1e-4:
+            return
         if self.x <= 100:
             return
         self.canvas.clear()
@@ -2013,25 +2032,25 @@ class CNCWorkspace(Widget):
                         pos=(self.x, self.y), size=(CNC.vars["anchor_width"] * zoom, CNC.vars["anchor_length"] * zoom)
                     )
 
-                    # anchor2
-                    if self.config["origin"]["anchor"] == 2:
-                        Color(75 / 255, 75 / 255, 75 / 255, 1)
-                    else:
-                        Color(55 / 255, 55 / 255, 55 / 255, 1)
-                    Rectangle(
-                        pos=(
-                            self.x + CNC.vars["anchor2_offset_x"] * zoom,
-                            self.y + CNC.vars["anchor2_offset_y"] * zoom,
-                        ),
-                        size=(CNC.vars["anchor_length"] * zoom, CNC.vars["anchor_width"] * zoom),
-                    )
-                    Rectangle(
-                        pos=(
-                            self.x + CNC.vars["anchor2_offset_x"] * zoom,
-                            self.y + CNC.vars["anchor2_offset_y"] * zoom,
-                        ),
-                        size=(CNC.vars["anchor_width"] * zoom, CNC.vars["anchor_length"] * zoom),
-                    )
+                    if app.has_anchor2:
+                        if self.config["origin"]["anchor"] == 2:
+                            Color(75 / 255, 75 / 255, 75 / 255, 1)
+                        else:
+                            Color(55 / 255, 55 / 255, 55 / 255, 1)
+                        Rectangle(
+                            pos=(
+                                self.x + CNC.vars["anchor2_offset_x"] * zoom,
+                                self.y + CNC.vars["anchor2_offset_y"] * zoom,
+                            ),
+                            size=(CNC.vars["anchor_length"] * zoom, CNC.vars["anchor_width"] * zoom),
+                        )
+                        Rectangle(
+                            pos=(
+                                self.x + CNC.vars["anchor2_offset_x"] * zoom,
+                                self.y + CNC.vars["anchor2_offset_y"] * zoom,
+                            ),
+                            size=(CNC.vars["anchor_width"] * zoom, CNC.vars["anchor_length"] * zoom),
+                        )
 
                 else:
                     rotation_base_y_center = (CNC.vars["anchor_width"] + CNC.vars["rotation_offset_y"]) * zoom
@@ -3755,15 +3774,15 @@ class Makera(RelativeLayout):
         origin_y = self.coord_config["origin"]["y_offset"]
         app = App.get_running_app()
         if not app.has_4axis:
-            if self.coord_config["origin"]["anchor"] == 1:
-                origin_x += CNC.vars["anchor1_x"]
-                origin_y += CNC.vars["anchor1_y"]
-            elif self.coord_config["origin"]["anchor"] == 2:
+            if self.coord_config["origin"]["anchor"] == 2 and app.has_anchor2:
                 origin_x += CNC.vars["anchor1_x"] + CNC.vars["anchor2_offset_x"]
                 origin_y += CNC.vars["anchor1_y"] + CNC.vars["anchor2_offset_y"]
-            else:
+            elif self.coord_config["origin"]["anchor"] == 4:
                 origin_x += CNC.vars["mx"]
                 origin_y += CNC.vars["my"]
+            else:
+                origin_x += CNC.vars["anchor1_x"]
+                origin_y += CNC.vars["anchor1_y"]
         else:
             origin_x += CNC.vars["anchor1_x"] + CNC.vars["rotation_offset_x"]
             origin_y += CNC.vars["anchor1_y"] + CNC.vars["rotation_offset_y"]
@@ -5252,6 +5271,11 @@ class Makera(RelativeLayout):
         if model != app.model:
             app.model = model.strip()
             model_changed = True
+        app.has_anchor2 = app.model != "Z1"
+        if not app.has_anchor2 and getattr(self, "coord_popup", None):
+            if self.coord_popup.config.get("origin", {}).get("anchor") == 2:
+                self.coord_popup.set_config("origin", "anchor", 1)
+                self.coord_popup.load_config()
         if app.model == "CA1":
             CNC.vars["rotation_base_width"] = 300
             CNC.vars["rotation_head_width"] = 56.5
@@ -6077,6 +6101,7 @@ class Makera(RelativeLayout):
                     self.fw_version_checked = False
                     self.fw_version = ""
                     app.model = ""
+                    app.has_anchor2 = True
                     app.fw_version_digitized = 0
                     app.is_community_firmware = False
                     app.supports_auto_ext_out = False
@@ -7920,9 +7945,11 @@ class Makera(RelativeLayout):
             self.coord_popup.set_config("leveling", "active", False)
             self.coord_popup.set_config("origin", "anchor", 3)
         else:
-            if (CNC.vars["wcox"] - CNC.vars["anchor1_x"] - CNC.vars["anchor2_offset_x"]) >= 0 and (
-                CNC.vars["wcoy"] - CNC.vars["anchor1_y"] - CNC.vars["anchor2_offset_y"]
-            ) >= 0:
+            if (
+                app.has_anchor2
+                and (CNC.vars["wcox"] - CNC.vars["anchor1_x"] - CNC.vars["anchor2_offset_x"]) >= 0
+                and (CNC.vars["wcoy"] - CNC.vars["anchor1_y"] - CNC.vars["anchor2_offset_y"]) >= 0
+            ):
                 self.coord_popup.set_config("origin", "anchor", 2)
             else:
                 self.coord_popup.set_config("origin", "anchor", 1)
@@ -8305,6 +8332,7 @@ class MakeraApp(App):
     jog_controls_enabled = BooleanProperty(False)
     has_4axis = BooleanProperty(False)
     has_atc = BooleanProperty(False)
+    has_anchor2 = BooleanProperty(True)
     lasering = BooleanProperty(False)
     show_gcode_ctl_bar = BooleanProperty(False)
     fw_has_update = BooleanProperty(False)
