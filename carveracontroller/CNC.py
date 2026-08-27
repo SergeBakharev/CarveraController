@@ -260,6 +260,9 @@ class CNC:
         "OvSpindle": 100,
         "vacuummode": 0,
         "extoutmode": 0,
+        "autoblowmode": 0,
+        "autobedcleanmode": 0,
+        "ionizermode": 0,
         "_OvChanged": False,
         "_OvFeed": 100,  # Override target values
         "_OvRapid": 100,
