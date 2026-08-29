@@ -60,7 +60,7 @@ class MatplotlibEvent:
     pick_radius_axis: str = "both"
 
 
-class MatplotFigureTwinx(Widget):  # type: ignore[misc]
+class MatplotFigureTwinx(Widget):
     """Widget to show a matplotlib figure in kivy.
     The figure is rendered internally in an AGG backend then
     the rgba data is obtained and blitted into a kivy texture.
@@ -486,7 +486,7 @@ class MatplotFigureTwinx(Widget):  # type: ignore[misc]
                             else:
                                 # left axis
                                 xy_pixels_mouse = ax.transData.transform([(xdata, ydata)])
-                            if np.ma.is_masked(x) or np.ma.is_masked(y) or np.isnan(x) or np.isnan(y):  # type: ignore[no-untyped-call]
+                            if np.ma.is_masked(x) or np.ma.is_masked(y) or np.isnan(x) or np.isnan(y):
                                 distance.append(np.nan)
                             else:
                                 xy_pixels = ax.transData.transform([(x, ydata)])
@@ -512,7 +512,7 @@ class MatplotFigureTwinx(Widget):  # type: ignore[misc]
                             else:
                                 # left axis
                                 xy_pixels_mouse = ax.transData.transform([(xdata, ydata)])
-                            if np.ma.is_masked(x) or np.ma.is_masked(y):  # type: ignore[no-untyped-call]
+                            if np.ma.is_masked(x) or np.ma.is_masked(y):
                                 distance.append(np.nan)
                             else:
                                 xy_pixels = ax.transData.transform([(x, y)])
@@ -2948,8 +2948,8 @@ class _FigureCanvas(FigureCanvasAgg):
         """
         Render the figure using agg.
         """
-        super().draw()  # type: ignore[no-untyped-call]
-        agg = self.get_renderer()  # type: ignore[no-untyped-call]
+        super().draw()
+        agg = self.get_renderer()
         w, h = agg.width, agg.height
         self._isDrawn = True
 
@@ -2962,7 +2962,7 @@ class _FigureCanvas(FigureCanvasAgg):
         """
         Render the figure using agg (blit method).
         """
-        agg = self.get_renderer()  # type: ignore[no-untyped-call]
+        agg = self.get_renderer()
         w, h = agg.width, agg.height
         self.widget._bitmap = agg.buffer_rgba()
         self.widget.bt_w = w
@@ -3046,11 +3046,11 @@ class StaticMatplotFigureTwinx(MatplotFigureTwinx):
     def on_figure(self, obj: Any, value: Any) -> None:
         # Parent on_figure sizes the widget from the figure bbox, which overflows
         # the pane. Keep the layout size and let _on_size scale the figure instead.
-        width, height = self.size
-        size_hint = self.size_hint
+        current_size = self.size  # type: ignore[has-type]
+        current_size_hint = self.size_hint  # type: ignore[has-type]
         super().on_figure(obj, value)
-        self.size_hint = size_hint
-        self.size = (width, height)
+        self.size_hint = current_size_hint
+        self.size = current_size
 
     def on_touch_down(self, _event: Any) -> bool | None:
         return False
