@@ -3814,8 +3814,15 @@ class Makera(RelativeLayout):
         model = (getattr(app, "model", "") or "").strip() if app is not None else ""
         file_loaded = bool(app is not None and (app.selected_remote_filename or app.selected_local_filename))
         connected = app is not None and app.state != NOT_CONNECTED and is_known_machine(model)
-        if not file_loaded or not connected:
+
+        # Only show the bed if there is a file loaded for the current machine
+        file_for_this_machine = (
+            self._selected_file_machine_key is None
+            or self._selected_file_machine_key == self._get_current_machine_connection_key()
+        )
+        if not file_loaded or not connected or not file_for_this_machine:
             return bool(self.gcode_viewer.set_bed(None, visible=False))
+
         store = load_store()
         bed = get_bed(store, model, selected_id(store, model))
         if bed is None:

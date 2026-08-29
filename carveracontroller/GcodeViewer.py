@@ -5,6 +5,7 @@ import os
 import sys
 import threading
 from math import *
+from typing import Any
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -52,7 +53,7 @@ from kivy.input.motionevent import MotionEvent
 from kivy.input.provider import MotionEventProvider
 
 from .addons.beds.materials import normalize_bed_material, style_for_bed_material
-from .addons.beds.mesh_loader import BED_VERTEX_FORMAT, load_bed_mesh, pack_bed_mesh_chunks
+from .addons.beds.mesh_loader import BED_VERTEX_FORMAT, BedMeshData, load_bed_mesh, pack_bed_mesh_chunks
 from .addons.beds.placement import model_offset_viewer, wcs_rotation_4x4
 from .addons.stock.simulator import (
     DEFAULT_MESH_THROTTLE_S,
@@ -740,7 +741,7 @@ class GCodeViewer(Widget):
         self._bed_mesh_path: str | None = None
         self._bed_mcs_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
         self._bed_material = "mdf"
-        self._bed_loaded = None
+        self._bed_loaded: BedMeshData | None = None
         self._bed_thickness_mm = 0.0
         self._bed_wcs_applied: tuple[float, float, float, float] | None = None
 
@@ -2166,11 +2167,12 @@ class GCodeViewer(Widget):
     def _read_wcs_origin(self) -> tuple[float, float, float, float]:
         from .CNC import CNC
 
+        vars_map: Any = CNC.vars
         return (
-            float(CNC.vars.get("wcox") or 0.0),
-            float(CNC.vars.get("wcoy") or 0.0),
-            float(CNC.vars.get("wcoz") or 0.0),
-            float(CNC.vars.get("rotation_angle") or 0.0),
+            float(vars_map.get("wcox") or 0.0),
+            float(vars_map.get("wcoy") or 0.0),
+            float(vars_map.get("wcoz") or 0.0),
+            float(vars_map.get("rotation_angle") or 0.0),
         )
 
     def _bed_wcs_matches(self, wcs: tuple[float, float, float, float]) -> bool:
