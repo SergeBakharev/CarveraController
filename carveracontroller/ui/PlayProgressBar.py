@@ -1,14 +1,11 @@
-import sys
-
-from kivy.clock import Clock
 from kivy.core.text import Label as CoreLabel
-from kivy.core.window import Window
 from kivy.factory import Factory
 from kivy.graphics import Color, Line, Rectangle
 from kivy.metrics import dp
-from kivy.properties import BooleanProperty, ListProperty, NumericProperty, ObjectProperty
+from kivy.properties import ListProperty, NumericProperty, ObjectProperty
 from kivy.uix.boxlayout import BoxLayout
 
+from carveracontroller.addons.tooltips.Tooltips import ToolTipButton
 from carveracontroller.CNC import LASER_TOOL_NUMBER, PROBE_3D_TOOL_NUMBER, ZPROBE_TOOL_NUMBER
 from carveracontroller.GcodeViewer import tool_marker_palette_rgb
 
@@ -177,12 +174,56 @@ def _rect_contains(rect, x, y):
     return left <= x <= left + width and bottom <= y <= bottom + height
 
 
+class _MarkerHoverToolTip(ToolTipButton):
+    def __init__(self, **kwargs):
+        kwargs.setdefault("text", "")
+        kwargs.setdefault("size_hint", (None, None))
+        kwargs.setdefault("size", (0, 0))
+        kwargs.setdefault("opacity", 0)
+        kwargs.setdefault("background_normal", "")
+        kwargs.setdefault("background_down", "")
+        kwargs.setdefault("background_color", (0, 0, 0, 0))
+        kwargs.setdefault("border", (0, 0, 0, 0))
+        kwargs.setdefault("color", (0, 0, 0, 0))
+        super().__init__(**kwargs)
+
+    def collide_point(self, x, y):
+        parent = self.parent
+        if parent is None:
+            return False
+        return parent._hitbox_at(x, y) is not None
+
+    def to_widget(self, x, y, relative=False):
+        parent = self.parent
+        if parent is None:
+            return super().to_widget(x, y, relative)
+        return parent.to_widget(x, y, relative)
+
+    def on_mouse_pos(self, *args):
+        parent = self.parent
+        if parent is None:
+            self.tooltip_txt = ""
+            super().on_mouse_pos(*args)
+            return
+        pos = args[1]
+        hitbox = parent._hitbox_at(*parent.to_widget(*pos))
+        self.tooltip_txt = parent._marker_tooltip_text(hitbox) if hitbox else ""
+        super().on_mouse_pos(*args)
+
+    def on_touch_down(self, touch):
+        return False
+
+    def on_touch_move(self, touch):
+        return False
+
+    def on_touch_up(self, touch):
+        return False
+
+
 class PlayProgressBar(BoxLayout):
     value = NumericProperty(0)
     color = ListProperty([52 / 255, 166 / 255, 208 / 255, 1])
     tool_markers = ListProperty([])
-    show_tooltips = BooleanProperty(True)
-    tooltip_delay = NumericProperty(0.5)
     marker_tooltip_provider = ObjectProperty(None, allownone=True)
 
     LABEL_ROW_H = dp(12)
@@ -190,9 +231,8 @@ class PlayProgressBar(BoxLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._marker_hitboxes = []
-        self._tooltip = None
-        self._hover_pos = None
-        self._hover_hitbox = None
+        self._hover_tip = _MarkerHoverToolTip()
+        self.add_widget(self._hover_tip)
         with self.canvas.before:
             Color(50 / 255, 50 / 255, 50 / 255, 1)
             self._bg_rect = Rectangle(pos=self.pos, size=(0, 0))
@@ -205,17 +245,6 @@ class PlayProgressBar(BoxLayout):
             color=self._update_fill_color,
             tool_markers=self._update_markers,
         )
-        if sys.platform != "ios":
-            Window.bind(mouse_pos=self._on_mouse_pos)
-
-    def on_parent(self, instance, parent):
-        if parent is None:
-            Clock.unschedule(self._display_marker_tooltip)
-            self._close_marker_tooltip()
-            try:
-                Window.unbind(mouse_pos=self._on_mouse_pos)
-            except Exception:
-                pass
 
     def _track_width(self):
         return max(0, self.width - dp(5)) if self.width > 0 else 0
@@ -282,8 +311,6 @@ class PlayProgressBar(BoxLayout):
         track_w = self._track_width()
         bar_h = self.height if self.width > 0 else 0
         if track_w <= 0 or bar_h <= 0 or not value:
-            if not value:
-                self._close_marker_tooltip()
             return
         label_pad = dp(2)
         ox, oy = self.pos
@@ -353,60 +380,6 @@ class PlayProgressBar(BoxLayout):
             if text:
                 return text
         return hitbox["label"]
-
-    def _ensure_tooltip(self):
-        if self._tooltip is not None:
-            return
-        from carveracontroller.addons.tooltips.Tooltips import Tooltip
-
-        self._tooltip = Tooltip()
-
-    def _layout_tooltip_at(self, pos, text):
-        self._ensure_tooltip()
-        tooltip_label = self._tooltip.ids.tooltip_label
-        tooltip_label.text = text
-        tooltip_label.texture_update()
-        text_width, text_height = tooltip_label.texture_size
-        tooltip_width = max(text_width + 20, 0)
-        tooltip_height = text_height + 20
-        self._tooltip.size = (tooltip_width, tooltip_height)
-        window_width, window_height = Window.size
-        x, y = pos
-        if x + tooltip_width > window_width:
-            x = window_width - tooltip_width - 30
-        if y + tooltip_height > window_height - 30:
-            y = window_height - tooltip_height - 40
-        self._tooltip.pos = (x, y)
-
-    def _on_mouse_pos(self, *args):
-        if not self.show_tooltips or not self.get_root_window() or not self._marker_hitboxes:
-            self._close_marker_tooltip()
-            return
-        pos = args[1]
-        local = self.to_widget(*pos)
-        hitbox = self._hitbox_at(*local)
-        Clock.unschedule(self._display_marker_tooltip)
-        self._close_marker_tooltip()
-        if hitbox is None:
-            return
-        self._hover_pos = pos
-        self._hover_hitbox = hitbox
-        Clock.schedule_once(self._display_marker_tooltip, self.tooltip_delay)
-
-    def _display_marker_tooltip(self, *_args):
-        hitbox = self._hover_hitbox
-        pos = self._hover_pos
-        if hitbox is None or pos is None:
-            return
-        text = self._marker_tooltip_text(hitbox)
-        if not text:
-            return
-        self._layout_tooltip_at(pos, text)
-        Window.add_widget(self._tooltip)
-
-    def _close_marker_tooltip(self, *_args):
-        if self._tooltip is not None:
-            Window.remove_widget(self._tooltip)
 
 
 Factory.register("PlayProgressBar", cls=PlayProgressBar)
