@@ -88,5 +88,11 @@ This product includes the following third-party icons:
    - URL: https://pictogrammers.com/library/mdi/icon/camera/
    - Used in: carveracontroller/data/camera.png
 
+3. chart-bell-curve-cumulative.png
+   - Author: Austin Andrews
+   - License: Apache 2.0 License
+   - URL: https://pictogrammers.com/library/mdi/icon/chart-bell-curve-cumulative/
+   - Used in: carveracontroller/data/chart-bell-curve-cumulative.png
+
 ===============================================================================
 Please see the respective license files for detailed information.

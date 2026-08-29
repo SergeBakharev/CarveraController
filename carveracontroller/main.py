@@ -499,11 +499,25 @@ class FloatBox(FloatLayout):
     camera_controls = ObjectProperty(None)
     camera_view = ObjectProperty(None)
     tool_bar = ObjectProperty(None)
+    bottom_dock = ObjectProperty(None)
+    camera_toggle_btn = ObjectProperty(None)
+    graph_toggle_btn = ObjectProperty(None)
+    collapsed_peer_strip = ObjectProperty(None)
 
     def _viewer_chrome_hit(self, touch):
         if self.gcode_ctl_bar.collide_point(*touch.pos):
             return True
         if self.tool_bar is not None and self.tool_bar.collide_point(*touch.pos):
+            return True
+        if self.camera_toggle_btn is not None and self.camera_toggle_btn.collide_point(*touch.pos):
+            return True
+        if self.graph_toggle_btn is not None and self.graph_toggle_btn.collide_point(*touch.pos):
+            return True
+        if self.collapsed_peer_strip is not None and self.collapsed_peer_strip.height and self.collapsed_peer_strip.collide_point(
+            *touch.pos
+        ):
+            return True
+        if self.bottom_dock is not None and self.bottom_dock.collide_point(*touch.pos):
             return True
         if self.camera_view is not None and self.camera_view.collide_point(*touch.pos):
             return True
@@ -3104,7 +3118,9 @@ class Makera(RelativeLayout):
     gcode_playing = BooleanProperty(False)
     gcode_cannot_visualise = BooleanProperty(False)
 
-    telemetry_chart = ObjectProperty()
+    graph_chart = ObjectProperty()
+    camera_pane_open = BooleanProperty(False)
+    graph_pane_open = BooleanProperty(False)
 
     probing_popup = ObjectProperty()
     coord_config = {}
@@ -3338,18 +3354,26 @@ class Makera(RelativeLayout):
             on_streaming=self._set_camera_streaming,
             on_error=partial(self.show_message_popup, btn_disabled=False),
         )
-        self.ids.camera_splitter.bind(collapsed=self._on_camera_splitter_collapsed)
-        self.ids.camera_splitter.collapse()
+        self._dock_restore_camera = False
+        self._dock_restore_graph = False
+        self._dock_layout_updating = False
+        self.ids.bottom_dock.bind(collapsed=self._on_bottom_dock_collapsed)
+        self.ids.bottom_dock.bind(pos=self._update_dock_toggle_buttons, size=self._update_dock_toggle_buttons)
+        self.ids.float_layout.bind(pos=self._update_dock_toggle_buttons, size=self._update_dock_toggle_buttons)
+        self.bind(camera_pane_open=self._update_dock_toggle_buttons, graph_pane_open=self._update_dock_toggle_buttons)
+        App.get_running_app().bind(supports_camera=self._update_dock_toggle_buttons)
+        self.ids.bottom_dock.collapse()
+        Clock.schedule_once(lambda dt: self._update_dock_toggle_buttons(), 0)
 
-        # init telemetry chart
-        self._telemetry_spindle_temp = deque(maxlen=Makera._TELEMETRY_WINDOW)
-        self._telemetry_spindle_pwm_request = deque(maxlen=Makera._TELEMETRY_WINDOW)
-        self._init_telemetry_chart()
+        # init graph chart
+        self._graph_spindle_temp = deque(maxlen=Makera._GRAPH_WINDOW)
+        self._graph_spindle_pwm_request = deque(maxlen=Makera._GRAPH_WINDOW)
+        self._init_graph_chart()
         # Drive the chart at a fixed 1 Hz, independent of machine connection state.
-        Clock.schedule_interval(lambda dt: self._update_telemetry_chart(), 1.0)
+        Clock.schedule_interval(lambda dt: self._update_graph_chart(), 1.0)
         # Schedule an initial home() for the next frame so the widget has its
         # final layout size before the first draw.
-        Clock.schedule_once(lambda dt: self.telemetry_chart.home(), 0)
+        Clock.schedule_once(lambda dt: self.graph_chart.home(), 0)
 
         # init settings
         self.config = ConfigParser()
@@ -6128,9 +6152,9 @@ class Makera(RelativeLayout):
                 Clock.schedule_once(lambda dt: callback(), 0.1)
 
     # -----------------------------------------------------------------------
-    _TELEMETRY_WINDOW = 300  # seconds / points shown at once
+    _GRAPH_WINDOW = 300  # seconds / points shown at once
 
-    def _init_telemetry_chart(self):
+    def _init_graph_chart(self):
         fs = dp(8)
         bg = 18 / 255
         fig, ax1 = plt.subplots(1, 1)
@@ -6138,8 +6162,8 @@ class Makera(RelativeLayout):
         ax1.set_facecolor((bg, bg, bg, 1))
         ax2 = ax1.twinx()
 
-        self._telemetry_line_temp, = ax1.plot([], [], color='#ff6b35', linewidth=1.5)
-        self._telemetry_line_feed, = ax2.plot([], [], color='#4ec9b0', linewidth=1.5)
+        self._graph_line_temp, = ax1.plot([], [], color='#ff6b35', linewidth=1.5)
+        self._graph_line_feed, = ax2.plot([], [], color='#4ec9b0', linewidth=1.5)
 
         ax1.set_xlabel('Time (s)', color='#888888', fontsize=fs)
         ax1.set_ylabel('Temp (°C)', color='#ff6b35', fontsize=fs)
@@ -6157,55 +6181,55 @@ class Makera(RelativeLayout):
         ax2.yaxis.label.set_color('#4ec9b0')
         ax2.tick_params(axis='y', colors='#4ec9b0', labelsize=fs)
 
-        ax1.set_xlim(-self._TELEMETRY_WINDOW, 0)
+        ax1.set_xlim(-self._GRAPH_WINDOW, 0)
         ax1.set_ylim(0, 100)
         ax2.set_ylim(0, 1000)
 
         fig.tight_layout(pad=0.5)
 
-        self._telemetry_ax1 = ax1
-        self._telemetry_ax2 = ax2
+        self._graph_ax1 = ax1
+        self._graph_ax2 = ax2
 
         # Assign figure and initialise the widget's limit properties so
         # home() has the correct anchors from the start.
-        self.telemetry_chart.figure = fig
-        self.telemetry_chart.xmin = -self._TELEMETRY_WINDOW
-        self.telemetry_chart.xmax = 0
-        self.telemetry_chart.ymin = 0
-        self.telemetry_chart.ymax = 100
-        self.telemetry_chart.ymin2 = 0
-        self.telemetry_chart.ymax2 = 1000
+        self.graph_chart.figure = fig
+        self.graph_chart.xmin = -self._GRAPH_WINDOW
+        self.graph_chart.xmax = 0
+        self.graph_chart.ymin = 0
+        self.graph_chart.ymax = 100
+        self.graph_chart.ymin2 = 0
+        self.graph_chart.ymax2 = 1000
 
     # -----------------------------------------------------------------------
-    def _update_telemetry_chart(self):
-        self._telemetry_spindle_temp.append(CNC.vars["spindletemp"])
-        self._telemetry_spindle_pwm_request.append(CNC.vars["spindle_pwm_request"])
+    def _update_graph_chart(self):
+        self._graph_spindle_temp.append(CNC.vars["spindletemp"])
+        self._graph_spindle_pwm_request.append(CNC.vars["spindle_pwm_request"])
 
-        n = len(self._telemetry_spindle_temp)
+        n = len(self._graph_spindle_temp)
         # x = 0 is "now"; each previous sample is 1 s earlier → [-n+1, …, -1, 0]
         times = list(range(-(n - 1), 1))
 
-        self._telemetry_line_temp.set_data(times, list(self._telemetry_spindle_temp))
-        self._telemetry_line_feed.set_data(times, list(self._telemetry_spindle_pwm_request))
+        self._graph_line_temp.set_data(times, list(self._graph_spindle_temp))
+        self._graph_line_feed.set_data(times, list(self._graph_spindle_pwm_request))
 
         # Recompute y limits from current data and write back to widget so
         # home() (called below) applies them correctly.
-        temp_vals = list(self._telemetry_spindle_temp)
-        feed_vals = list(self._telemetry_spindle_pwm_request)
+        temp_vals = list(self._graph_spindle_temp)
+        feed_vals = list(self._graph_spindle_pwm_request)
 
         if temp_vals:
             pad = max((max(temp_vals) - min(temp_vals)) * 0.1, 1.0)
-            self.telemetry_chart.ymin = min(temp_vals) - pad
-            self.telemetry_chart.ymax = max(temp_vals) + pad
+            self.graph_chart.ymin = min(temp_vals) - pad
+            self.graph_chart.ymax = max(temp_vals) + pad
 
         if feed_vals:
             pad = max((max(feed_vals) - min(feed_vals)) * 0.1, 10.0)
-            self.telemetry_chart.ymin2 = min(feed_vals) - pad
-            self.telemetry_chart.ymax2 = max(feed_vals) + pad
+            self.graph_chart.ymin2 = min(feed_vals) - pad
+            self.graph_chart.ymax2 = max(feed_vals) + pad
 
         # home() sets axes limits from widget properties and calls draw_idle()
         # + flush_events() — the idiomatic live-update pattern from example_live_data.
-        self.telemetry_chart.home()
+        self.graph_chart.home()
 
     # -----------------------------------------------------------------------
     def updateStatus(self, *args):
@@ -7865,25 +7889,176 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def toggle_camera_stream(self):
-        splitter = self.ids.get("camera_splitter")
-        if splitter is not None:
-            splitter.toggle_collapsed()
+        self.toggle_camera_pane()
+
+    # -----------------------------------------------------------------------
+    def toggle_camera_pane(self):
+        if not App.get_running_app().supports_camera:
+            return
+        self.camera_pane_open = not self.camera_pane_open
+        self._dock_restore_camera = self.camera_pane_open
+        if self.graph_pane_open:
+            self._dock_restore_graph = True
+        self._sync_camera_stream()
+        self._apply_bottom_dock_layout()
+
+    # -----------------------------------------------------------------------
+    def toggle_graph_pane(self):
+        self.graph_pane_open = not self.graph_pane_open
+        self._dock_restore_graph = self.graph_pane_open
+        if self.camera_pane_open:
+            self._dock_restore_camera = True
+        self._apply_bottom_dock_layout()
+        if self.graph_pane_open and self.graph_chart is not None:
+            Clock.schedule_once(lambda dt: self.graph_chart.home(), 0)
+
+    # -----------------------------------------------------------------------
+    def _sync_camera_stream(self):
+        app = App.get_running_app()
+        if self.camera_pane_open and app.supports_camera:
+            if not self.camera_stream.is_streaming():
+                self.camera_stream.start(self.controller.connection_address.split(":")[0])
             return
         if self.camera_stream.is_streaming():
             self.camera_stream.stop()
-        elif App.get_running_app().supports_camera:
-            self.camera_stream.start(self.controller.connection_address.split(":")[0])
+        controls = self.ids.get("camera_controls")
+        if controls is not None:
+            controls.adjust_open = False
 
     # -----------------------------------------------------------------------
-    def _on_camera_splitter_collapsed(self, _splitter, collapsed):
+    def _on_bottom_dock_collapsed(self, _dock, collapsed):
+        if self._dock_layout_updating:
+            return
         if collapsed:
-            if self.camera_stream.is_streaming():
-                self.camera_stream.stop()
-            controls = self.ids.get("camera_controls")
-            if controls is not None:
-                controls.adjust_open = False
-        elif App.get_running_app().supports_camera and not self.camera_stream.is_streaming():
-            self.camera_stream.start(self.controller.connection_address.split(":")[0])
+            self._dock_restore_camera = self.camera_pane_open
+            self._dock_restore_graph = self.graph_pane_open
+            self.camera_pane_open = False
+            self.graph_pane_open = False
+            self._sync_camera_stream()
+            self._apply_bottom_dock_layout()
+            return
+        if not self.camera_pane_open and not self.graph_pane_open:
+            app = App.get_running_app()
+            self.camera_pane_open = bool(self._dock_restore_camera and app.supports_camera)
+            self.graph_pane_open = bool(self._dock_restore_graph)
+            if not self.camera_pane_open and not self.graph_pane_open:
+                self.graph_pane_open = True
+        self._sync_camera_stream()
+        self._apply_bottom_dock_layout()
+
+    # -----------------------------------------------------------------------
+    def _apply_bottom_dock_layout(self):
+        if self._dock_layout_updating:
+            return
+        dock = self.ids.get("bottom_dock")
+        camera_pane = self.ids.get("camera_pane")
+        graph_pane = self.ids.get("graph_pane")
+        if dock is None or camera_pane is None or graph_pane is None:
+            return
+
+        self._dock_layout_updating = True
+        try:
+            app = App.get_running_app()
+            camera_open = bool(self.camera_pane_open and app.supports_camera)
+            if self.camera_pane_open and not camera_open:
+                self.camera_pane_open = False
+            graph_open = bool(self.graph_pane_open)
+
+            if camera_open:
+                camera_pane.opacity = 1
+                camera_pane.disabled = False
+                camera_pane.size_hint_x = 1
+            else:
+                camera_pane.opacity = 0
+                camera_pane.disabled = True
+                camera_pane.size_hint_x = None
+                camera_pane.width = 0
+
+            if graph_open and camera_open:
+                graph_pane.opacity = 1
+                graph_pane.disabled = False
+                graph_pane.size_hint_x = None
+                graph_pane.strip_size = dp(5)
+                graph_pane.min_size = dp(80)
+                Clock.schedule_once(lambda dt: self._size_both_dock_panes(), 0)
+            elif graph_open:
+                graph_pane.opacity = 1
+                graph_pane.disabled = False
+                graph_pane.size_hint_x = 1
+                graph_pane.strip_size = 0
+                graph_pane.min_size = 0
+            else:
+                graph_pane.opacity = 0
+                graph_pane.disabled = True
+                graph_pane.size_hint_x = None
+                graph_pane.width = 0
+                graph_pane.strip_size = 0
+                graph_pane.min_size = 0
+
+            if camera_open or graph_open:
+                if dock.collapsed:
+                    dock.expand()
+            elif not dock.collapsed:
+                dock.collapse()
+
+            peer = self.ids.get("collapsed_peer_strip")
+            if peer is not None:
+                closed_needs_strip = (not camera_open and app.supports_camera) or (not graph_open and camera_open)
+                peer.height = dp(5) if camera_open != graph_open and closed_needs_strip else 0
+        finally:
+            self._dock_layout_updating = False
+        self._update_dock_toggle_buttons()
+
+    # -----------------------------------------------------------------------
+    def _size_both_dock_panes(self):
+        if not (self.camera_pane_open and self.graph_pane_open):
+            return
+        graph_pane = self.ids.get("graph_pane")
+        body = self.ids.get("bottom_dock_body")
+        if graph_pane is None or body is None:
+            return
+        graph_pane.size_hint_x = None
+        graph_pane.width = max(dp(80), body.width / 2)
+
+    # -----------------------------------------------------------------------
+    def _update_dock_toggle_buttons(self, *_args):
+        float_layout = self.ids.get("float_layout")
+        dock = self.ids.get("bottom_dock")
+        cam_btn = self.ids.get("camera_toggle_btn")
+        graph_btn = self.ids.get("graph_toggle_btn")
+        if float_layout is None or dock is None or cam_btn is None or graph_btn is None:
+            return
+
+        app = App.get_running_app()
+        camera_open = bool(self.camera_pane_open and app.supports_camera)
+        graph_open = bool(self.graph_pane_open)
+        show_camera_btn = bool(app.supports_camera)
+        btn_w = dp(70)
+        btn_h = dp(28)
+
+        cam_btn.size = (btn_w if show_camera_btn else 0, btn_h)
+        graph_btn.size = (btn_w, btn_h)
+
+        # Open-pane buttons sit on the dock strip; collapsed buttons sit with
+        # their bottom edge on the parent bottom (original camera-button y).
+        strip_y = dock.top - dock.strip_size / 2 - btn_h / 2
+        bottom_y = float_layout.y
+
+        def row_x(index, count):
+            if count <= 1:
+                return float_layout.center_x - btn_w / 2
+            gap = (float_layout.width - 2 * btn_w) / 3
+            if index == 0:
+                return float_layout.x + gap
+            return float_layout.x + 2 * gap + btn_w
+
+        if not show_camera_btn:
+            graph_btn.pos = (row_x(0, 1), strip_y if graph_open else bottom_y)
+            cam_btn.pos = (float_layout.x, bottom_y)
+            return
+
+        cam_btn.pos = (row_x(0, 2), strip_y if camera_open else bottom_y)
+        graph_btn.pos = (row_x(1, 2), strip_y if graph_open else bottom_y)
 
     # -----------------------------------------------------------------------
     def _detect_camera(self, host, probe):
@@ -7896,13 +8071,10 @@ class Makera(RelativeLayout):
         if probe != self.camera_probe:
             return
         App.get_running_app().supports_camera = found
-        splitter = self.ids.get("camera_splitter")
-        if splitter is None:
-            return
-        if found and splitter.collapsed:
-            splitter.height = splitter.strip_size
-        elif not found:
-            splitter.collapse()
+        if not found and self.camera_pane_open:
+            self.camera_pane_open = False
+            self._sync_camera_stream()
+            self._apply_bottom_dock_layout()
 
     # -----------------------------------------------------------------------
     def set_camera_resolution(self, label):
@@ -7934,9 +8106,9 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def _set_camera_streaming(self, streaming):
         App.get_running_app().camera_streaming = streaming
-        splitter = self.ids.get("camera_splitter")
-        if splitter is not None and not streaming and not splitter.collapsed:
-            splitter.collapse()
+        if not streaming and self.camera_pane_open:
+            self.camera_pane_open = False
+            self._apply_bottom_dock_layout()
 
     # -----------------------------------------------------------------------
     def clear_selection(self):
