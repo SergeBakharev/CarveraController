@@ -1,0 +1,70 @@
+#:import tr carveracontroller.__main__.tr
+#:import graph_metric_choices carveracontroller.ui.graph_controls.graph_metric_choices
+#:import graph_metric_label carveracontroller.ui.graph_controls.graph_metric_label
+
+<GraphButtonSlot@AnchorLayout>:
+    visible: True
+    anchor_x: 'right'
+    anchor_y: 'top'
+    size_hint_y: None
+    height: '25dp' if self.visible else 0
+    opacity: 1 if self.visible else 0
+
+<GraphAdjustPanel@BoxLayout>:
+    visible: False
+    orientation: 'vertical'
+    size_hint_y: None
+    height: '84dp' if self.visible else 0
+    opacity: 1 if self.visible else 0
+    padding: '8dp'
+    spacing: '4dp'
+    canvas.before:
+        Color:
+            rgba: 0, 0, 0, 0.6
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+<GraphMetricRow@BoxLayout>:
+    label_text: ''
+    metric_key: ''
+    line: 1
+    Label:
+        text: root.label_text
+        size_hint_x: 0.42
+        font_size: '13sp'
+    Spinner:
+        text: graph_metric_label(root.metric_key)
+        values: graph_metric_choices()
+        font_size: '13sp'
+        on_text: app.root.set_graph_line_metric(root.line, self.text) if app.root else None
+
+<GraphControls@BoxLayout>:
+    adjust_open: False
+    line1_metric: ''
+    line2_metric: ''
+    orientation: 'vertical'
+    size_hint: None, None
+    width: '250dp' if root.adjust_open else '25dp'
+    height: self.minimum_height
+    on_size: self.parent.do_layout() if self.parent else None
+    GraphButtonSlot:
+        TransparentButton:
+            icon: 'data/configure.png'
+            icon_size: 16
+            active: root.adjust_open
+            size_hint: None, None
+            width: '25dp'
+            height: self.parent.height
+            on_release:
+                root.adjust_open = not root.adjust_open
+    GraphAdjustPanel:
+        visible: root.adjust_open
+        GraphMetricRow:
+            label_text: tr._('Line 1')
+            metric_key: root.line1_metric
+            line: 1
+        GraphMetricRow:
+            label_text: tr._('Line 2')
+            metric_key: root.line2_metric
+            line: 2

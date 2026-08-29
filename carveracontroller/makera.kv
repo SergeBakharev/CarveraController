@@ -25,6 +25,7 @@
 #:include addons/cmm_workbench/ui/CMMWorkbenchPopup.kv
 #:include addons/facing/FacingWizardPopup.kv
 #:include addons/camera/CameraControls.kv
+#:include ui/GraphControls.kv
 
 <Label>:
     font_name: 'ARIALUNI'
@@ -4423,15 +4424,23 @@
                                                 Rectangle:
                                                     pos: self.x, self.y
                                                     size: self.strip_size, self.height
-                                            BoxLayout:
+                                            FloatLayout:
                                                 canvas.before:
                                                     Color:
                                                         rgba: 20/255, 20/255, 20/255, 1
                                                     Rectangle:
                                                         pos: self.pos
                                                         size: self.size
-                                                StaticMatplotFigureTwinx:
-                                                    id: graph_chart
+                                                BoxLayout:
+                                                    padding: dp(10)
+                                                    pos_hint: {'x': 0, 'y': 0}
+                                                    StaticMatplotFigureTwinx:
+                                                        id: graph_chart
+                                                GraphControls:
+                                                    id: graph_controls
+                                                    pos_hint: {'right': 1, 'top': 1}
+                                                    line1_metric: root.graph_line1_metric
+                                                    line2_metric: root.graph_line2_metric
                                 Widget:
                                     id: collapsed_peer_strip
                                     size_hint_y: None

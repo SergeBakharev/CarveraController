@@ -84,6 +84,7 @@ import platform
 import re
 import subprocess
 import tempfile
+from collections import deque
 
 import kivy.lang.builder as _kivy_builder
 import kivy.uix.widget as _kivy_widget
@@ -286,17 +287,27 @@ from .ui.popups.set_position import (
     SetZPopup,
 )
 
-
+os.environ.setdefault("MPLBACKEND", "Agg")
 import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+
+matplotlib.use("Agg")
 import matplotlib as mpl
-from collections import deque
+import matplotlib.pyplot as plt
+
+from .ui.graph_controls import (
+    GRAPH_METRIC_DEFAULT_LINE1,
+    GRAPH_METRIC_DEFAULT_LINE2,
+    GRAPH_METRICS_BY_KEY,
+    graph_metric_key_from_label,
+    graph_metric_ylim,
+    graph_metric_ylabel,
+)
 from .ui.graph_widget_twinx import StaticMatplotFigureTwinx  # noqa: F401  – registers widget with Kivy Factory
 
-mpl.rcParams['path.simplify'] = True
-mpl.rcParams['path.simplify_threshold'] = 1.0
-mpl.rcParams['agg.path.chunksize'] = 1000
+mpl.rcParams["path.simplify"] = True
+mpl.rcParams["path.simplify_threshold"] = 1.0
+mpl.rcParams["agg.path.chunksize"] = 1000
+
 
 def load_halt_translations(tr: translation.Lang):
     """Loads the appropriate language translation"""
@@ -513,8 +524,10 @@ class FloatBox(FloatLayout):
             return True
         if self.graph_toggle_btn is not None and self.graph_toggle_btn.collide_point(*touch.pos):
             return True
-        if self.collapsed_peer_strip is not None and self.collapsed_peer_strip.height and self.collapsed_peer_strip.collide_point(
-            *touch.pos
+        if (
+            self.collapsed_peer_strip is not None
+            and self.collapsed_peer_strip.height
+            and self.collapsed_peer_strip.collide_point(*touch.pos)
         ):
             return True
         if self.bottom_dock is not None and self.bottom_dock.collide_point(*touch.pos):
@@ -3121,6 +3134,8 @@ class Makera(RelativeLayout):
     graph_chart = ObjectProperty()
     camera_pane_open = BooleanProperty(False)
     graph_pane_open = BooleanProperty(False)
+    graph_line1_metric = StringProperty(GRAPH_METRIC_DEFAULT_LINE1)
+    graph_line2_metric = StringProperty(GRAPH_METRIC_DEFAULT_LINE2)
 
     probing_popup = ObjectProperty()
     coord_config = {}
@@ -3360,14 +3375,16 @@ class Makera(RelativeLayout):
         self.ids.bottom_dock.bind(collapsed=self._on_bottom_dock_collapsed)
         self.ids.bottom_dock.bind(pos=self._update_dock_toggle_buttons, size=self._update_dock_toggle_buttons)
         self.ids.float_layout.bind(pos=self._update_dock_toggle_buttons, size=self._update_dock_toggle_buttons)
+        self.ids.bottom_dock_body.bind(width=self._update_graph_pane_max_size)
         self.bind(camera_pane_open=self._update_dock_toggle_buttons, graph_pane_open=self._update_dock_toggle_buttons)
         App.get_running_app().bind(supports_camera=self._update_dock_toggle_buttons)
         self.ids.bottom_dock.collapse()
         Clock.schedule_once(lambda dt: self._update_dock_toggle_buttons(), 0)
 
         # init graph chart
-        self._graph_spindle_temp = deque(maxlen=Makera._GRAPH_WINDOW)
-        self._graph_spindle_pwm_request = deque(maxlen=Makera._GRAPH_WINDOW)
+        self._graph_samples = {
+            key: deque(maxlen=Makera._GRAPH_WINDOW) for key, metric in GRAPH_METRICS_BY_KEY.items() if metric.cnc_var
+        }
         self._init_graph_chart()
         # Drive the chart at a fixed 1 Hz, independent of machine connection state.
         Clock.schedule_interval(lambda dt: self._update_graph_chart(), 1.0)
@@ -6153,83 +6170,147 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     _GRAPH_WINDOW = 300  # seconds / points shown at once
+    _GRAPH_LINE1_COLOR = "#ff6b35"
+    _GRAPH_LINE2_COLOR = "#4ec9b0"
 
     def _init_graph_chart(self):
-        fs = dp(8)
+        fs = dp(8) * 1.2
         bg = 18 / 255
         fig, ax1 = plt.subplots(1, 1)
+        fig.set_tight_layout({"pad": 0.4})
         fig.patch.set_facecolor((bg, bg, bg, 1))
         ax1.set_facecolor((bg, bg, bg, 1))
         ax2 = ax1.twinx()
 
-        self._graph_line_temp, = ax1.plot([], [], color='#ff6b35', linewidth=1.5)
-        self._graph_line_feed, = ax2.plot([], [], color='#4ec9b0', linewidth=1.5)
+        (self._graph_line1,) = ax1.plot([], [], color=self._GRAPH_LINE1_COLOR, linewidth=1.5)
+        (self._graph_line2,) = ax2.plot([], [], color=self._GRAPH_LINE2_COLOR, linewidth=1.5)
 
-        ax1.set_xlabel('Time (s)', color='#888888', fontsize=fs)
-        ax1.set_ylabel('Temp (°C)', color='#ff6b35', fontsize=fs)
-        ax2.set_ylabel('Spindle Power Request %', color='#4ec9b0', fontsize=fs)
+        ax1.set_xlabel("Time (s)", color="#888888", fontsize=fs)
 
         for ax in (ax1, ax2):
-            ax.tick_params(colors='#888888', labelsize=fs)
-            ax.spines['bottom'].set_color('#444444')
-            ax.spines['left'].set_color('#444444')
-            ax.spines['right'].set_color('#444444')
-            ax.spines['top'].set_visible(False)
+            ax.tick_params(colors="#888888", labelsize=fs)
+            ax.spines["bottom"].set_color("#444444")
+            ax.spines["left"].set_color("#444444")
+            ax.spines["right"].set_color("#444444")
+            ax.spines["top"].set_visible(False)
 
-        ax1.yaxis.label.set_color('#ff6b35')
-        ax1.tick_params(axis='y', colors='#ff6b35', labelsize=fs)
-        ax2.yaxis.label.set_color('#4ec9b0')
-        ax2.tick_params(axis='y', colors='#4ec9b0', labelsize=fs)
-
+        line1_ymin, line1_ymax = graph_metric_ylim(GRAPH_METRIC_DEFAULT_LINE1)
+        line2_ymin, line2_ymax = graph_metric_ylim(GRAPH_METRIC_DEFAULT_LINE2)
         ax1.set_xlim(-self._GRAPH_WINDOW, 0)
-        ax1.set_ylim(0, 100)
-        ax2.set_ylim(0, 1000)
+        ax1.set_ylim(line1_ymin, line1_ymax)
+        ax2.set_ylim(line2_ymin, line2_ymax)
 
-        fig.tight_layout(pad=0.5)
-
+        self._graph_fig = fig
         self._graph_ax1 = ax1
         self._graph_ax2 = ax2
+        self._apply_graph_axis_style()
 
         # Assign figure and initialise the widget's limit properties so
         # home() has the correct anchors from the start.
         self.graph_chart.figure = fig
         self.graph_chart.xmin = -self._GRAPH_WINDOW
         self.graph_chart.xmax = 0
-        self.graph_chart.ymin = 0
-        self.graph_chart.ymax = 100
-        self.graph_chart.ymin2 = 0
-        self.graph_chart.ymax2 = 1000
+        self.graph_chart.ymin = line1_ymin
+        self.graph_chart.ymax = line1_ymax
+        self.graph_chart.ymin2 = line2_ymin
+        self.graph_chart.ymax2 = line2_ymax
+
+    # -----------------------------------------------------------------------
+    def _apply_graph_axis_style(self):
+        fs = dp(8) * 1.2
+        self._style_graph_axis(
+            self._graph_ax1,
+            self.graph_line1_metric,
+            self._GRAPH_LINE1_COLOR,
+            "left",
+            fs,
+        )
+        self._style_graph_axis(
+            self._graph_ax2,
+            self.graph_line2_metric,
+            self._GRAPH_LINE2_COLOR,
+            "right",
+            fs,
+        )
+        if self._graph_fig is not None:
+            self._graph_fig.set_tight_layout({"pad": 0.4})
+
+    # -----------------------------------------------------------------------
+    def _style_graph_axis(self, ax, metric_key, color, side, fs):
+        metric = GRAPH_METRICS_BY_KEY.get(metric_key)
+        visible = metric is not None and metric.cnc_var is not None
+        ax.set_ylabel(graph_metric_ylabel(metric_key) if visible else "", fontsize=fs)
+        ax.yaxis.label.set_color(color)
+        ax.tick_params(
+            axis="y",
+            colors=color if visible else "#444444",
+            labelsize=fs,
+            labelleft=(side == "left" and visible),
+            labelright=(side == "right" and visible),
+        )
+
+    # -----------------------------------------------------------------------
+    def set_graph_line_metric(self, line, label):
+        key = graph_metric_key_from_label(label)
+        if line == 1:
+            if self.graph_line1_metric == key:
+                return
+            self.graph_line1_metric = key
+        else:
+            if self.graph_line2_metric == key:
+                return
+            self.graph_line2_metric = key
+        if getattr(self, "_graph_ax1", None) is None:
+            return
+        self._apply_graph_axis_style()
+        self._render_graph_chart()
+
+    # -----------------------------------------------------------------------
+    def _close_graph_controls(self):
+        controls = self.ids.get("graph_controls")
+        if controls is not None:
+            controls.adjust_open = False
+
+    # -----------------------------------------------------------------------
+    def _cnc_float(self, name):
+        try:
+            value = CNC.vars.get(name, 0)
+            if value is None:
+                return 0.0
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
 
     # -----------------------------------------------------------------------
     def _update_graph_chart(self):
-        self._graph_spindle_temp.append(CNC.vars["spindletemp"])
-        self._graph_spindle_pwm_request.append(CNC.vars["spindle_pwm_request"])
+        for key, metric in GRAPH_METRICS_BY_KEY.items():
+            if metric.cnc_var:
+                self._graph_samples[key].append(self._cnc_float(metric.cnc_var))
+        self._render_graph_chart()
 
-        n = len(self._graph_spindle_temp)
-        # x = 0 is "now"; each previous sample is 1 s earlier → [-n+1, …, -1, 0]
-        times = list(range(-(n - 1), 1))
-
-        self._graph_line_temp.set_data(times, list(self._graph_spindle_temp))
-        self._graph_line_feed.set_data(times, list(self._graph_spindle_pwm_request))
-
-        # Recompute y limits from current data and write back to widget so
-        # home() (called below) applies them correctly.
-        temp_vals = list(self._graph_spindle_temp)
-        feed_vals = list(self._graph_spindle_pwm_request)
-
-        if temp_vals:
-            pad = max((max(temp_vals) - min(temp_vals)) * 0.1, 1.0)
-            self.graph_chart.ymin = min(temp_vals) - pad
-            self.graph_chart.ymax = max(temp_vals) + pad
-
-        if feed_vals:
-            pad = max((max(feed_vals) - min(feed_vals)) * 0.1, 10.0)
-            self.graph_chart.ymin2 = min(feed_vals) - pad
-            self.graph_chart.ymax2 = max(feed_vals) + pad
-
-        # home() sets axes limits from widget properties and calls draw_idle()
-        # + flush_events() — the idiomatic live-update pattern from example_live_data.
+    # -----------------------------------------------------------------------
+    def _render_graph_chart(self):
+        if self.graph_chart is None or getattr(self, "_graph_line1", None) is None:
+            return
+        n = max((len(samples) for samples in self._graph_samples.values()), default=0)
+        times = list(range(-(n - 1), 1)) if n else []
+        self._render_graph_line(self._graph_line1, self.graph_line1_metric, times, "ymin", "ymax")
+        self._render_graph_line(self._graph_line2, self.graph_line2_metric, times, "ymin2", "ymax2")
         self.graph_chart.home()
+
+    # -----------------------------------------------------------------------
+    def _render_graph_line(self, line, metric_key, times, ymin_attr, ymax_attr):
+        metric = GRAPH_METRICS_BY_KEY.get(metric_key)
+        if metric is None or metric.cnc_var is None:
+            line.set_visible(False)
+            line.set_data([], [])
+            return
+        samples = list(self._graph_samples[metric.key])
+        line.set_visible(True)
+        line.set_data(times[-len(samples) :] if times else [], samples)
+        ymin, ymax = graph_metric_ylim(metric.key, samples)
+        setattr(self.graph_chart, ymin_attr, ymin)
+        setattr(self.graph_chart, ymax_attr, ymax)
 
     # -----------------------------------------------------------------------
     def updateStatus(self, *args):
@@ -6866,7 +6947,6 @@ class Makera(RelativeLayout):
             self.diagnose_popup.st_atc_home.state = CNC.vars["st_atc_home"]
             self.diagnose_popup.st_tool_sensor.state = CNC.vars["st_tool_sensor"]
             self.diagnose_popup.st_e_stop.state = CNC.vars["st_e_stop"]
-
 
         except:
             logger.error(sys.exc_info()[1])
@@ -7911,6 +7991,8 @@ class Makera(RelativeLayout):
         self._apply_bottom_dock_layout()
         if self.graph_pane_open and self.graph_chart is not None:
             Clock.schedule_once(lambda dt: self.graph_chart.home(), 0)
+        else:
+            self._close_graph_controls()
 
     # -----------------------------------------------------------------------
     def _sync_camera_stream(self):
@@ -7935,6 +8017,7 @@ class Makera(RelativeLayout):
             self.camera_pane_open = False
             self.graph_pane_open = False
             self._sync_camera_stream()
+            self._close_graph_controls()
             self._apply_bottom_dock_layout()
             return
         if not self.camera_pane_open and not self.graph_pane_open:
@@ -7979,7 +8062,7 @@ class Makera(RelativeLayout):
                 graph_pane.disabled = False
                 graph_pane.size_hint_x = None
                 graph_pane.strip_size = dp(5)
-                graph_pane.min_size = dp(80)
+                self._update_graph_pane_max_size()
                 Clock.schedule_once(lambda dt: self._size_both_dock_panes(), 0)
             elif graph_open:
                 graph_pane.opacity = 1
@@ -8017,8 +8100,19 @@ class Makera(RelativeLayout):
         body = self.ids.get("bottom_dock_body")
         if graph_pane is None or body is None:
             return
+        self._update_graph_pane_max_size()
         graph_pane.size_hint_x = None
-        graph_pane.width = max(dp(80), body.width / 2)
+        graph_pane.width = max(graph_pane.min_size, body.width / 2)
+
+    def _update_graph_pane_max_size(self, *_args):
+        graph_pane = self.ids.get("graph_pane")
+        body = self.ids.get("bottom_dock_body")
+        if graph_pane is None or body is None:
+            return
+        min_size = dp(80)
+        if self.camera_pane_open and self.graph_pane_open:
+            graph_pane.min_size = min_size
+            graph_pane.max_size = max(min_size, body.width - min_size)
 
     # -----------------------------------------------------------------------
     def _update_dock_toggle_buttons(self, *_args):

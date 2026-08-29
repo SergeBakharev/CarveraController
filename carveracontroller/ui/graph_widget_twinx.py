@@ -3041,6 +3041,15 @@ Builder.load_string("""
 class StaticMatplotFigureTwinx(MatplotFigureTwinx):
     """Read-only variant of MatplotFigureTwinx — all touch interaction disabled."""
 
+    def on_figure(self, obj: Any, value: Any) -> None:
+        # Parent on_figure sizes the widget from the figure bbox, which overflows
+        # the pane. Keep the layout size and let _on_size scale the figure instead.
+        width, height = self.size
+        size_hint = self.size_hint
+        super().on_figure(obj, value)
+        self.size_hint = size_hint
+        self.size = (width, height)
+
     def on_touch_down(self, _event: Any) -> Optional[bool]:
         return False
 
