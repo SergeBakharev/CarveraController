@@ -4433,7 +4433,9 @@
                                                         size: self.size
                                                 BoxLayout:
                                                     padding: dp(10)
-                                                    pos_hint: {'x': 0, 'y': 0}
+                                                    size_hint: None, None
+                                                    pos: self.parent.pos
+                                                    size: self.parent.size
                                                     StaticMatplotFigureTwinx:
                                                         id: graph_chart
                                                 GraphControls:

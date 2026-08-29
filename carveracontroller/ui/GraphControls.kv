@@ -3,12 +3,10 @@
 #:import graph_metric_label carveracontroller.ui.graph_controls.graph_metric_label
 
 <GraphButtonSlot@AnchorLayout>:
-    visible: True
     anchor_x: 'right'
     anchor_y: 'top'
     size_hint_y: None
-    height: '25dp' if self.visible else 0
-    opacity: 1 if self.visible else 0
+    height: '25dp'
 
 <GraphAdjustPanel@BoxLayout>:
     visible: False

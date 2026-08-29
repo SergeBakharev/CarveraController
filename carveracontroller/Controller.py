@@ -1472,8 +1472,8 @@ class Controller:
         if "H" in d:
             CNC.vars["halt_reason"] = int(d["H"][0])
 
-        if 'PWM' in d:
-            CNC.vars["spindle_pwm_request"] = int(d['PWM'][0])
+        if "PWM" in d:
+            CNC.vars["spindle_pwm_request"] = int(d["PWM"][0])
 
         self.posUpdate = True
 

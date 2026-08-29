@@ -1,4 +1,5 @@
 """Based on the example https://github.com/mp-007/kivy_matplotlib_widget/tree/main/examples/example_live_data"""
+from __future__ import annotations
 
 import copy
 import math
@@ -221,15 +222,15 @@ class MatplotFigureTwinx(Widget):  # type: ignore[misc]
         self.twinx = False
 
         # manage adjust x and y
-        self.anchor_x: Optional[str] = None
-        self.anchor_y: Optional[str] = None
+        self.anchor_x: str | None = None
+        self.anchor_y: str | None = None
 
         # manage hover data
         self.x_hover_data = None
         self.y_hover_data = None
 
         # pan management
-        self.first_touch_pan: Optional[str] = None
+        self.first_touch_pan: str | None = None
 
         # trick to manage wrong canvas size on first call (compare_hover)
         self.first_call_compare_hover = False
@@ -1195,7 +1196,7 @@ class MatplotFigureTwinx(Widget):  # type: ignore[misc]
         """manage x y data in navigation bar TODO"""
         return None, None
 
-    def on_touch_down(self, event: Any) -> Optional[bool]:
+    def on_touch_down(self, event: Any) -> bool | None:
         """Manage Mouse/touch press"""
         if self.disabled:
             return None
@@ -1265,7 +1266,7 @@ class MatplotFigureTwinx(Widget):  # type: ignore[misc]
 
         return False
 
-    def on_touch_move(self, event: Any) -> Optional[bool]:
+    def on_touch_move(self, event: Any) -> bool | None:
         """Manage Mouse/touch move while pressed"""
         if self.disabled:
             return None
@@ -1287,7 +1288,7 @@ class MatplotFigureTwinx(Widget):  # type: ignore[misc]
             return True
         return None
 
-    def on_touch_up(self, event: Any) -> Optional[bool]:
+    def on_touch_up(self, event: Any) -> bool | None:
         """Manage Mouse/touch release"""
         if self.disabled:
             return None
@@ -3050,11 +3051,11 @@ class StaticMatplotFigureTwinx(MatplotFigureTwinx):
         self.size_hint = size_hint
         self.size = (width, height)
 
-    def on_touch_down(self, _event: Any) -> Optional[bool]:
+    def on_touch_down(self, _event: Any) -> bool | None:
         return False
 
-    def on_touch_move(self, _event: Any) -> Optional[bool]:
+    def on_touch_move(self, _event: Any) -> bool | None:
         return False
 
-    def on_touch_up(self, _event: Any) -> Optional[bool]:
+    def on_touch_up(self, _event: Any) -> bool | None:
         return False

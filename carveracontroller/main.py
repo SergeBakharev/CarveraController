@@ -291,7 +291,6 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 from .ui.graph_controls import (
@@ -300,13 +299,12 @@ from .ui.graph_controls import (
     GRAPH_METRICS_BY_KEY,
     graph_metric_key_from_label,
     graph_metric_ylim,
-    graph_metric_ylabel,
 )
 from .ui.graph_widget_twinx import StaticMatplotFigureTwinx  # noqa: F401  – registers widget with Kivy Factory
 
-mpl.rcParams["path.simplify"] = True
-mpl.rcParams["path.simplify_threshold"] = 1.0
-mpl.rcParams["agg.path.chunksize"] = 1000
+matplotlib.rcParams["path.simplify"] = True
+matplotlib.rcParams["path.simplify_threshold"] = 1.0
+matplotlib.rcParams["agg.path.chunksize"] = 1000
 
 
 def load_halt_translations(tr: translation.Lang):
@@ -3386,11 +3384,8 @@ class Makera(RelativeLayout):
             key: deque(maxlen=Makera._GRAPH_WINDOW) for key, metric in GRAPH_METRICS_BY_KEY.items() if metric.cnc_var
         }
         self._init_graph_chart()
-        # Drive the chart at a fixed 1 Hz, independent of machine connection state.
         Clock.schedule_interval(lambda dt: self._update_graph_chart(), 1.0)
-        # Schedule an initial home() for the next frame so the widget has its
-        # final layout size before the first draw.
-        Clock.schedule_once(lambda dt: self.graph_chart.home(), 0)
+        Clock.schedule_once(lambda dt: self._render_graph_chart(), 0)
 
         # init settings
         self.config = ConfigParser()
@@ -6175,18 +6170,17 @@ class Makera(RelativeLayout):
 
     def _init_graph_chart(self):
         fs = dp(8) * 1.2
-        bg = 18 / 255
+        bg = (18 / 255, 18 / 255, 18 / 255, 1)
         fig, ax1 = plt.subplots(1, 1)
         fig.set_tight_layout({"pad": 0.4})
-        fig.patch.set_facecolor((bg, bg, bg, 1))
-        ax1.set_facecolor((bg, bg, bg, 1))
+        fig.patch.set_facecolor(bg)
+        ax1.set_facecolor(bg)
         ax2 = ax1.twinx()
 
         (self._graph_line1,) = ax1.plot([], [], color=self._GRAPH_LINE1_COLOR, linewidth=1.5)
         (self._graph_line2,) = ax2.plot([], [], color=self._GRAPH_LINE2_COLOR, linewidth=1.5)
 
         ax1.set_xlabel("Time (s)", color="#888888", fontsize=fs)
-
         for ax in (ax1, ax2):
             ax.tick_params(colors="#888888", labelsize=fs)
             ax.spines["bottom"].set_color("#444444")
@@ -6194,52 +6188,25 @@ class Makera(RelativeLayout):
             ax.spines["right"].set_color("#444444")
             ax.spines["top"].set_visible(False)
 
-        line1_ymin, line1_ymax = graph_metric_ylim(GRAPH_METRIC_DEFAULT_LINE1)
-        line2_ymin, line2_ymax = graph_metric_ylim(GRAPH_METRIC_DEFAULT_LINE2)
-        ax1.set_xlim(-self._GRAPH_WINDOW, 0)
-        ax1.set_ylim(line1_ymin, line1_ymax)
-        ax2.set_ylim(line2_ymin, line2_ymax)
-
-        self._graph_fig = fig
-        self._graph_ax1 = ax1
-        self._graph_ax2 = ax2
-        self._apply_graph_axis_style()
-
-        # Assign figure and initialise the widget's limit properties so
-        # home() has the correct anchors from the start.
         self.graph_chart.figure = fig
         self.graph_chart.xmin = -self._GRAPH_WINDOW
         self.graph_chart.xmax = 0
-        self.graph_chart.ymin = line1_ymin
-        self.graph_chart.ymax = line1_ymax
-        self.graph_chart.ymin2 = line2_ymin
-        self.graph_chart.ymax2 = line2_ymax
+        self._style_graph_axes()
+        self._render_graph_chart()
 
-    # -----------------------------------------------------------------------
-    def _apply_graph_axis_style(self):
+    def _style_graph_axes(self):
+        fig = None if self.graph_chart is None else self.graph_chart.figure
+        if fig is None or len(fig.axes) < 2:
+            return
         fs = dp(8) * 1.2
-        self._style_graph_axis(
-            self._graph_ax1,
-            self.graph_line1_metric,
-            self._GRAPH_LINE1_COLOR,
-            "left",
-            fs,
-        )
-        self._style_graph_axis(
-            self._graph_ax2,
-            self.graph_line2_metric,
-            self._GRAPH_LINE2_COLOR,
-            "right",
-            fs,
-        )
-        if self._graph_fig is not None:
-            self._graph_fig.set_tight_layout({"pad": 0.4})
+        self._style_graph_axis(fig.axes[0], self.graph_line1_metric, self._GRAPH_LINE1_COLOR, "left", fs)
+        self._style_graph_axis(fig.axes[1], self.graph_line2_metric, self._GRAPH_LINE2_COLOR, "right", fs)
 
     # -----------------------------------------------------------------------
     def _style_graph_axis(self, ax, metric_key, color, side, fs):
         metric = GRAPH_METRICS_BY_KEY.get(metric_key)
-        visible = metric is not None and metric.cnc_var is not None
-        ax.set_ylabel(graph_metric_ylabel(metric_key) if visible else "", fontsize=fs)
+        visible = metric is not None and metric.visible
+        ax.set_ylabel(tr._(metric.ylabel) if visible and metric.ylabel else "", fontsize=fs)
         ax.yaxis.label.set_color(color)
         ax.tick_params(
             axis="y",
@@ -6252,17 +6219,11 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def set_graph_line_metric(self, line, label):
         key = graph_metric_key_from_label(label)
-        if line == 1:
-            if self.graph_line1_metric == key:
-                return
-            self.graph_line1_metric = key
-        else:
-            if self.graph_line2_metric == key:
-                return
-            self.graph_line2_metric = key
-        if getattr(self, "_graph_ax1", None) is None:
+        attr = "graph_line1_metric" if line == 1 else "graph_line2_metric"
+        if getattr(self, attr) == key:
             return
-        self._apply_graph_axis_style()
+        setattr(self, attr, key)
+        self._style_graph_axes()
         self._render_graph_chart()
 
     # -----------------------------------------------------------------------
@@ -6286,7 +6247,8 @@ class Makera(RelativeLayout):
         for key, metric in GRAPH_METRICS_BY_KEY.items():
             if metric.cnc_var:
                 self._graph_samples[key].append(self._cnc_float(metric.cnc_var))
-        self._render_graph_chart()
+        if self.graph_pane_open:
+            self._render_graph_chart()
 
     # -----------------------------------------------------------------------
     def _render_graph_chart(self):
@@ -6301,13 +6263,13 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def _render_graph_line(self, line, metric_key, times, ymin_attr, ymax_attr):
         metric = GRAPH_METRICS_BY_KEY.get(metric_key)
-        if metric is None or metric.cnc_var is None:
+        if metric is None or not metric.visible:
             line.set_visible(False)
             line.set_data([], [])
             return
         samples = list(self._graph_samples[metric.key])
         line.set_visible(True)
-        line.set_data(times[-len(samples) :] if times else [], samples)
+        line.set_data(times, samples)
         ymin, ymax = graph_metric_ylim(metric.key, samples)
         setattr(self.graph_chart, ymin_attr, ymin)
         setattr(self.graph_chart, ymax_attr, ymax)
@@ -7989,8 +7951,8 @@ class Makera(RelativeLayout):
         if self.camera_pane_open:
             self._dock_restore_camera = True
         self._apply_bottom_dock_layout()
-        if self.graph_pane_open and self.graph_chart is not None:
-            Clock.schedule_once(lambda dt: self.graph_chart.home(), 0)
+        if self.graph_pane_open:
+            Clock.schedule_once(lambda dt: self._render_graph_chart(), 0)
         else:
             self._close_graph_controls()
 
@@ -8062,7 +8024,6 @@ class Makera(RelativeLayout):
                 graph_pane.disabled = False
                 graph_pane.size_hint_x = None
                 graph_pane.strip_size = dp(5)
-                self._update_graph_pane_max_size()
                 Clock.schedule_once(lambda dt: self._size_both_dock_panes(), 0)
             elif graph_open:
                 graph_pane.opacity = 1
