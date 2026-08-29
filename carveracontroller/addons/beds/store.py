@@ -199,9 +199,7 @@ def delete_custom_mesh_file(mesh_file: str | None) -> None:
         pass
 
 
-def _drop_unreferenced_mesh(
-    store: dict[str, Any], mesh_file: str | None, skip_id: str | None = None
-) -> None:
+def _drop_unreferenced_mesh(store: dict[str, Any], mesh_file: str | None, skip_id: str | None = None) -> None:
     if mesh_file and not _mesh_referenced(store, mesh_file, skip_id=skip_id):
         delete_custom_mesh_file(mesh_file)
 

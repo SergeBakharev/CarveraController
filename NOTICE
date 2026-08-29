@@ -83,10 +83,40 @@ This product includes the following third-party icons:
    - Used in: carveracontroller/data/axis-arrow.png
 
 2. camera.png
-   - Author: Austin Andrews
+   - Author: Google
    - License: Apache 2.0 License
    - URL: https://pictogrammers.com/library/mdi/icon/camera/
    - Used in: carveracontroller/data/camera.png
+
+3. grid.png
+   - Author: Google
+   - License: Apache 2.0 License
+   - URL: https://pictogrammers.com/library/mdi/icon/grid/
+   - Used in: carveracontroller/data/GcodeViewer/grid.png
+
+4. monitor-edit.png
+   - Author: Michael Richins
+   - License: Apache 2.0 License
+   - URL: https://pictogrammers.com/library/mdi/icon/monitor-edit/
+   - Used in: carveracontroller/data/GcodeViewer/display-settings.png
+
+5. perspective-less.png
+   - Author: Michael Irigoyen
+   - License: Apache 2.0 License
+   - URL: https://pictogrammers.com/library/mdi/icon/perspective-less/
+   - Used in: carveracontroller/data/GcodeViewer/ortho.png
+
+6. cube.png
+   - Author: Austin Andrews
+   - License: Apache 2.0 License
+   - URL: https://pictogrammers.com/library/mdi/icon/cube/
+   - Used in: carveracontroller/data/GcodeViewer/stock.png
+
+7. picture-in-picture-bottom-right.png
+   - Author: Google
+   - License: Apache 2.0 License
+   - URL: https://pictogrammers.com/library/mdi/icon/picture-in-picture-bottom-right/
+   - Used in: carveracontroller/data/GcodeViewer/bed.png
 
 ===============================================================================
 Please see the respective license files for detailed information.

@@ -97,9 +97,7 @@ def test_pack_chunks_splits_when_index_count_exceeds_uint16():
         bbox_max=(1.0, 1.0, 0.0),
         thickness_mm=0.0,
     )
-    chunks = pack_bed_mesh_chunks(
-        mesh, scale=1.0, albedo_rgb=(1.0, 1.0, 1.0), max_vertices=65535, max_indices=9
-    )
+    chunks = pack_bed_mesh_chunks(mesh, scale=1.0, albedo_rgb=(1.0, 1.0, 1.0), max_vertices=65535, max_indices=9)
     assert len(chunks) == 3
     assert sum(len(idx) for _verts, idx in chunks) == n_tris * 3
     for vertices, indices in chunks:

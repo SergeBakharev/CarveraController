@@ -101,7 +101,7 @@ from kivy.properties import (
     ObjectProperty,
     StringProperty,
 )
-from kivy.uix.behaviors import FocusBehavior
+from kivy.uix.behaviors import ButtonBehavior, FocusBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.dropdown import DropDown
@@ -135,8 +135,6 @@ def _safe_widget_destructor(uid, _ref):
 
 _kivy_widget._widget_destructor = _safe_widget_destructor
 
-from carveracontroller.addons.cam import CamMetadata, extract_cam_metadata
-from carveracontroller.addons.facing.FacingWizardPopup import FacingWizardPopup
 from carveracontroller.addons.beds.catalog import is_known_machine
 from carveracontroller.addons.beds.store import (
     get_bed,
@@ -145,6 +143,8 @@ from carveracontroller.addons.beds.store import (
     selected_id,
 )
 from carveracontroller.addons.beds.ui.BedSettingsPopup import BedSettingsPopup
+from carveracontroller.addons.cam import CamMetadata, extract_cam_metadata
+from carveracontroller.addons.facing.FacingWizardPopup import FacingWizardPopup
 from carveracontroller.addons.pendant import (
     SUPPORTED_PENDANTS,
     OverrideController,
@@ -2072,6 +2072,31 @@ class OperationDropDown(ToolTipDropDown):
     pass
 
 
+class GcodeViewerDisplayMenuButton(ButtonBehavior, BoxLayout):
+    icon = StringProperty("")
+    active = BooleanProperty(False)
+    text = StringProperty("")
+
+
+class GcodeViewerDisplayDropDown(ToolTipDropDown):
+    show_grid = BooleanProperty(True)
+    ortho_projection = BooleanProperty(False)
+    show_stock = BooleanProperty(False)
+    show_bed = BooleanProperty(False)
+
+    def open(self, widget):
+        self._anchor = widget
+        if hasattr(widget, "active"):
+            widget.active = True
+        super().open(widget)
+
+    def on_dismiss(self):
+        anchor = getattr(self, "_anchor", None)
+        if anchor is not None and hasattr(anchor, "active"):
+            anchor.active = False
+        self._anchor = None
+
+
 class MachineButton(ToolTipButton):
     ip = StringProperty("")
     port = NumericProperty(2222)
@@ -3163,6 +3188,7 @@ class Makera(RelativeLayout):
     status_drop_down = ObjectProperty()
 
     operation_drop_down = ObjectProperty()
+    gcode_viewer_display_drop_down = ObjectProperty()
 
     confirm_popup = ObjectProperty()
     unlock_popup = ObjectProperty()
@@ -3362,6 +3388,7 @@ class Makera(RelativeLayout):
         self.func_drop_down = FuncDropDown()
         self.status_drop_down = StatusDropDown()
         self.operation_drop_down = OperationDropDown()
+        self.gcode_viewer_display_drop_down = GcodeViewerDisplayDropDown()
         self.jog_speed_drop_down = JogSpeedDropDown(self.controller)
 
         self.confirm_popup = ConfirmPopup()
@@ -3408,7 +3435,7 @@ class Makera(RelativeLayout):
         self.gcode_viewer.bind(sim_checkpoints=self._on_viewer_sim_checkpoints)
         self.gcode_viewer.bind(sim_hud_text=self._on_viewer_sim_hud_text)
         self._on_viewer_sim_hud_text(self.gcode_viewer, self.gcode_viewer.sim_hud_text)
-        self.float_layout.tool_bar.show_grid = self.gcode_viewer.is_grid_visible()
+        self.gcode_viewer_display_drop_down.show_grid = self.gcode_viewer.is_grid_visible()
         self.gcode_viewer.bind(stock_visible=self._on_viewer_stock_visible)
         self._on_viewer_stock_visible(self.gcode_viewer, self.gcode_viewer.stock_visible)
         self.gcode_viewer.bind(bed_visible=self._on_viewer_bed_visible)
@@ -8052,16 +8079,16 @@ class Makera(RelativeLayout):
             label.text = value or ""
 
     def _on_viewer_stock_visible(self, _instance, visible):
-        """Keep the Stock toolbar button highlight in sync with viewer visibility."""
-        tool_bar = getattr(getattr(self, "float_layout", None), "tool_bar", None)
-        if tool_bar is not None:
-            tool_bar.show_stock = bool(visible)
+        """Keep the Stock menu item highlight in sync with viewer visibility."""
+        dropdown = getattr(self, "gcode_viewer_display_drop_down", None)
+        if dropdown is not None:
+            dropdown.show_stock = bool(visible)
 
     def _on_viewer_bed_visible(self, _instance, visible):
-        """Keep the Bed toolbar button highlight in sync with viewer visibility."""
-        tool_bar = getattr(getattr(self, "float_layout", None), "tool_bar", None)
-        if tool_bar is not None:
-            tool_bar.show_bed = bool(visible)
+        """Keep the Bed menu item highlight in sync with viewer visibility."""
+        dropdown = getattr(self, "gcode_viewer_display_drop_down", None)
+        if dropdown is not None:
+            dropdown.show_bed = bool(visible)
 
     # -----------------------------------------------------------------------
     def gcode_play_call_back(self, distance, line_number):

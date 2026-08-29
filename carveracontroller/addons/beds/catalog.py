@@ -11,9 +11,7 @@ KNOWN_MACHINES = ("C1", "CA1", "Z1")
 
 CUSTOM_CATALOG_ID = "custom"
 
-_MESHES_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "data", "GcodeViewer", "beds")
-)
+_MESHES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "GcodeViewer", "beds"))
 
 
 @dataclass(frozen=True)

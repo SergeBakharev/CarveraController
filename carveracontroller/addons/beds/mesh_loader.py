@@ -289,9 +289,7 @@ def pack_bed_vertices(
     for t in range(0, len(mesh.indices) - 2, 3):
         base = len(indices)
         vertices.extend(
-            _pack_triangle(
-                mesh, mesh.indices[t], mesh.indices[t + 1], mesh.indices[t + 2], scale, albedo_rgb
-            )
+            _pack_triangle(mesh, mesh.indices[t], mesh.indices[t + 1], mesh.indices[t + 2], scale, albedo_rgb)
         )
         indices.extend((base, base + 1, base + 2))
     return vertices, indices
@@ -328,9 +326,7 @@ def pack_bed_mesh_chunks(
             flush()
         base = len(indices)
         vertices.extend(
-            _pack_triangle(
-                mesh, mesh.indices[t], mesh.indices[t + 1], mesh.indices[t + 2], scale, albedo_rgb
-            )
+            _pack_triangle(mesh, mesh.indices[t], mesh.indices[t + 1], mesh.indices[t + 2], scale, albedo_rgb)
         )
         indices.extend((base, base + 1, base + 2))
     flush()
