@@ -85,6 +85,8 @@ import re
 import subprocess
 import tempfile
 
+import kivy.lang.builder as _kivy_builder
+import kivy.uix.widget as _kivy_widget
 from kivy.app import App
 from kivy.clock import Clock, mainthread
 from kivy.config import Config
@@ -119,6 +121,19 @@ from kivy.uix.slider import Slider
 from kivy.uix.stencilview import StencilView
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
+
+
+def _safe_widget_destructor(uid, _ref):
+    # Kivy 2.3.1 does `del _widget_destructors[uid]` in a weakref callback.
+    # Python 3.12+ GC can invoke that after the uid is already gone, which
+    # prints KeyError on quit. USB/libusb teardown makes that extra collection
+    # more likely than serial or WiFi.
+    # https://github.com/kivy/kivy/issues/5005
+    _kivy_widget._widget_destructors.pop(uid, None)
+    _kivy_builder.Builder.unbind_widget(uid)
+
+
+_kivy_widget._widget_destructor = _safe_widget_destructor
 
 from carveracontroller.addons.facing.FacingWizardPopup import FacingWizardPopup
 from carveracontroller.addons.pendant import (
@@ -205,6 +220,14 @@ from .addons.camera.Z1Camera import (
     Z1Camera,
     has_camera,
     set_resolution,
+)
+from .addons.intellisense.engine import highlight_mdi_line
+from .addons.intellisense.ui import (
+    IntellisenseExplainRowMixin,
+    handle_mdi_intellisense_key,
+    hide_gcode_explain,
+    hide_mdi_intellisense,
+    update_mdi_intellisense,
 )
 from .addons.probing.ProbingControls import ProbeButton
 from .addons.tool_visualization import (
@@ -329,14 +352,27 @@ class MDITextInput(TextInput):
         self.past_mdi_commands = []
         self.active_past_mdi_index = 0
         self.bind(focus=self.on_focus)
+        self.bind(text=self._on_mdi_text)
 
     def on_focus(self, instance, have_focus):
         if have_focus:
-            Window.bind(on_key_down=self.on_keyboard_down)
+            Clock.schedule_once(lambda _dt: update_mdi_intellisense(self), 0)
         else:
-            Window.unbind(on_key_down=self.on_keyboard_down)
+            hide_mdi_intellisense()
 
-    def on_keyboard_down(self, window, key, scancode, codepoint, modifiers):
+    def _on_mdi_text(self, _instance, _value):
+        if self.focus:
+            update_mdi_intellisense(self)
+
+    def keyboard_on_key_down(self, window, keycode, text, modifiers):
+        key = keycode[0] if isinstance(keycode, (tuple, list)) else keycode
+        if handle_mdi_intellisense_key(self, key, modifiers):
+            return True
+        if self._handle_navigation_key(key, modifiers):
+            return True
+        return super().keyboard_on_key_down(window, keycode, text, modifiers)
+
+    def _handle_navigation_key(self, key, modifiers):
         ENTER_KEY = 13
         UP_ARROW_KEY = 273
         DOWN_ARROW_KEY = 274
@@ -381,6 +417,7 @@ class MDITextInput(TextInput):
         cmd_to_send = self.text.strip()
         if not cmd_to_send:
             return
+        hide_mdi_intellisense()
         self.past_mdi_commands.append(cmd_to_send)
         self.active_past_mdi_index = len(self.past_mdi_commands)
         app = App.get_running_app()
@@ -708,7 +745,7 @@ class OriginPopup(ModalView):
         else:
             laser_x = CNC.vars["laser_module_offset_x"] if CNC.vars["lasermode"] else 0.0
             laser_y = CNC.vars["laser_module_offset_y"] if CNC.vars["lasermode"] else 0.0
-            if self.coord_popup.config["origin"]["anchor"] == 2:
+            if self.coord_popup.config["origin"]["anchor"] == 2 and app.has_anchor2:
                 x = round(CNC.vars["wcox"] + laser_x - CNC.vars["anchor1_x"] - CNC.vars["anchor2_offset_x"], 4)
                 y = round(CNC.vars["wcoy"] + laser_y - CNC.vars["anchor1_y"] - CNC.vars["anchor2_offset_y"], 4)
             elif self.coord_popup.config["origin"]["anchor"] == 1:
@@ -723,7 +760,8 @@ class OriginPopup(ModalView):
         widget_helpers.bind_auto_select_to_text_input(self.txt_y_offset)
 
     def selected_anchor(self):
-        if self.cbx_anchor2.active:
+        app = App.get_running_app()
+        if self.cbx_anchor2.active and app.has_anchor2:
             return 2
         if self.cbx_4axis_origin.active:
             return 3
@@ -745,7 +783,7 @@ class OriginPopup(ModalView):
             if self.cbx_anchor1.active:
                 x = round(CNC.vars["wcox"] + laser_x - CNC.vars["anchor1_x"], 4)
                 y = round(CNC.vars["wcoy"] + laser_y - CNC.vars["anchor1_y"], 4)
-            elif self.cbx_anchor2.active:
+            elif self.cbx_anchor2.active and app.has_anchor2:
                 x = round(CNC.vars["wcox"] + laser_x - CNC.vars["anchor1_x"] - CNC.vars["anchor2_offset_x"], 4)
                 y = round(CNC.vars["wcoy"] + laser_y - CNC.vars["anchor1_y"] - CNC.vars["anchor2_offset_y"], 4)
             elif self.cbx_current_position.active:
@@ -1101,11 +1139,43 @@ class FilePopup(ModalView):
         self.btn_select.disabled = (not single_select) or select_dir
 
 
+def background_image_model(name):
+    """Return the machine model a built-in background belongs to, or None if unknown."""
+    if name.startswith("CA1") or name.startswith("Air "):
+        return "CA1"
+    if name.startswith("C1"):
+        return "C1"
+    if name.startswith("Z1"):
+        return "Z1"
+    return None
+
+
+def filter_background_images(builtin_names, custom_names, model):
+    """Built-ins matching `model`, then unprefixed custom images (always shown)."""
+    matching = [name for name in builtin_names if background_image_model(name) == model]
+    matching.sort(key=str.casefold)
+    custom = sorted(custom_names, key=str.casefold)
+    return matching + custom
+
+
+def select_background_image(saved, matching):
+    """Pick a spinner value. persist is False when falling back so a mismatched saved setting is kept."""
+    values = ["None"] + list(matching)
+    if saved in values:
+        return saved, True
+    if matching:
+        return matching[0], False
+    return "None", False
+
+
 class CoordPopup(ModalView):
     config = {}
     mode = StringProperty()
     vacuummode = ObjectProperty()
     extoutmode = ObjectProperty()
+    autoblowmode = ObjectProperty()
+    autobedcleanmode = ObjectProperty()
+    ionizermode = ObjectProperty()
     origin_popup = ObjectProperty()
     zprobe_popup = ObjectProperty()
     auto_level_popup = ObjectProperty()
@@ -1132,33 +1202,54 @@ class CoordPopup(ModalView):
         self.mode = "Run"  # 'Margin' / 'ZProbe' / 'Leveling'
         super().__init__(**kwargs)
         self.user_play_file_image_dir = Config.get("carvera", "custom_bkg_img_dir")
-        self.background_image_files = []
+        self.custom_background_image_files = []
+        self.builtin_background_image_files = []
+        self._suppress_background_image_config_write = False
 
         default_bkg_images = os.path.join(os.path.dirname(__file__), "data/play_file_image_backgrounds")
 
         if os.path.exists(self.user_play_file_image_dir):
-            self.background_image_files = [
+            self.custom_background_image_files = [
                 f.replace(".png", "") for f in os.listdir(self.user_play_file_image_dir) if f.endswith(".png")
             ]
 
         for f in os.listdir(default_bkg_images):
             if f.endswith(".png"):
-                self.background_image_files.append(f.replace(".png", ""))
+                self.builtin_background_image_files.append(f.replace(".png", ""))
 
-        # Ensure the spinner is updated after initialization
         Clock.schedule_once(self.populate_spinner, 0)
+        app = App.get_running_app()
+        if app is not None:
+            app.bind(model=self._on_machine_model_changed)
 
-    def populate_spinner(self, dt):
-        if "background_image_spinner" in self.ids:
-            self.ids.background_image_spinner.values = ["None"] + self.background_image_files
-            saved_image = Config.get("carvera", "background_image")
-            if saved_image in self.ids.background_image_spinner.values:
-                self.ids.background_image_spinner.text = saved_image
-                self.update_background_image(saved_image)
+    def _on_machine_model_changed(self, _instance, _value):
+        self.populate_spinner()
+
+    def populate_spinner(self, dt=None):
+        if "background_image_spinner" not in self.ids:
+            return
+        app = App.get_running_app()
+        model = app.model if app is not None else ""
+        matching = filter_background_images(
+            self.builtin_background_image_files, self.custom_background_image_files, model
+        )
+        saved_image = Config.get("carvera", "background_image")
+        selected, persist = select_background_image(saved_image, matching)
+        spinner = self.ids.background_image_spinner
+        self._suppress_background_image_config_write = not persist
+        try:
+            spinner.values = ["None"] + matching
+            if spinner.text != selected:
+                spinner.text = selected
+            else:
+                self.update_background_image(selected)
+        finally:
+            self._suppress_background_image_config_write = False
 
     def update_background_image(self, filename):
-        Config.set("carvera", "background_image", filename)
-        Config.write()
+        if not self._suppress_background_image_config_write:
+            Config.set("carvera", "background_image", filename)
+            Config.write()
 
         if filename != "None":
             old_source = os.path.join(os.path.dirname(__file__), "data/play_file_image_backgrounds", filename)
@@ -1215,10 +1306,14 @@ class CoordPopup(ModalView):
         Clock.schedule_once(self.cnc_workspace.draw, 0)
 
         # init origin popup
-        self.origin_popup.cbx_anchor1.active = self.config["origin"]["anchor"] == 1
-        self.origin_popup.cbx_anchor2.active = self.config["origin"]["anchor"] == 2
-        self.origin_popup.cbx_4axis_origin.active = self.config["origin"]["anchor"] == 3
-        self.origin_popup.cbx_current_position.active = self.config["origin"]["anchor"] == 4
+        origin_anchor = self.config["origin"]["anchor"]
+        if origin_anchor == 2 and not App.get_running_app().has_anchor2:
+            origin_anchor = 1
+            self.config["origin"]["anchor"] = 1
+        self.origin_popup.cbx_anchor1.active = origin_anchor == 1
+        self.origin_popup.cbx_anchor2.active = origin_anchor == 2
+        self.origin_popup.cbx_4axis_origin.active = origin_anchor == 3
+        self.origin_popup.cbx_current_position.active = origin_anchor == 4
         self.origin_popup.txt_x_offset.text = str(self.config["origin"]["x_offset"])
         self.origin_popup.txt_y_offset.text = str(self.config["origin"]["y_offset"])
 
@@ -1233,6 +1328,21 @@ class CoordPopup(ModalView):
             self.extoutmode = True
         else:
             self.extoutmode = False
+
+        if CNC.vars["autoblowmode"] == 1:
+            self.autoblowmode = True
+        else:
+            self.autoblowmode = False
+
+        if CNC.vars["autobedcleanmode"] == 1:
+            self.autobedcleanmode = True
+        else:
+            self.autobedcleanmode = False
+
+        if CNC.vars["ionizermode"] == 1:
+            self.ionizermode = True
+        else:
+            self.ionizermode = False
 
         # init margin widgets
         self.cbx_margin.active = self.config["margin"]["active"]
@@ -1265,7 +1375,7 @@ class CoordPopup(ModalView):
         else:
             laser_x = CNC.vars["laser_module_offset_x"] if CNC.vars["lasermode"] else 0.0
             laser_y = CNC.vars["laser_module_offset_y"] if CNC.vars["lasermode"] else 0.0
-            if self.config["origin"]["anchor"] == 2:
+            if self.config["origin"]["anchor"] == 2 and app.has_anchor2:
                 self.lb_origin.text = "(%g, %g) " % (
                     round(CNC.vars["wcox"] + laser_x - CNC.vars["anchor1_x"] - CNC.vars["anchor2_offset_x"], 4),
                     round(CNC.vars["wcoy"] + laser_y - CNC.vars["anchor1_y"] - CNC.vars["anchor2_offset_y"], 4),
@@ -1906,6 +2016,8 @@ class CNCWorkspace(Widget):
     config = {}
     bg_rect = ObjectProperty(None)
     bg_image = ""
+    # Height/width of the preview. C1 is ~0.7 (240/340); Z1 is square (200/200).
+    workspace_aspect = NumericProperty(0.7)
 
     # -----------------------------------------------------------------------
     def __init__(self, **kwargs):
@@ -1916,8 +2028,16 @@ class CNCWorkspace(Widget):
     def on_resize(self, *args):
         self.draw()
 
+    def _sync_workspace_aspect(self):
+        wx = float(CNC.vars.get("worksize_x") or 0)
+        wy = float(CNC.vars.get("worksize_y") or 0)
+        aspect = (wy / wx) if wx > 0 else 0.7
+        if abs(self.workspace_aspect - aspect) > 1e-4:
+            self.workspace_aspect = aspect
+
     def load_config(self, config):
         self.config = config
+        self._sync_workspace_aspect()
 
     def update_background_image(self, new_source):
         if new_source != "None":
@@ -1929,6 +2049,10 @@ class CNCWorkspace(Widget):
         self.draw()
 
     def draw(self, *args):
+        old_aspect = self.workspace_aspect
+        self._sync_workspace_aspect()
+        if abs(old_aspect - self.workspace_aspect) > 1e-4:
+            return
         if self.x <= 100:
             return
         self.canvas.clear()
@@ -1958,25 +2082,25 @@ class CNCWorkspace(Widget):
                         pos=(self.x, self.y), size=(CNC.vars["anchor_width"] * zoom, CNC.vars["anchor_length"] * zoom)
                     )
 
-                    # anchor2
-                    if self.config["origin"]["anchor"] == 2:
-                        Color(75 / 255, 75 / 255, 75 / 255, 1)
-                    else:
-                        Color(55 / 255, 55 / 255, 55 / 255, 1)
-                    Rectangle(
-                        pos=(
-                            self.x + CNC.vars["anchor2_offset_x"] * zoom,
-                            self.y + CNC.vars["anchor2_offset_y"] * zoom,
-                        ),
-                        size=(CNC.vars["anchor_length"] * zoom, CNC.vars["anchor_width"] * zoom),
-                    )
-                    Rectangle(
-                        pos=(
-                            self.x + CNC.vars["anchor2_offset_x"] * zoom,
-                            self.y + CNC.vars["anchor2_offset_y"] * zoom,
-                        ),
-                        size=(CNC.vars["anchor_width"] * zoom, CNC.vars["anchor_length"] * zoom),
-                    )
+                    if app.has_anchor2:
+                        if self.config["origin"]["anchor"] == 2:
+                            Color(75 / 255, 75 / 255, 75 / 255, 1)
+                        else:
+                            Color(55 / 255, 55 / 255, 55 / 255, 1)
+                        Rectangle(
+                            pos=(
+                                self.x + CNC.vars["anchor2_offset_x"] * zoom,
+                                self.y + CNC.vars["anchor2_offset_y"] * zoom,
+                            ),
+                            size=(CNC.vars["anchor_length"] * zoom, CNC.vars["anchor_width"] * zoom),
+                        )
+                        Rectangle(
+                            pos=(
+                                self.x + CNC.vars["anchor2_offset_x"] * zoom,
+                                self.y + CNC.vars["anchor2_offset_y"] * zoom,
+                            ),
+                            size=(CNC.vars["anchor_width"] * zoom, CNC.vars["anchor_length"] * zoom),
+                        )
 
                 else:
                     rotation_base_y_center = (CNC.vars["anchor_width"] + CNC.vars["rotation_offset_y"]) * zoom
@@ -2121,8 +2245,9 @@ class SelectableLabel(RecycleDataViewBehavior, Label):
     def on_keyboard_down(self, instance, keyboard, keycode, text, modifiers):
         mod = "ctrl" if sys.platform == "win32" else "meta"
         if text == "c" and self.selected and mod in modifiers:
-            if hasattr(self, "text"):
-                Clipboard.copy(self.text.strip())
+            line = getattr(self, "plain_text", None) or getattr(self, "text", "")
+            if line:
+                Clipboard.copy(line.strip())
             return True
         return False
 
@@ -2146,7 +2271,8 @@ class SelectableLabel(RecycleDataViewBehavior, Label):
                 return True
             if touch.is_double_tap:
                 app = App.get_running_app()
-                app.root.manual_cmd.text = self.text.strip()
+                line = getattr(self, "plain_text", None) or self.text
+                app.root.manual_cmd.text = line.strip()
                 Clock.schedule_once(app.root.refocus_cmd)
             return self.parent.select_with_touch(self.index, touch)
 
@@ -2222,43 +2348,40 @@ class SelectableLabel(RecycleDataViewBehavior, Label):
                 view = rv.view_adapter.views[key]
                 if view and hasattr(view, "selected") and view.selected is not None:
                     view.selected = key == index
-            # Defer only 3D viewer and slider update to avoid re-entry.
-            Clock.schedule_once(lambda dt: self._update_3d_viewer_and_slider(selected_index=index), 0)
-
-    def _update_3d_viewer_and_slider(self, selected_index=None):
-        """Update the 3D viewer and progress slider when a line is selected in the file viewer.
-        selected_index: when provided (e.g. from a scheduled callback), use this instead of self.index
-        since RecycleView may have recycled the widget by the time the callback runs."""
-        app = App.get_running_app()
-        if hasattr(app.root, "gcode_viewer") and app.root.gcode_viewer:
-            # Check if gcode_viewer has valid data before trying to use it
-            gcode_viewer = app.root.gcode_viewer
-            if not hasattr(gcode_viewer, "raw_linenumbers") or not gcode_viewer.raw_linenumbers:
-                return
-            if not hasattr(gcode_viewer, "lengths") or not gcode_viewer.lengths:
-                return
-
-            # Use provided index when from deferred callback (RecycleView reuses views)
-            index = selected_index if selected_index is not None else self.index
-            current_page = app.curr_page
-            actual_line_number = (current_page - 1) * MAX_LOAD_LINES + index + 1
-
-            # Skip set_selected_line in frame callback: GcodeViewer calls it from set_pos_by_distance
-            # before cur_line_index is updated, so it would overwrite our selection with the old line.
-            app.root._skip_next_set_selected_line_from_callback = True
-            try:
-                app.root.gcode_viewer.set_distance_by_lineidx(actual_line_number, 0.5)
-            except (IndexError, AttributeError):
-                pass
-
-            # Schedule the progress slider update for the next frame
-            if hasattr(app.root, "gcode_play_slider") and app.root.gcode_play_slider:
-                distance = app.root.gcode_viewer.get_distance_by_lineidx(actual_line_number, 0.5)
-                slider_value = distance * 1000.0 / app.root.gcode_viewer_distance
-                Clock.schedule_once(lambda dt: setattr(app.root.gcode_play_slider, "value", slider_value), 0)
 
 
-class GCodeRow(RecycleDataViewBehavior, BoxLayout):
+class Row(IntellisenseExplainRowMixin, SelectableLabel):
+    """MDI history row with command-explanation hover and selection popups."""
+
+    highlighted_text = StringProperty("")
+    plain_text = StringProperty("")
+    highlight = BooleanProperty(False)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind_intellisense_hover()
+
+    def refresh_view_attrs(self, rv, index, data):
+        self.intellisense_on_recycle()
+        result = super().refresh_view_attrs(rv, index, data)
+        self.plain_text = data.get("text", "") or ""
+        self.highlighted_text = data.get("highlighted_text") or ""
+        self.highlight = bool(data.get("highlight", False))
+        return result
+
+    def apply_selection(self, rv, index, is_selected):
+        super().apply_selection(rv, index, is_selected)
+        self.intellisense_on_selection(is_selected)
+
+    def _show_context_menu(self, pos):
+        hide_gcode_explain()
+        super()._show_context_menu(pos)
+
+
+Factory.register("Row", cls=Row)
+
+
+class GCodeRow(IntellisenseExplainRowMixin, RecycleDataViewBehavior, BoxLayout):
     """Single row in GCodeRV: line number, optional resume-flag icon, gcode text."""
 
     index = None
@@ -2273,8 +2396,13 @@ class GCodeRow(RecycleDataViewBehavior, BoxLayout):
     touch_start_pos = None
     _resume_bind_uids = None  # [txt_uid, cbx_uid] for unbind on recycle
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind_intellisense_hover()
+
     def refresh_view_attrs(self, rv, index, data):
         self.index = index
+        self.intellisense_on_recycle()
         # Unbind previous resume-line updates when recycled
         if self._resume_bind_uids:
             app = App.get_running_app()
@@ -2347,6 +2475,7 @@ class GCodeRow(RecycleDataViewBehavior, BoxLayout):
         return super().on_touch_up(touch)
 
     def _show_context_menu(self, pos):
+        hide_gcode_explain()
         app = App.get_running_app()
         for child in app.root.children:
             if isinstance(child, GCodeLineContextMenu):
@@ -2368,12 +2497,14 @@ class GCodeRow(RecycleDataViewBehavior, BoxLayout):
         self.selected = is_selected
         if not is_selected:
             Window.unbind(on_key_down=self.on_keyboard_down)
+            self.intellisense_on_selection(False)
         else:
             Window.bind(on_key_down=self.on_keyboard_down)
             for key in rv.view_adapter.views:
                 view = rv.view_adapter.views[key]
                 if view and hasattr(view, "selected") and view.selected is not None:
                     view.selected = key == index
+            self.intellisense_on_selection(True)
             Clock.schedule_once(lambda dt: self._update_3d_viewer_and_slider(selected_index=index), 0)
 
     def _update_3d_viewer_and_slider(self, selected_index=None):
@@ -2394,7 +2525,8 @@ class GCodeRow(RecycleDataViewBehavior, BoxLayout):
                 pass
             if hasattr(app.root, "gcode_play_slider") and app.root.gcode_play_slider:
                 distance = app.root.gcode_viewer.get_distance_by_lineidx(actual_line_number, 0.5)
-                slider_value = distance * 1000.0 / app.root.gcode_viewer_distance
+                total = app.root.gcode_viewer_distance
+                slider_value = (distance * 1000.0 / total) if total else 0.0
                 Clock.schedule_once(lambda dt: setattr(app.root.gcode_play_slider, "value", slider_value), 0)
 
     def on_keyboard_down(self, instance, keyboard, keycode, text, modifiers):
@@ -2810,6 +2942,10 @@ class GCodeRV(RecycleView):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.bind(scroll_y=self._on_intel_scroll)
+
+    def _on_intel_scroll(self, *_args):
+        hide_gcode_explain()
 
     def on_scroll_stop(self, touch):
         super().on_scroll_stop(touch)
@@ -2854,6 +2990,10 @@ class GCodeRV(RecycleView):
 class ManualRV(RecycleView):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.bind(scroll_y=self._on_intel_scroll)
+
+    def _on_intel_scroll(self, *_args):
+        hide_gcode_explain()
 
 
 class TopBar(BoxLayout):
@@ -3039,6 +3179,9 @@ class Makera(RelativeLayout):
         "spindle_scale": [0.0, 100],
         "vacuum_mode": [0.0, 0],
         "extout_mode": [0.0, 0],
+        "autoblow_mode": [0.0, 0],
+        "autobedclean_mode": [0.0, 0],
+        "ionizer_mode": [0.0, 0],
         "laser_mode": [0.0, 0],
         "laser_scale": [0.0, 100],
         "laser_test": [0.0, 0],
@@ -3337,6 +3480,12 @@ class Makera(RelativeLayout):
             self.pendant.close()
         except Exception as e:
             logger.error(f"Error closing pendant: {e}")
+
+        try:
+            if getattr(self, "controller", None) is not None:
+                self.controller.close_manual()
+        except Exception as e:
+            logger.error(f"Error closing machine connection: {e}")
 
         # Save the last window size.
         # Seems that kivvy uses the window size before dpi scaling in the config,
@@ -3676,15 +3825,15 @@ class Makera(RelativeLayout):
         origin_y = self.coord_config["origin"]["y_offset"]
         app = App.get_running_app()
         if not app.has_4axis:
-            if self.coord_config["origin"]["anchor"] == 1:
-                origin_x += CNC.vars["anchor1_x"]
-                origin_y += CNC.vars["anchor1_y"]
-            elif self.coord_config["origin"]["anchor"] == 2:
+            if self.coord_config["origin"]["anchor"] == 2 and app.has_anchor2:
                 origin_x += CNC.vars["anchor1_x"] + CNC.vars["anchor2_offset_x"]
                 origin_y += CNC.vars["anchor1_y"] + CNC.vars["anchor2_offset_y"]
-            else:
+            elif self.coord_config["origin"]["anchor"] == 4:
                 origin_x += CNC.vars["mx"]
                 origin_y += CNC.vars["my"]
+            else:
+                origin_x += CNC.vars["anchor1_x"]
+                origin_y += CNC.vars["anchor1_y"]
         else:
             origin_x += CNC.vars["anchor1_x"] + CNC.vars["rotation_offset_x"]
             origin_y += CNC.vars["anchor1_y"] + CNC.vars["rotation_offset_y"]
@@ -3812,12 +3961,12 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def open_comports_drop_down(self, button):
-        """Show USB serial devices that have a VID/PID; labels are the USB serial number."""
+        """Show USB serial and vendor-class bulk devices; labels are the USB serial number."""
         self.comports_drop_down.clear_widgets()
-        devices = Utils.list_identifiable_usb_serial_ports()
+        devices = Utils.list_identifiable_usb_devices()
         if not devices:
             btn = Button(
-                text=tr._("No USB serial devices found"),
+                text=tr._("No USB devices found"),
                 size_hint_y=None,
                 height="35dp",
                 color=(180 / 255, 180 / 255, 180 / 255, 1),
@@ -3987,10 +4136,16 @@ class Makera(RelativeLayout):
         Config.write()
 
     def _store_usb_device_id_for_path(self, device_path):
-        for entry in Utils.list_identifiable_usb_serial_ports():
+        for entry in Utils.list_identifiable_usb_devices():
             if Utils.same_usb_device_path(entry["device_path"], device_path):
                 self._store_usb_device_identity(entry["device_id"], entry["serial"])
                 return
+        from carveracontroller.USBBulkStream import parse_usb_bulk_address
+
+        parsed = parse_usb_bulk_address(device_path)
+        if parsed:
+            vid, pid, serial = parsed
+            self._store_usb_device_identity(f"{vid:04X}:{pid:04X}", serial)
 
     def _resolve_usb_reconnect_path(self):
         """Resolve configured VID:PID (+ preferred serial) to a current OS path."""
@@ -4004,7 +4159,7 @@ class Makera(RelativeLayout):
         # Fall back to last path only if that path still maps to an identifiable USB device.
         last_path = getattr(self.controller, "connection_address", None)
         if last_path:
-            for entry in Utils.list_identifiable_usb_serial_ports():
+            for entry in Utils.list_identifiable_usb_devices():
                 if Utils.same_usb_device_path(entry["device_path"], last_path):
                     return entry["device_path"]
         return None
@@ -4237,11 +4392,19 @@ class Makera(RelativeLayout):
 
                     if msg == Controller.MSG_NORMAL:
                         logger.info(f"MDI Received: {line}")
-                        entry = {"text": line, "color": (103 / 255, 150 / 255, 186 / 255, 1)}
+                        entry = {
+                            "text": line,
+                            "color": (103 / 255, 150 / 255, 186 / 255, 1),
+                            "entry_type": "output",
+                        }
                         self._append_to_mdi([entry], log_to_mdi_data=line not in [" ", "ok", "Done ATC"])
                     elif msg == Controller.MSG_ERROR:
                         logger.error(f"MDI Received: {line}")
-                        entry = {"text": line, "color": (250 / 255, 105 / 255, 102 / 255, 1)}
+                        entry = {
+                            "text": line,
+                            "color": (250 / 255, 105 / 255, 102 / 255, 1),
+                            "entry_type": "output",
+                        }
                         self._append_to_mdi([entry], log_to_mdi_data=line not in [" ", "ok", "Done ATC"])
                 except:
                     logger.error(sys.exc_info()[1])
@@ -5159,6 +5322,11 @@ class Makera(RelativeLayout):
         if model != app.model:
             app.model = model.strip()
             model_changed = True
+        app.has_anchor2 = app.model != "Z1"
+        if not app.has_anchor2 and getattr(self, "coord_popup", None):
+            if self.coord_popup.config.get("origin", {}).get("anchor") == 2:
+                self.coord_popup.set_config("origin", "anchor", 1)
+                self.coord_popup.load_config()
         if app.model == "CA1":
             CNC.vars["rotation_base_width"] = 300
             CNC.vars["rotation_head_width"] = 56.5
@@ -5984,6 +6152,7 @@ class Makera(RelativeLayout):
                     self.fw_version_checked = False
                     self.fw_version = ""
                     app.model = ""
+                    app.has_anchor2 = True
                     app.fw_version_digitized = 0
                     app.is_community_firmware = False
                     app.supports_auto_ext_out = False
@@ -6198,6 +6367,27 @@ class Makera(RelativeLayout):
                     if extout_switch_play.active != CNC.vars["extoutmode"]:
                         extout_switch_play.set_flag = True
                         extout_switch_play.active = CNC.vars["extoutmode"]
+
+            for control_name, setter, var_name, switch_id in (
+                ("autoblow_mode", self.controller.setAutoBlowMode, "autoblowmode", "autoblow_switch_play"),
+                (
+                    "autobedclean_mode",
+                    self.controller.setAutoBedCleanMode,
+                    "autobedcleanmode",
+                    "autobedclean_switch_play",
+                ),
+                ("ionizer_mode", self.controller.setIonizerMode, "ionizermode", "ionizer_switch_play"),
+            ):
+                elapsed = now - self.control_list[control_name][0]
+                if elapsed < 2:
+                    if elapsed > 0.5:
+                        setter(self.control_list[control_name][1])
+                        self.control_list[control_name][0] = now - 2
+                elif elapsed > 3 and self.coord_popup._is_open:
+                    switch = self.coord_popup.ids[switch_id]
+                    if switch.active != CNC.vars[var_name]:
+                        switch.set_flag = True
+                        switch.active = CNC.vars[var_name]
 
             elapsed = now - self.control_list["spindle_scale"][0]
             if elapsed < 2:
@@ -6575,12 +6765,51 @@ class Makera(RelativeLayout):
 
     def execCallback(self, line):
         logger.info(f"MDI Sent: {line}")
-        entries = [{"text": cmd, "color": (200 / 255, 200 / 255, 200 / 255, 1)} for cmd in line.strip().split("\n")]
+        entries = [
+            {
+                "text": cmd,
+                "color": (200 / 255, 200 / 255, 200 / 255, 1),
+                "entry_type": "command",
+            }
+            for cmd in line.strip().split("\n")
+        ]
         self._append_to_mdi(entries, scroll_to_bottom=True)
+
+    def _format_mdi_entry(self, entry):
+        """Syntax-highlight sent MDI commands; keep machine output in status colors."""
+        text = str(entry.get("text") or "")
+        original_color = tuple(entry.get("original_color") or entry.get("color") or (1, 1, 1, 1))
+        plain = text.strip()
+        color = original_color
+        entry_type = entry.get("entry_type")
+        if entry_type is not None:
+            should_highlight = entry_type == "command"
+        elif "highlight" in entry:
+            should_highlight = bool(entry.get("highlight"))
+        else:
+            # Compatibility with MDI history entries saved before entry_type existed.
+            should_highlight = tuple(original_color[:3]) == (200 / 255, 200 / 255, 200 / 255)
+        entry_type = "command" if should_highlight else "output"
+        hl_enabled = getattr(self, "gcode_highlight_enabled", False)
+        hl_colors = getattr(self, "gcode_highlight_colors", None)
+        if hl_enabled and should_highlight and plain:
+            highlighted = highlight_mdi_line(plain, hl_colors)
+            if "[color=" in highlighted:
+                color = (1.0, 1.0, 1.0, 1.0)
+        else:
+            highlighted = escape_gcode_markup(plain)
+        formatted = dict(entry)
+        formatted["text"] = text
+        formatted["highlighted_text"] = highlighted
+        formatted["color"] = color
+        formatted["original_color"] = original_color
+        formatted["entry_type"] = entry_type
+        formatted["highlight"] = should_highlight
+        return formatted
 
     @mainthread
     def _append_to_mdi(self, entries, log_to_mdi_data=False, scroll_to_bottom=False):
-        self.manual_rv.data.extend(entries)
+        self.manual_rv.data.extend([self._format_mdi_entry(entry) for entry in entries])
         if log_to_mdi_data:
             App.get_running_app().mdi_data.extend(entries)
         if scroll_to_bottom:
@@ -6597,7 +6826,7 @@ class Makera(RelativeLayout):
         # Keep VID:PID + serial in sync even when reconnecting by resolved path.
         self._store_usb_device_id_for_path(device)
         label = device
-        for entry in Utils.list_identifiable_usb_serial_ports():
+        for entry in Utils.list_identifiable_usb_devices():
             if Utils.same_usb_device_path(entry["device_path"], device):
                 label = entry["label"]
                 break
@@ -6609,15 +6838,17 @@ class Makera(RelativeLayout):
 
     def _open_usb_worker(self, device):
         success = False
+        error_message = None
         try:
             success = bool(self.controller.open(CONN_USB, device))
             self.controller.connection_type = CONN_USB
-        except Exception:
+        except Exception as exc:
             logger.exception("USB connection failed for %s", device)
+            error_message = str(exc)
             success = False
-        Clock.schedule_once(lambda dt, ok=success: self._finish_usb_open(ok), 0)
+        Clock.schedule_once(lambda dt, ok=success, err=error_message: self._finish_usb_open(ok, err), 0)
 
-    def _finish_usb_open(self, success):
+    def _finish_usb_open(self, success, error_message=None):
         self._usb_connect_in_progress = False
         if self.progress_popup._is_open:
             self.progress_popup.dismiss()
@@ -6628,6 +6859,8 @@ class Makera(RelativeLayout):
             Clock.schedule_once(self.attempt_usb_baud_upgrade_if_eligible, 10)
         else:
             logger.error("USB connection attempt finished without an active link")
+            if error_message:
+                self.show_message_popup(error_message, False)
         self.updateStatus()
 
     def attempt_usb_baud_upgrade_if_eligible(self, dt):
@@ -7332,6 +7565,8 @@ class Makera(RelativeLayout):
             app = App.get_running_app()
             if hasattr(self, "gcode_rv") and self.gcode_rv.data:
                 self.load_page(app.curr_page)
+            if hasattr(self, "manual_rv") and self.manual_rv.data:
+                self.manual_rv.data = [self._format_mdi_entry(entry) for entry in self.manual_rv.data]
 
         if "show_playbar_tool_change_markers" in self.controller_setting_change_list:
             raw_enabled = self.controller_setting_change_list["show_playbar_tool_change_markers"]
@@ -7478,7 +7713,8 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def gcode_play_call_back(self, distance, line_number):
         if not self.loading_file:
-            self.gcode_play_slider.value = distance * 1000.0 / self.gcode_viewer_distance
+            total = self.gcode_viewer_distance
+            self.gcode_play_slider.value = (distance * 1000.0 / total) if total else 0.0
             # Update line highlighting in file viewer during playback.
             # Skip when callback was triggered by a user click (set_distance_by_lineidx from click
             # invokes this before GcodeViewer updates cur_line_index, so line_number would be stale).
@@ -7761,9 +7997,11 @@ class Makera(RelativeLayout):
             self.coord_popup.set_config("leveling", "active", False)
             self.coord_popup.set_config("origin", "anchor", 3)
         else:
-            if (CNC.vars["wcox"] - CNC.vars["anchor1_x"] - CNC.vars["anchor2_offset_x"]) >= 0 and (
-                CNC.vars["wcoy"] - CNC.vars["anchor1_y"] - CNC.vars["anchor2_offset_y"]
-            ) >= 0:
+            if (
+                app.has_anchor2
+                and (CNC.vars["wcox"] - CNC.vars["anchor1_x"] - CNC.vars["anchor2_offset_x"]) >= 0
+                and (CNC.vars["wcoy"] - CNC.vars["anchor1_y"] - CNC.vars["anchor2_offset_y"]) >= 0
+            ):
                 self.coord_popup.set_config("origin", "anchor", 2)
             else:
                 self.coord_popup.set_config("origin", "anchor", 1)
@@ -8112,13 +8350,16 @@ class Makera(RelativeLayout):
                 sanitized_to_send = "\n".join([line for line in to_send.split("\n") if line.strip().lower() != "clear"])
                 if sanitized_to_send != to_send:
                     self.manual_rv.data.append(
-                        {
-                            "text": "clear command can't be used together with other commands",
-                            "color": (250 / 255, 105 / 255, 102 / 255, 1),
-                        }
+                        self._format_mdi_entry(
+                            {
+                                "text": "clear command can't be used together with other commands",
+                                "color": (250 / 255, 105 / 255, 102 / 255, 1),
+                            }
+                        )
                     )
                 self.controller.executeCommand(sanitized_to_send)
         self.manual_cmd.text = ""
+        hide_mdi_intellisense()
         Clock.schedule_once(self.refocus_cmd)
 
     # -----------------------------------------------------------------------
@@ -8143,6 +8384,7 @@ class MakeraApp(App):
     jog_controls_enabled = BooleanProperty(False)
     has_4axis = BooleanProperty(False)
     has_atc = BooleanProperty(False)
+    has_anchor2 = BooleanProperty(True)
     lasering = BooleanProperty(False)
     show_gcode_ctl_bar = BooleanProperty(False)
     fw_has_update = BooleanProperty(False)
@@ -8397,6 +8639,8 @@ def set_config_defaults(default_lang):
         Config.set("carvera", "gcode_color_param_ref", "181,206,168,255")
     if not Config.has_option("carvera", "gcode_color_math_keyword"):
         Config.set("carvera", "gcode_color_math_keyword", "215,186,125,255")
+    if not Config.has_option("carvera", "gcode_color_shell_command"):
+        Config.set("carvera", "gcode_color_shell_command", "47,117,181,255")
 
     Config.write()
 

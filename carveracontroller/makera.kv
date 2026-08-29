@@ -14,6 +14,7 @@
 #:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
 #:include ui/GcodeColorSchemePanel.kv
 #:include addons/tooltips/Tooltips.kv
+#:include addons/intellisense/Intellisense.kv
 #:include ui/LocalFilePicker.kv
 #:include ui/DirectoryView.kv
 #:include ui/DropDownSplitter.kv
@@ -58,8 +59,8 @@
 <CNCWorkspace>:
     size_hint_x: None
     size_hint_y: None
-    width: self.parent.width if self.parent.width > 0 and self.parent.height / self.parent.width > 0.7 else self.parent.height / 0.7
-    height: self.parent.height if self.parent.width > 0 and self.parent.height / self.parent.width < 0.7 else self.parent.width * 0.7
+    width: self.parent.width if self.parent.width > 0 and self.parent.height / self.parent.width > self.workspace_aspect else self.parent.height / self.workspace_aspect
+    height: self.parent.height if self.parent.width > 0 and self.parent.height / self.parent.width < self.workspace_aspect else self.parent.width * self.workspace_aspect
 
 <IconButton>:
     width: '50dp'
@@ -189,7 +190,9 @@
 <ButtonLabel@ButtonBehavior+Label>:
     valign: 'center'
 
-<Row@SelectableLabel>:
+<Row>:
+    markup: True
+    text: root.highlighted_text or root.plain_text
     canvas.before:
         Color:
             rgba: (80/255, 80/255, 80/255, 1) if self.selected else (50/255, 50/255, 50/255, 1)
@@ -199,6 +202,7 @@
     text_size: self.size
     halign: 'left'
     shorten: True
+    shorten_from: 'right'
 
 <GCodeRow>:
     orientation: 'horizontal'
@@ -231,6 +235,7 @@
         valign: 'middle'
         text_size: self.size
         shorten: True
+        shorten_from: 'right'
 
 <DataRow@SelectableBoxLayout>:
     canvas.before:
@@ -1707,13 +1712,13 @@
                         group: 'anchor'
                         active: False
                         on_press: root.update_offsets()
-                        disabled: app.has_4axis
+                        disabled: app.has_4axis or not app.has_anchor2
                     MCQLabel:
                         on_press: 
                             cbx_anchor2._do_press()
                             root.update_offsets()
                         text: tr._('Anchor2')
-                        disabled: app.has_4axis
+                        disabled: app.has_4axis or not app.has_anchor2
                     MCQCheckBox:
                         id: cbx_4axis_origin
                         group: 'anchor'
@@ -2996,7 +3001,8 @@
                 BoxLayout:
                     padding: '0.5dp'
                     size_hint_y: None
-                    height: '30dp'
+                    height: '30dp' if app.model == 'C1' else '0dp'
+                    opacity: 1 if app.model == 'C1' else 0
                     disabled: app.model != 'C1'
                     Label:
                         text: tr._("Auto Vacuum")
@@ -3055,6 +3061,108 @@
                         on_active:
                             if self.set_flag: self.set_flag = False
                             else: app.root.update_control('extout_mode', self.active)
+
+                BoxLayout:
+                    padding: '0.5dp'
+                    size_hint_y: None
+                    height: '30dp' if app.model == 'Z1' else '0dp'
+                    opacity: 1 if app.model == 'Z1' else 0
+                    disabled: app.model != 'Z1'
+                    Label:
+                        text: tr._("Auto Blow")
+                        halign: "left"
+                        valign: "middle"
+                        font_size: '13sp'
+                        text_size: self.size
+
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                    ToolTipSwitch:
+                        id: autoblow_switch_play
+                        tooltip_txt: tr._("The spindle fan will always run with this minimum power while the spindle is on.")
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                        set_flag: False
+                        active: True if root.autoblowmode == 1 else False
+                        on_active:
+                            if self.set_flag: self.set_flag = False
+                            else: app.root.update_control('autoblow_mode', self.active)
+
+                BoxLayout:
+                    padding: '0.5dp'
+                    size_hint_y: None
+                    height: '30dp' if app.model == 'Z1' else '0dp'
+                    opacity: 1 if app.model == 'Z1' else 0
+                    disabled: app.model != 'Z1'
+                    Label:
+                        text: tr._("Auto Bed Clean")
+                        halign: "left"
+                        valign: "middle"
+                        font_size: '13sp'
+                        text_size: self.size
+
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                    ToolTipSwitch:
+                        id: autobedclean_switch_play
+                        tooltip_txt: tr._("Runs a cleaning cycle when gcode playback finishes.")
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                        set_flag: False
+                        active: True if root.autobedcleanmode == 1 else False
+                        on_active:
+                            if self.set_flag: self.set_flag = False
+                            else: app.root.update_control('autobedclean_mode', self.active)
+
+                BoxLayout:
+                    padding: '0.5dp'
+                    size_hint_y: None
+                    height: '30dp' if app.model == 'Z1' else '0dp'
+                    opacity: 1 if app.model == 'Z1' else 0
+                    disabled: app.model != 'Z1'
+                    Label:
+                        text: tr._("Ionizer")
+                        halign: "left"
+                        valign: "middle"
+                        font_size: '13sp'
+                        text_size: self.size
+
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                    ToolTipSwitch:
+                        id: ionizer_switch_play
+                        tooltip_txt: tr._("Turn on the static electricity removal unit on Z1.")
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                        set_flag: False
+                        active: True if root.ionizermode == 1 else False
+                        on_active:
+                            if self.set_flag: self.set_flag = False
+                            else: app.root.update_control('ionizer_mode', self.active)
 
                 Label:
                     size_hint_y: None
@@ -3928,7 +4036,7 @@
                                                 height: '35dp'
                                                 disabled: app.state != 'Idle'
                                                 text: tr._('Goto...')
-                                                values: 'Clearance', 'Work Origin', 'Path Origin', 'Anchor1', 'Anchor2'
+                                                values: ['Clearance', 'Work Origin', 'Path Origin', 'Anchor1', 'Anchor2'] if app.has_anchor2 else ['Clearance', 'Work Origin', 'Path Origin', 'Anchor1']
                                                 on_text:
                                                     if self.text != tr._("Goto..."): app.root.controller.gotoPosition(self.text)
                                                     if self.text != tr._("Goto..."): self.text = tr._('Goto...')

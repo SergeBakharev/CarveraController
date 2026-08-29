@@ -59,6 +59,7 @@ GCODE_DEFAULT_COLORS = {
     "o_keyword": "#DCDCAA",
     "param_ref": "#B5CEA8",
     "math_keyword": "#D7BA7D",
+    "shell_command": "#2F75B5",
 }
 
 
@@ -259,6 +260,9 @@ class CNC:
         "OvSpindle": 100,
         "vacuummode": 0,
         "extoutmode": 0,
+        "autoblowmode": 0,
+        "autobedcleanmode": 0,
+        "ionizermode": 0,
         "_OvChanged": False,
         "_OvFeed": 100,  # Override target values
         "_OvRapid": 100,
@@ -402,11 +406,13 @@ class CNC:
         # calculate path
         xyzs = self.motionPath()
 
-        if len(xyzs) > 0 and not self.has_motion:
+        if not self.has_motion and self.gcode in (0, 1, 2, 3):
             # Parser assumes the machine starts at WCS origin; skip visualising
             # travel from that assumed position on the first motion command.
+            # A zero-length first move (e.g. G1 X0 Y0 already at origin) still
+            # counts, so the next real move is drawn instead of being collapsed.
             self.has_motion = True
-            if self.gcode in (0, 1, 2, 3):
+            if len(xyzs) > 0:
                 end = xyzs[-1]
                 if not self.z_command:
                     # Playback reaches clearance height (coordinate.clearance_z) before the first XY move.
@@ -414,7 +420,9 @@ class CNC:
                     end = (end[0], end[1], safe_z, end[3])
                     self.zval = safe_z
                 xyzs = [end]
-            elif self.gcode in (81, 82, 83, 85, 86, 89) and len(xyzs) > 1:
+        elif len(xyzs) > 0 and not self.has_motion:
+            self.has_motion = True
+            if self.gcode in (81, 82, 83, 85, 86, 89) and len(xyzs) > 1:
                 xyzs = xyzs[1:]
 
         if len(xyzs) > 0:
