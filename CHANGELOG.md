@@ -1,4 +1,5 @@
 [unreleased]
+- Enhancement: Monitoring live graph now in the G-code viewer screen. showing up to two metrics: Spindle power, rpm, feed, temperature
 - Enhancement: Intellisense-like popups explaining commands in lines selected in the gcode viewer and MDI terminal
 - Enhancement: Support for connect to the Makera Z1 over USB
 - Enhancement: The step size is now synchronized between the main screen and the Probing screen
