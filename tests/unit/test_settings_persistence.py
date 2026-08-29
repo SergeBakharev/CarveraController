@@ -25,7 +25,6 @@ from carveracontroller.addons.pendant.pendant import SettingPendantSelector
 from carveracontroller.custom_widgets import SettingColorPicker, SettingGCodeSnippet
 from carveracontroller.main import DeferredSettingsPanel
 
-
 # (test_id, registered_type, type_class_or_None, initial, new_value, panel_def_extras)
 # type_class_or_None is None for built-in Kivy types that Settings registers
 # automatically (bool, numeric, string, options, etc.).
@@ -106,8 +105,7 @@ def test_panel_set_value_defers_config_write(reg_type, cls, initial, new_value, 
     panel.set_value("test", "key", new_value)
 
     assert config.get("test", "key") == initial, (
-        f"{reg_type}: Config was written before Apply. "
-        f"Deferred semantics broken — Discard would not revert."
+        f"{reg_type}: Config was written before Apply. Deferred semantics broken — Discard would not revert."
     )
 
 
@@ -122,7 +120,6 @@ def test_pendant_spinner_change_propagates():
     item.spinner.text = "WHB04"
 
     assert str(item.value) == "WHB04", (
-        "Pendant change did not reach widget.value — would silently drop "
-        "user selections on restart."
+        "Pendant change did not reach widget.value — would silently drop user selections on restart."
     )
     assert config.get("test", "key") == "None", "Config write must remain deferred"

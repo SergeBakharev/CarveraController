@@ -1,0 +1,603 @@
+[
+    {
+        "type": "title",
+        "title": "Light",
+        "section": "Basic"
+    },
+    {
+        "type": "bool",
+        "title": "Light on",
+        "desc": "Whether to turn on light by default",
+        "section": "Basic",
+        "key": "switch.light.startup_state",
+        "default": "true"
+    },
+    {
+        "type": "numeric",
+        "title": "Light off minutes",
+        "desc": "Turn off the light when idle for these minutes (0 means never)",
+        "section": "Basic",
+        "key": "light.turn_off_min",
+        "default": "0.0"
+    },
+    {
+        "type": "numeric",
+        "title": "LED brightness",
+        "desc": "Status light brightness (0 - 255)",
+        "section": "Basic",
+        "key": "light.ledBrightness",
+        "default": "15"
+    },
+    {
+        "type": "title",
+        "title": "Accessories",
+        "section": "Basic"
+    },
+    {
+        "type": "numeric",
+        "title": "Chip clear power",
+        "desc": "External output power when auto chip clearing is on (0 - 100)",
+        "section": "Basic",
+        "key": "accessory.chip_clear_power",
+        "default": "80"
+    },
+    {
+        "type": "numeric",
+        "title": "Auto blow power",
+        "desc": "Spindle fan power used by auto blow (0 - 100)",
+        "section": "Basic",
+        "key": "accessory.auto_blowing_power",
+        "default": "30"
+    },
+    {
+        "type": "title",
+        "title": "Bed cleaning",
+        "section": "Basic"
+    },
+    {
+        "type": "numeric",
+        "title": "Cleaning cycles",
+        "desc": "Number of sweep cycles (1 - 10)",
+        "section": "Basic",
+        "key": "bed_cleaning.cycles",
+        "default": "1"
+    },
+    {
+        "type": "numeric",
+        "title": "Sweep spacing",
+        "desc": "Distance between successive sweep rows (mm)",
+        "section": "Basic",
+        "key": "bed_cleaning.spacing",
+        "default": "40"
+    },
+    {
+        "type": "numeric",
+        "title": "Cleaning fan power",
+        "desc": "Spindle fan power during bed cleaning (0 - 100)",
+        "section": "Basic",
+        "key": "accessory.bed_cleaning_fan_power",
+        "default": "100"
+    },
+    {
+        "type": "title",
+        "title": "Safety",
+        "section": "Basic"
+    },
+    {
+        "type": "bool",
+        "title": "Stop on open",
+        "desc": "Stop when open the cover during machining",
+        "section": "Basic",
+        "key": "stop_on_cover_open",
+        "default": "false"
+    },
+    {
+        "type": "title",
+        "title": "Power management",
+        "section": "Basic"
+    },
+    {
+        "type": "bool",
+        "title": "Auto sleep",
+        "desc": "Allow machine to enter sleep mode automatically",
+        "section": "Basic",
+        "key": "power.auto_sleep",
+        "default": "false"
+    },
+    {
+        "type": "numeric",
+        "title": "Auto sleep minutes",
+        "desc": "Enter sleep mode after these minutes (1 - 30)",
+        "section": "Basic",
+        "key": "power.auto_sleep_min",
+        "default": "5"
+    },
+    {
+        "type": "title",
+        "title": "Main button",
+        "section": "Basic"
+    },
+    {
+        "type": "options",
+        "title": "Main button long press function",
+        "desc": "Triggered after 3 seconds when pressing\nNone   ------Do Nothing\nSleep  ------Enter sleep mode\nRepeat------Repeat Last Job",
+        "section": "Basic",
+        "key": "main_button_long_press_enable",
+        "options": [
+            "None",
+            "Sleep",
+            "Repeat"
+        ],
+        "default": "None"
+    },
+    {
+        "type": "title",
+        "title": "Coordinates",
+        "section": "Advanced"
+    },
+    {
+        "type": "numeric",
+        "title": "Anchor1 X",
+        "desc": "X Machine coordinates of anchor1",
+        "section": "Advanced",
+        "key": "coordinate.anchor1_x",
+        "default": "-190.56"
+    },
+    {
+        "type": "numeric",
+        "title": "Anchor1 Y",
+        "desc": "Y Machine coordinates of anchor1",
+        "section": "Advanced",
+        "key": "coordinate.anchor1_y",
+        "default": "-194.72"
+    },
+    {
+        "type": "numeric",
+        "title": "Rotation X Offset",
+        "desc": "Rotation module X Offset relative to anchor1",
+        "section": "Advanced",
+        "key": "coordinate.rotation_offset_x",
+        "default": "-7.5"
+    },
+    {
+        "type": "numeric",
+        "title": "Rotation Y Offset",
+        "desc": "Rotation module Y Offset relative to anchor1",
+        "section": "Advanced",
+        "key": "coordinate.rotation_offset_y",
+        "default": "69.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Rotation Z Offset",
+        "desc": "Rotation module Z Offset relative to chuck center",
+        "section": "Advanced",
+        "key": "coordinate.rotation_offset_z",
+        "default": "17.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Anchor width",
+        "desc": "Width of anchors",
+        "section": "Advanced",
+        "key": "coordinate.anchor_width",
+        "default": "15.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Anchor length",
+        "desc": "Length of anchors",
+        "section": "Advanced",
+        "key": "coordinate.anchor_length",
+        "default": "100.0"
+    },
+    {
+        "type": "numeric",
+        "title": "X Work Size",
+        "desc": "Width of work area",
+        "section": "Advanced",
+        "key": "coordinate.worksize_x",
+        "default": "200.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Y Work Size",
+        "desc": "Height of work area",
+        "section": "Advanced",
+        "key": "coordinate.worksize_y",
+        "default": "200.0"
+    },
+    {
+        "type": "numeric",
+        "title": "X Clearance",
+        "desc": "X Machine coordinates for clearance",
+        "section": "Advanced",
+        "key": "coordinate.clearance_x",
+        "default": "-11.6"
+    },
+    {
+        "type": "numeric",
+        "title": "Y Clearance",
+        "desc": "Y Machine coordinates for clearance",
+        "section": "Advanced",
+        "key": "coordinate.clearance_y",
+        "default": "-14.6"
+    },
+    {
+        "type": "numeric",
+        "title": "Z Clearance",
+        "desc": "Z Machine coordinates for clearance",
+        "section": "Advanced",
+        "key": "coordinate.clearance_z",
+        "default": "-3.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Bed cleaning X min",
+        "desc": "Rear-left X of the bed cleaning sweep (mm)",
+        "section": "Advanced",
+        "key": "bed_cleaning.x_min",
+        "default": "-192.4"
+    },
+    {
+        "type": "numeric",
+        "title": "Bed cleaning X max",
+        "desc": "Front-right X of the bed cleaning sweep (mm)",
+        "section": "Advanced",
+        "key": "bed_cleaning.x_max",
+        "default": "-11.6"
+    },
+    {
+        "type": "numeric",
+        "title": "Bed cleaning Y min",
+        "desc": "Rear Y of the bed cleaning sweep (mm)",
+        "section": "Advanced",
+        "key": "bed_cleaning.y_min",
+        "default": "-194.3"
+    },
+    {
+        "type": "numeric",
+        "title": "Bed cleaning Y max",
+        "desc": "Front Y of the bed cleaning sweep (mm)",
+        "section": "Advanced",
+        "key": "bed_cleaning.y_max",
+        "default": "-1.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Bed cleaning park Y",
+        "desc": "Y parking position after a cleaning cycle (mm)",
+        "section": "Advanced",
+        "key": "bed_cleaning.park_y",
+        "default": "-14.6"
+    },
+    {
+        "type": "numeric",
+        "title": "Bed cleaning front X",
+        "desc": "Front-edge X used to dump chips off the bed (mm)",
+        "section": "Advanced",
+        "key": "bed_cleaning.front_x",
+        "default": "-2.0"
+    },
+    {
+        "type": "bool",
+        "title": "Soft Limits",
+        "desc": "Enabled to precheck if gCode commands will exceed the travel limits",
+        "section": "Advanced",
+        "key": "soft_endstop.enable",
+        "default": "true"
+    },
+    {
+        "type": "numeric",
+        "title": "X Min Coordinate",
+        "desc": "Minimum X axis coordinate",
+        "section": "Advanced",
+        "key": "soft_endstop.x_min",
+        "default": "-207.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Y Min Coordinate",
+        "desc": "Minimum Y axis coordinate",
+        "section": "Advanced",
+        "key": "soft_endstop.y_min",
+        "default": "-206.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Rotary Y Min Coordinate",
+        "desc": "Minimum Y axis coordinate with the rotary module installed",
+        "section": "Advanced",
+        "key": "soft_endstop.rotary_y_min",
+        "default": "-160.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Z Min Coordinate",
+        "desc": "Minimum Z axis coordinate",
+        "section": "Advanced",
+        "key": "soft_endstop.z_min",
+        "default": "-102.0"
+    },
+    {
+        "type": "title",
+        "title": "Motion",
+        "section": "Advanced"
+    },
+    {
+        "type": "numeric",
+        "title": "Default Feed Rate",
+        "desc": "Feed rate when F parameter is not set (mm/min)",
+        "section": "Advanced",
+        "key": "default_feed_rate",
+        "default": "1000"
+    },
+    {
+        "type": "numeric",
+        "title": "Default Seek Rate",
+        "desc": "Feed rate for G0 rapid mode (mm/min)",
+        "section": "Advanced",
+        "key": "default_seek_rate",
+        "default": "2000"
+    },
+    {
+        "type": "numeric",
+        "title": "Max X Speed",
+        "desc": "Max feed rate for X axis (mm/min)",
+        "section": "Advanced",
+        "key": "alpha_max_rate",
+        "default": "1200.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Max Y Speed",
+        "desc": "Max feed rate for Y axis (mm/min)",
+        "section": "Advanced",
+        "key": "beta_max_rate",
+        "default": "1200.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Max Z Speed",
+        "desc": "Max feed rate for Z axis (mm/min)",
+        "section": "Advanced",
+        "key": "gamma_max_rate",
+        "default": "600.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Max Rotation Speed",
+        "desc": "Max rotation speed rate for A axis (degree/min)",
+        "section": "Advanced",
+        "key": "delta_max_rate",
+        "default": "3600.0"
+    },
+    {
+        "type": "numeric",
+        "title": "XYZ Acceleration",
+        "desc": "Acceleration for X/Y/Z axis (mm/second/second)",
+        "section": "Advanced",
+        "key": "acceleration",
+        "default": "150"
+    },
+    {
+        "type": "numeric",
+        "title": "Rotation Acceleration",
+        "desc": "Acceleration for rotation axis (degree/second/second)",
+        "section": "Advanced",
+        "key": "delta_acceleration",
+        "default": "360.0"
+    },
+    {
+        "type": "title",
+        "title": "WIFI",
+        "section": "Advanced"
+    },
+    {
+        "type": "string",
+        "title": "Machine WiFi Name",
+        "desc": "Machine name that is shown in the WiFi list",
+        "section": "Advanced",
+        "key": "wifi.machine_name",
+        "default": "MAKERA_Z1_01001"
+    },
+    {
+        "type": "title",
+        "title": "Laser",
+        "section": "Advanced"
+    },
+    {
+        "type": "numeric",
+        "title": "Test Power",
+        "desc": "Laser power when doing test(0 - 1)",
+        "section": "Advanced",
+        "key": "laser_module_test_power",
+        "default": "0.01"
+    },
+    {
+        "type": "numeric",
+        "title": "Max Laser Power",
+        "desc": "Max laser power (0 - 1)",
+        "section": "Advanced",
+        "key": "laser_module_maximum_power",
+        "default": "1.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Min Laser Power",
+        "desc": "Min laser power (0 - 1)",
+        "section": "Advanced",
+        "key": "laser_module_minimum_power",
+        "default": "0.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Offset X",
+        "desc": "Laser module x offset relative to spindle",
+        "section": "Advanced",
+        "key": "laser_module_offset_x",
+        "default": "0"
+    },
+    {
+        "type": "numeric",
+        "title": "Offset Y",
+        "desc": "Laser module y offset relative to spindle",
+        "section": "Advanced",
+        "key": "laser_module_offset_y",
+        "default": "0"
+    },
+    {
+        "type": "numeric",
+        "title": "Offset Z",
+        "desc": "Laser module z offset relative to spindle",
+        "section": "Advanced",
+        "key": "laser_module_offset_z",
+        "default": "-7.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Cooldown power",
+        "desc": "Laser module cooldown power",
+        "section": "Advanced",
+        "key": "temperatureswitch.spindle.cooldown_power_laser",
+        "default": "30.0"
+    },
+    {
+        "type": "bool",
+        "title": "Laser Clustering",
+        "desc": "Turn on to fix random deviation problem during High-Res laser engraving (esp for LightBurn)",
+        "section": "Advanced",
+        "key": "laser_module_clustering",
+        "default": "false"
+    },
+    {
+        "type": "title",
+        "title": "Z Probe",
+        "section": "Advanced"
+    },
+    {
+        "type": "numeric",
+        "title": "Slow Speed",
+        "desc": "Z probe slow speed (mm/s)",
+        "section": "Advanced",
+        "key": "zprobe.slow_feedrate",
+        "default": "1.5"
+    },
+    {
+        "type": "numeric",
+        "title": "Fast Speed",
+        "desc": "Z probe fast speed (mm/s)",
+        "section": "Advanced",
+        "key": "zprobe.fast_feedrate",
+        "default": "5"
+    },
+    {
+        "type": "numeric",
+        "title": "Return Speed",
+        "desc": "Z probe return speed (mm/s)",
+        "section": "Advanced",
+        "key": "zprobe.return_feedrate",
+        "default": "20"
+    },
+    {
+        "type": "numeric",
+        "title": "Probe Height",
+        "desc": "How much above bed to start probe",
+        "section": "Advanced",
+        "key": "zprobe.probe_height",
+        "default": "2"
+    },
+    {
+        "type": "numeric",
+        "title": "Max Z",
+        "desc": "Max action distance when doing z probe",
+        "section": "Advanced",
+        "key": "zprobe.max_z",
+        "default": "100"
+    },
+    {
+        "type": "title",
+        "title": "Spindle",
+        "section": "Advanced"
+    },
+    {
+        "type": "numeric",
+        "title": "Default RPM",
+        "desc": "Default RPM value in case no RPM is provided",
+        "section": "Advanced",
+        "key": "spindle.default_rpm",
+        "default": "10000"
+    },
+    {
+        "type": "numeric",
+        "title": "Max RPM",
+        "desc": "Maximum RPM value the machine will allow",
+        "section": "Advanced",
+        "key": "spindle.max_rpm",
+        "default": "13000"
+    },
+    {
+        "type": "numeric",
+        "title": "Cooldown Threshold",
+        "desc": "Temperature to turn on or off spindle fan",
+        "section": "Advanced",
+        "key": "temperatureswitch.spindle.threshold_temp",
+        "default": "60.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Cooldown Fan Start Power",
+        "desc": "Cooldown fan start power percentage (50 - 100)",
+        "section": "Advanced",
+        "key": "temperatureswitch.spindle.cooldown_power_init",
+        "default": "50.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Cooldown Fan Step",
+        "desc": "Cooldown fan start power increase step per degree",
+        "section": "Advanced",
+        "key": "temperatureswitch.spindle.cooldown_power_step",
+        "default": "2.0"
+    },
+    {
+        "type": "numeric",
+        "title": "Cooldown Delay",
+        "desc": "Stop cooldown after these seconds",
+        "section": "Advanced",
+        "key": "temperatureswitch.spindle.cooldown_delay",
+        "default": "180"
+    },
+    {
+        "type": "numeric",
+        "title": "Temperature Alarm Threshold",
+        "desc": "Alarm and halt machine when overheated",
+        "section": "Advanced",
+        "key": "temperature_control.spindle.max_temp",
+        "default": "70"
+    },
+    {
+        "type": "string",
+        "title": "Restore to default settings",
+        "desc": "Enter upper case: 'RESTORE' to confirm restoring",
+        "section": "Restore",
+        "key": "restore"
+    },
+    {
+        "type": "string",
+        "title": "Save current settings as default",
+        "desc": "Enter upper case: 'DEFAULT' to save default",
+        "section": "Restore",
+        "key": "default"
+    },
+    {
+        "type": "options",
+        "title": "Back up configuration files",
+        "desc": "config.txt, flex_compensation.dat, etc. will be backed up to your computer",
+        "section": "Backup",
+        "key": "backup",
+        "options": [
+            "Back up files now"
+        ]
+    }
+]

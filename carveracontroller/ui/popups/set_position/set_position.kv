@@ -1,0 +1,154 @@
+#:import tr carveracontroller.__main__.tr
+#:import coordinates carveracontroller.machine.coordinates
+
+<SingleFloatPopup>:
+    size_hint: 0.5, 0.4
+    pos_hint: {"right": 0.75, "top": 0.7}
+    auto_dismiss: False
+    txt_offset: txt_offset
+    BoxLayout:
+        padding: '15dp'
+        orientation: 'vertical'
+        Label:
+            canvas.before:
+                Color:
+                    rgba: 45/255, 45/255, 45/255, 1
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+            id: caption
+            size_hint_y: None
+            height: '30dp'
+            text: root.title
+            halign: 'left'
+            valign: 'middle'
+            text_size: self.size
+        BoxLayout:
+            padding: '15dp'
+            orientation: 'vertical'
+        BoxLayout:
+            size_hint_y: None
+            height: '30dp'
+            Label:
+                text: 'Value:'
+                halign: "left"
+                valign: "center"
+                text_size: self.size
+            TextInput:
+                id: txt_offset
+                hint_text: root.hint
+                multiline: False
+                text: '0.0'
+                halign: "left"
+                input_type: 'number'
+                input_filter: 'float'
+        BoxLayout:
+            id: empty
+        BoxLayout:
+            spacing: '5dp'
+            size_hint_y: None
+            height: '40dp'
+            Button:
+                id: btn_cancel
+                text: tr._('Cancel')
+                on_release: root.dismiss()
+            Button:
+                id: btn_ok
+                text: tr._('Ok')
+                on_release: root.on_ok_pressed()
+
+<ToolPopup>:
+    size_hint: 0.5, 0.4
+    pos_hint: {"right": 0.75, "top": 0.7}
+    auto_dismiss: False
+    txt_offset: txt_offset
+    BoxLayout:
+        padding: '15dp'
+        orientation: 'vertical'
+        Label:
+            canvas.before:
+                Color:
+                    rgba: 45/255, 45/255, 45/255, 1
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+            id: caption
+            size_hint_y: None
+            height: '30dp'
+            text: root.title
+            halign: 'left'
+            valign: 'middle'
+            text_size: self.size
+        BoxLayout:
+            padding: '15dp'
+            orientation: 'vertical'
+        BoxLayout:
+            size_hint_y: None
+            height: '30dp'
+            Label:
+                text: 'Value:'
+                halign: "left"
+                valign: "center"
+                text_size: self.size
+            TextInput:
+                id: txt_offset
+                hint_text: root.hint
+                multiline: False
+                text: '0'
+                halign: "left"
+                input_type: 'number'
+                input_filter: 'int'
+        BoxLayout:
+            id: empty
+        BoxLayout:
+            spacing: '5dp'
+            size_hint_y: None
+            height: '40dp'
+            Button:
+                id: btn_cancel
+                text: tr._('Cancel')
+                on_release: root.dismiss()
+            Button:
+                id: btn_ok
+                text: tr._('Ok')
+                on_release: root.on_ok_pressed()
+
+<SetXPopup>:
+    title: tr._('Set X Current Pos')
+    hint: tr._('Enter X Pos')
+    label: 'X offset'
+    machine_op: coordinates.set_x_offset
+
+<SetYPopup>:
+    title: tr._('Set Y Current Pos')
+    hint: tr._('Enter Y Pos')
+    label: 'Y offset'
+    machine_op: coordinates.set_y_offset
+
+<SetZPopup>:
+    title: tr._('Set Z Current Pos')
+    hint: tr._('Enter Z Pos')
+    label: 'Z offset'
+    machine_op: coordinates.set_z_offset
+
+<SetAPopup>:
+    title: tr._('Set A Current Pos')
+    hint: tr._('Enter A Pos')
+    label: 'A offset'
+    machine_op: coordinates.set_a_offset
+
+<MoveAPopup>:
+    title: tr._('Rapidly move the A to')
+    hint: tr._('Enter A Pos')
+    label: 'A position'
+    machine_op: coordinates.rapid_move_a
+
+<SetToolPopup>:
+    title: tr._('Set Current Tool Number')
+    hint: tr._('Enter New Tool Number')
+    machine_op: coordinates.set_tool_number
+
+<ChangeToolPopup>:
+    title: tr._('Change Current Tool')
+    hint: tr._('New Tool Number')
+    machine_op: coordinates.change_tool

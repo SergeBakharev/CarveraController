@@ -126,6 +126,36 @@ CMAltimeter *altimeterManager;
 
 @end
 
+// Returns the key window's safeAreaInsets, converted to physical pixels
+// (Kivy renders in pixels, not points). Writes 0s if no window is available
+// yet — caller can retry after the window is ready.
+void get_safe_area_insets_px(double *top, double *left, double *bottom, double *right) {
+    *top = *left = *bottom = *right = 0;
+
+    UIWindow *window = nil;
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+            UIWindowScene *ws = (UIWindowScene *)scene;
+            for (UIWindow *w in ws.windows) {
+                if (w.isKeyWindow) { window = w; break; }
+            }
+            if (window) break;
+        }
+    }
+    if (!window) {
+        window = [UIApplication sharedApplication].keyWindow;
+    }
+    if (!window) return;
+
+    UIEdgeInsets insets = window.safeAreaInsets;
+    CGFloat scale = [[UIScreen mainScreen] scale];
+    *top    = insets.top    * scale;
+    *left   = insets.left   * scale;
+    *bottom = insets.bottom * scale;
+    *right  = insets.right  * scale;
+}
+
 @implementation DocumentPickerHelper
 
 

@@ -1,0 +1,89 @@
+#:import tr carveracontroller.__main__.tr
+#:import ADJUST_MIN carveracontroller.addons.camera.CameraView.ADJUST_MIN
+#:import ADJUST_MAX carveracontroller.addons.camera.CameraView.ADJUST_MAX
+#:import ADJUST_DEFAULT carveracontroller.addons.camera.CameraView.ADJUST_DEFAULT
+#:import RESOLUTION_LABELS carveracontroller.addons.camera.Z1Camera.RESOLUTION_LABELS
+#:import RESOLUTION_CHOICES carveracontroller.addons.camera.Z1Camera.RESOLUTION_CHOICES
+
+<CameraButtonSlot@AnchorLayout>:
+    visible: False
+    anchor_x: 'left'
+    anchor_y: 'top'
+    size_hint_y: None
+    height: '50dp' if self.visible else 0
+    opacity: 1 if self.visible else 0
+
+<CameraAdjustPanel@BoxLayout>:
+    visible: False
+    orientation: 'vertical'
+    size_hint_y: None
+    height: '200dp' if self.visible else 0
+    opacity: 1 if self.visible else 0
+    padding: '8dp'
+    spacing: '4dp'
+    canvas.before:
+        Color:
+            rgba: 0, 0, 0, 0.6
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+<CameraAdjustRow@BoxLayout>:
+    label_text: ''
+    value: ADJUST_DEFAULT
+    Label:
+        text: root.label_text
+        size_hint_x: 0.42
+        font_size: '13sp'
+    Slider:
+        min: ADJUST_MIN
+        max: ADJUST_MAX
+        value: root.value
+        on_value: root.value = self.value
+
+<CameraControls@BoxLayout>:
+    adjust_open: False
+    orientation: 'vertical'
+    size_hint: None, None
+    width: '250dp' if root.adjust_open and app.camera_streaming else '50dp'
+    height: self.minimum_height
+    CameraButtonSlot:
+        visible: app.camera_streaming
+        TransparentButton:
+            icon: 'data/configure.png'
+            active: root.adjust_open
+            size_hint: None, None
+            width: '50dp'
+            height: self.parent.height
+            on_release:
+                root.adjust_open = not root.adjust_open
+    CameraAdjustPanel:
+        visible: root.adjust_open and app.camera_streaming
+        BoxLayout:
+            Label:
+                text: tr._('Resolution')
+                size_hint_x: 0.42
+                font_size: '13sp'
+            Spinner:
+                text: RESOLUTION_LABELS[app.camera_resolution]
+                values: RESOLUTION_CHOICES
+                on_text:
+                    app.root.set_camera_resolution(self.text)
+        CameraAdjustRow:
+            label_text: tr._('Brightness')
+            value: app.camera_brightness
+            on_value: app.camera_brightness = self.value
+        CameraAdjustRow:
+            label_text: tr._('Contrast')
+            value: app.camera_contrast
+            on_value: app.camera_contrast = self.value
+        CameraAdjustRow:
+            label_text: tr._('Gamma')
+            value: app.camera_gamma
+            on_value: app.camera_gamma = self.value
+        Button:
+            text: tr._('Reset')
+            on_release:
+                app.camera_brightness = ADJUST_DEFAULT
+                app.camera_contrast = ADJUST_DEFAULT
+                app.camera_gamma = ADJUST_DEFAULT

@@ -1,0 +1,38 @@
+<DirectoryView>:
+    orientation: 'horizontal'
+    selected: False
+    data_text: ''
+    data_icon: 'data/folder-32.png'
+    full_path: ''
+    canvas.before:
+        Color:
+            rgba: 80/255, 80/255, 80/255, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+    Label:
+        canvas.before:
+            Color:
+                rgba: 225/255, 225/255, 225/255, 1
+            Rectangle:
+                source: 'data/connected.png'
+                pos: self.center_x - dp(10), self.center_y - dp(10)
+                size: dp(20) if root.selected else dp(0), dp(20) if root.selected else dp(0)
+        text: ''
+        size_hint_x: 0.15
+    Label:
+        canvas.before:
+            Color:
+                rgba: root.color
+            Rectangle:
+                source: 'data/folder-32.png' if root.data_icon == '' else root.data_icon
+                pos: self.center_x - dp(10), self.center_y - dp(10)
+                size: dp(20), dp(20)
+        text: ''
+        size_hint_x: 0.2
+    Label:
+        text: root.data_text
+        color: 225/255, 225/255, 225/255, 1
+        text_size: self.size
+        valign: 'middle'
+        multiline: False

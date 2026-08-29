@@ -9,6 +9,9 @@ inputs:
       - windows
       - linux
       - macos
+  install-args:
+    description: 'Additional poetry install arguments'
+    default: ''
 runs:
   using: "composite"
   steps:
@@ -33,17 +36,22 @@ runs:
     - name: Configure poetry
       shell: bash
       run: poetry config virtualenvs.in-project true
-    
+
+    - name: Install dependencies with custom arguments
+      shell: bash
+      if: ${{ inputs.install-args != '' }}
+      run: poetry install ${{ inputs.install-args }}
+
     - name: Install dependencies on non-Windows OS
       shell: bash
-      if: ${{ env.OS_NAME != 'windows' }}
+      if: ${{ inputs.install-args == '' && env.OS_NAME != 'windows' }}
       run: poetry install
       env:
         OS_NAME: ${{ inputs.os }}
 
     - name: Install dependencies on Windows
       shell: bash
-      if: ${{ env.OS_NAME == 'windows' }}
+      if: ${{ inputs.install-args == '' && env.OS_NAME == 'windows' }}
       run: poetry install --without ios-dev
       env:
         OS_NAME: ${{ inputs.os }}

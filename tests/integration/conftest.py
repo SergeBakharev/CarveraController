@@ -19,9 +19,8 @@ os.environ.setdefault("KIVY_LOG_MODE", "MIXED")
 os.environ.setdefault("KIVY_NO_CONSOLELOG", "0")
 
 import pytest
-from PIL import Image, ImageChops
-
 from kivy.config import Config
+from PIL import Image, ImageChops
 
 # Set window size before the window is created
 Config.set("graphics", "width", "1920")
@@ -123,7 +122,7 @@ def compare_screenshots(name):
     out_path = os.path.join(OUTPUT_DIR, f"{name}.png")
 
     if not os.path.exists(ref_path):
-        pytest.skip(f"No reference screenshot for '{name}'. " f"Run with --update-references to create one.")
+        pytest.skip(f"No reference screenshot for '{name}'. Run with --update-references to create one.")
 
     ref = Image.open(ref_path).convert("RGB")
     out = Image.open(out_path).convert("RGB")
@@ -136,7 +135,7 @@ def compare_screenshots(name):
     if bbox is not None:
         diff_path = os.path.join(OUTPUT_DIR, f"{name}_DIFF.png")
         diff.save(diff_path)
-        pytest.fail(f"Visual difference detected in '{name}'. " f"Diff region: {bbox}. See {diff_path}")
+        pytest.fail(f"Visual difference detected in '{name}'. Diff region: {bbox}. See {diff_path}")
 
 
 def save_reference(name):
@@ -169,19 +168,19 @@ def kivy_app():
     app.run(), which would block forever in the Kivy event loop. Instead we
     use _run_prepare() to build the widget tree and manually pump frames.
     """
+    import carveracontroller.main as main_module
     from carveracontroller import translation
     from carveracontroller.main import (
         MakeraApp,
-        load_constants,
-        set_config_defaults,
-        load_app_configs,
-        load_halt_translations,
         app_base_path,
+        load_app_configs,
+        load_constants,
+        load_halt_translations,
         register_fonts,
         register_images,
+        set_config_defaults,
     )
     from carveracontroller.translation import tr
-    import carveracontroller.main as main_module
 
     # Replicate main() startup sequence (main.py:6470-6494)
     translation.init(None)

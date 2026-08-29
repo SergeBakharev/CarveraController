@@ -1,7 +1,9 @@
 from kivy.uix.boxlayout import BoxLayout
 
 from carveracontroller.addons.probing.operations.ConfigUtils import ConfigUtils
-from carveracontroller.addons.probing.operations.ProbeTip.ProbeTipParameterDefinitions import ProbeTipParameterDefinitions
+from carveracontroller.addons.probing.operations.ProbeTip.ProbeTipParameterDefinitions import (
+    ProbeTipParameterDefinitions,
+)
 
 
 class ProbeTipSettings(BoxLayout):
@@ -11,7 +13,7 @@ class ProbeTipSettings(BoxLayout):
     def __init__(self, **kwargs):
         self.config = ConfigUtils.load_config(self.config_filename)
         self.config = self.order_config(self.config)
-        super(ProbeTipSettings, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
     def setting_changed(self, key: str, value: float):
         param = getattr(ProbeTipParameterDefinitions, key, None)
@@ -38,4 +40,4 @@ class ProbeTipSettings(BoxLayout):
         return param.default
 
     def get_config(self):
-        return self.config;
+        return self.config

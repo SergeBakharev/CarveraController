@@ -27,8 +27,8 @@
 
 <Tooltip>:
     size_hint: None, None
-    width: max(tooltip_label.texture_size[0] + 20, tooltip_image.width + 20)
-    height: tooltip_label.texture_size[1] + tooltip_image.height + 20
+    width: (tooltip_label.texture_size[0] + tooltip_image.width + self.spacing + 20) if self.orientation == 'horizontal' and tooltip_image.width else max(tooltip_label.texture_size[0] + 20, tooltip_image.width + 20, 220 if tooltip_label.text else 0)
+    height: (max(tooltip_label.texture_size[1], tooltip_image.height) + 20) if self.orientation == 'horizontal' and tooltip_image.width else tooltip_label.texture_size[1] + tooltip_image.height + 20
     size: self.minimum_size
     orientation: 'vertical'
     padding: 10, 10
@@ -48,25 +48,23 @@
     BoxLayout:
         size_hint: None, None
         size: tooltip_image.size
-        orientation: 'vertical'
+        pos_hint: {"center_y": 0.5} if root.orientation == 'horizontal' else {"center_x": 0.5}
         Image:
             id: tooltip_image
             size_hint: None, None
             fit_mode: 'scale-down'
             size: self.texture_size
-            pos_hint: {"center_x": 0.5}
 
-    ToolTipLabel:
+    ToolTipContentLabel:
         id: tooltip_label
         size_hint: None, None
-        text_size: self.width, None
         size: self.texture_size
         halign: 'left'
-        valign: 'top'
+        valign: 'middle'
+        pos_hint: {"center_y": 0.5} if root.orientation == 'horizontal' else {}
 
-<ToolTipLabel>:
+<ToolTipContentLabel>:
     id: tooltip_label
-    text_size: self.width, None
     size_hint: None, None
     height: self.texture_size[1]
     halign: 'left'
@@ -80,3 +78,28 @@
         Rectangle:
             size: self.size
             pos: self.pos
+
+<HelpButton>
+    id: help_button
+    orientation: 'vertical'
+    halign: 'center'
+    pos_hint: {'center_x': 0.5, 'center_y': 0.5}
+    size_hint: None, None
+    height: self.parent.height
+    width: self.parent.height * 2
+    state_image: self.background_normal if self.state == 'normal' else self.background_down
+    disabled_image: self.background_disabled_normal if self.state == 'normal' else self.background_disabled_down
+    canvas:
+        Color:
+            rgba: 0, 1, 0, 1
+        BorderImage:
+            border: self.border
+            pos: self.pos
+            size: self.size
+            source: self.disabled_image if self.disabled else self.state_image
+    Image:
+        id: image
+        source: root.image_source
+        fit_mode: 'scale-down'
+        size_hint: 0.3,0.3
+        pos_hint: {'center_x': 0.5, 'center_y': 0.5}

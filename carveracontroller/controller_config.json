@@ -114,9 +114,17 @@
     {
         "type": "bool",
         "title": "Allow Jogging When Machine Running",
-        "desc": "This option allows for manual movement while spindle is running. Use this functionality with caution.",
+        "desc": "Allow jogging while the machine is in the Run state. Use this functionality with caution.",
         "section": "carvera",
         "key": "allow_jogging_while_machine_running",
+        "default": "true"
+    },
+    {
+        "type": "bool",
+        "title": "Allow Jogging When Spindle or Laser Is On",
+        "desc": "Allow jogging while the spindle is spinning or the laser is firing. Use this functionality with caution.",
+        "section": "carvera",
+        "key": "allow_jogging_while_spindle_on",
         "default": "false"
     },
     {
@@ -211,10 +219,27 @@
     {
         "type": "bool",
         "title": "Auto-Reconnection",
-        "desc": "Automatically attempt to reconnect when connection is lost",
+        "desc": "Automatically attempt to reconnect when connection is lost, and auto-connect on app launch",
         "section": "carvera",
         "key": "auto_reconnect_enabled",
         "default": "true"
+    },
+    {
+        "type": "options",
+        "title": "Preferred reconnection method",
+        "desc": "Connection method used for auto-connect on app launch. After you connect manually, Reconnect uses the last successful method instead",
+        "section": "carvera",
+        "key": "reconnect_method",
+        "default": "wifi",
+        "options": ["wifi", "usb"]
+    },
+    {
+        "type": "string",
+        "title": "USB serial number",
+        "desc": "Preferred USB serial number for reconnect. Updated automatically when you connect over USB",
+        "section": "carvera",
+        "key": "usb_serial",
+        "default": ""
     },
     {
         "type": "numeric",
@@ -259,6 +284,14 @@
     },
     {
         "type": "bool",
+        "title": "Allow manual input of USB devices to use for connection",
+        "desc": "When enabled, the USB connection menu includes a Manually Enter option to connect using a device path such as /dev/ttys020",
+        "section": "carvera",
+        "key": "allow_manual_usb_device",
+        "default": "false"
+    },
+    {
+        "type": "bool",
         "title": "Increase USB connection speed",
         "desc": "Requires Community firmware >= v2.1.0. If enabled the controller will negotiate to a higher usb connection speed",
         "section": "carvera",
@@ -280,6 +313,14 @@
         "desc": "This feature adds additional parsing time after selecting a file.",
         "section": "carvera",
         "key": "high_precision_reamining_time_estimate",
+        "default": "true"
+    },
+    {
+        "type": "bool",
+        "title": "Show tool changes on progress bar",
+        "desc": "Display tool change markers on the job playback progress bar.",
+        "section": "carvera",
+        "key": "show_playbar_tool_change_markers",
         "default": "true"
     }
 ]

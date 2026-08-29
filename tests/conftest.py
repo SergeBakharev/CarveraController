@@ -59,6 +59,7 @@ def connected_idle_state():
     # Machine state
     CNC.vars["atc_state"] = 0
     CNC.vars["vacuummode"] = 0
+    CNC.vars["extoutmode"] = 0
     CNC.vars["wpvoltage"] = 3.3
     CNC.vars["active_coord_system"] = 0
     CNC.vars["rotation_angle"] = 0
@@ -98,6 +99,7 @@ def alarm_state(connected_idle_state):
 def mock_controller():
     """A Controller mock for unit tests that doesn't touch hardware."""
     from unittest.mock import MagicMock
+
     from carveracontroller.Controller import Controller
 
     controller = MagicMock(spec=Controller)

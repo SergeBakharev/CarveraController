@@ -7,19 +7,23 @@ class CalibrationParameterDefinitions:
 
     YAxisDistance = ProbeSettingDefinition("Y", "Y Distance", False, "Y distance along the particular axis to probe.")
 
-    PocketProbeDepth = ProbeSettingDefinition('H', "Pocket Depth", False,
-                                              "Optional parameter, if set the probe will probe down by "
-                                              "this value to find the pocket bottom and then retract slightly "
-                                              "before probing the sides of the Calibration. Useful for shallow pockets")
-    
-    SideProbeDepth =  ProbeSettingDefinition('E', "Y Probe Depth", False, "")
+    PocketProbeDepth = ProbeSettingDefinition(
+        "H",
+        "Pocket Depth",
+        False,
+        "Optional parameter, if set the probe will probe down by "
+        "this value to find the pocket bottom and then retract slightly "
+        "before probing the sides of the Calibration. Useful for shallow pockets",
+    )
 
-    PinDiameter = ProbeSettingDefinition('R', "Pin Diameter", False, "")
+    SideProbeDepth = ProbeSettingDefinition("E", "Y Probe Depth", False, "")
 
-    ZeroXYPosition = ProbeSettingDefinition('S', "ZeroXY", False, "save corner position as new WCS Zero in X and Y")
+    PinDiameter = ProbeSettingDefinition("R", "Pin Diameter", False, "")
 
-    ProbeTipDiameter = ProbeSettingDefinition('D', "Tip Dia", False, "Probe Tip Diameter, stored in config")
+    ZeroXYPosition = ProbeSettingDefinition("S", "ZeroXY", False, "save corner position as new WCS Zero in X and Y")
 
-    UseProbeNormallyClosed = ProbeSettingDefinition('I', "NC", False, "Probe is normally closed")
+    ProbeTipDiameter = ProbeSettingDefinition("D", "Tip Dia", False, "Probe Tip Diameter, stored in config")
 
-    ClearanceY = ProbeSettingDefinition('C', "Y Axis Clearance", False, "")
+    UseProbeNormallyClosed = ProbeSettingDefinition("I", "NC", False, "Probe is normally closed")
+
+    ClearanceY = ProbeSettingDefinition("C", "Y Axis Clearance", False, "")

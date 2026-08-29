@@ -78,5 +78,45 @@
         "section": "carvera",
         "key": "gcode_color_parameter",
         "default": "156,220,254,255"
+    },
+    {
+        "type": "colorpicker",
+        "title": "O-code Label",
+        "desc": "Color for O-block labels (O100, O200, etc.).",
+        "section": "carvera",
+        "key": "gcode_color_o_label",
+        "default": "86,156,214,255"
+    },
+    {
+        "type": "colorpicker",
+        "title": "O-code Keyword",
+        "desc": "Color for O-code flow keywords (if, while, repeat, sub, call, etc.).",
+        "section": "carvera",
+        "key": "gcode_color_o_keyword",
+        "default": "220,220,170,255"
+    },
+    {
+        "type": "colorpicker",
+        "title": "Parameter Variables (#)",
+        "desc": "Color for numbered parameter references (#101, #5023, etc.).",
+        "section": "carvera",
+        "key": "gcode_color_param_ref",
+        "default": "181,206,168,255"
+    },
+    {
+        "type": "colorpicker",
+        "title": "Math Keywords",
+        "desc": "Color for bracket-math keywords (eq, gt, sin, sqrt, mod, and, etc.).",
+        "section": "carvera",
+        "key": "gcode_color_math_keyword",
+        "default": "215,186,125,255"
+    },
+    {
+        "type": "colorpicker",
+        "title": "Shell Commands",
+        "desc": "Color for Shell command names in the MDI history and IntelliSense popups (ls, cat, $J, etc.).",
+        "section": "carvera",
+        "key": "gcode_color_shell_command",
+        "default": "47,117,181,255"
     }
 ]

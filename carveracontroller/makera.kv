@@ -3,8 +3,28 @@
 #:import digitize_v carveracontroller.Utils.digitize_v
 #:import tr carveracontroller.__main__.tr
 #:import StaticMatplotFigureTwinx carveracontroller.ui.graph_widget_twinx
+#:import _ carveracontroller.ui.LocalFilePicker
+#:import _ carveracontroller.ui.DirectoryView
+#:import _ carveracontroller.ui.DropDownSplitter
+#:import _ carveracontroller.ui.CollapsibleSplitter
+#:import play_progress_bar carveracontroller.ui.PlayProgressBar
+#:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
+#:import CameraView carveracontroller.addons.camera.CameraView.CameraView
+#:import LASER_TOOL_NUMBER carveracontroller.CNC.LASER_TOOL_NUMBER
+#:import ZPROBE_TOOL_NUMBER carveracontroller.CNC.ZPROBE_TOOL_NUMBER
+#:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
+#:include ui/GcodeColorSchemePanel.kv
 #:include addons/tooltips/Tooltips.kv
+#:include addons/intellisense/Intellisense.kv
+#:include ui/LocalFilePicker.kv
+#:include ui/DirectoryView.kv
+#:include ui/DropDownSplitter.kv
 #:include addons/probing/ProbingPopup.kv
+#:include ui/popups/set_position/set_position.kv
+#:include ui/popups/adv_calibrate/adv_calibrate.kv
+#:include addons/cmm_workbench/ui/CMMWorkbenchPopup.kv
+#:include addons/facing/FacingWizardPopup.kv
+#:include addons/camera/CameraControls.kv
 
 <Label>:
     font_name: 'ARIALUNI'
@@ -40,8 +60,8 @@
 <CNCWorkspace>:
     size_hint_x: None
     size_hint_y: None
-    width: self.parent.width if self.parent.width > 0 and self.parent.height / self.parent.width > 0.7 else self.parent.height / 0.7
-    height: self.parent.height if self.parent.width > 0 and self.parent.height / self.parent.width < 0.7 else self.parent.width * 0.7
+    width: self.parent.width if self.parent.width > 0 and self.parent.height / self.parent.width > self.workspace_aspect else self.parent.height / self.workspace_aspect
+    height: self.parent.height if self.parent.width > 0 and self.parent.height / self.parent.width < self.workspace_aspect else self.parent.width * self.workspace_aspect
 
 <IconButton>:
     width: '50dp'
@@ -77,14 +97,16 @@
     icon_size: 24
     icon: ''
     text: ''
-    min_icon: ''
-    min_icon_size: 12
-    min_active: True
     active: False
     size_hint_x: None
     background_color: 0, 0, 0, 0
+    color: 0, 0, 0, 0
+    disabled_color: 0, 0, 0, 0
     Label:
         text: root.text if root.text else ''
+        halign: 'center'
+        valign: 'middle'
+        text_size: self.width, None
         color: tuple(app.active_color) if (root.active and not root.disabled) else ((110/255, 110/255, 110/255, 1) if root.disabled else (250/255, 250/255, 250/255, 1))
         canvas.before:
             Color:
@@ -93,12 +115,6 @@
                 source: root.icon
                 pos: self.center_x - dp(root.icon_size / 2), self.center_y - dp(root.icon_size / 2)
                 size: dp(root.icon_size) if root.icon else 0, dp(root.icon_size) if root.icon else 0
-            Color:
-                rgba: (250/255, 250/255, 250/255, 1) if root.min_active else (60/255, 60/255, 60/255, 1)
-            Rectangle:
-                source: root.min_icon if root.min_icon and not root.disabled else ''
-                pos: self.x + self.width - dp(root.min_icon_size - 5), self.y + dp(root.min_icon_size / 2)
-                size: dp(root.min_icon_size) if root.min_icon and not root.disabled else 0, dp(root.min_icon_size) if root.min_icon and not root.disabled else 0
 
 <TransparentGrayButton>:
     height: '32dp'
@@ -109,6 +125,9 @@
     size_hint_x: None
     background_color: 0, 0, 0, 0
     Label:
+        halign: 'center'
+        valign: 'middle'
+        text_size: self.width, None
         canvas.before:
             Color:
                 rgba: (250/255, 250/255, 250/255, 1) if root.active and not root.disabled else (100/255, 100/255, 100/255, 1)
@@ -116,6 +135,10 @@
                 source: root.icon
                 pos: self.center_x - dp(root.icon_size / 2), self.center_y - dp(root.icon_size / 2)
                 size: dp(root.icon_size) if root.icon else 0, dp(root.icon_size) if root.icon else 0
+
+<GcodeViewerToolBarButton@TransparentButton>:
+    height: dp(48) if app.show_gcode_ctl_bar else 0
+    size_hint_y: None
 
 <WiFiButton>:
     orientation: 'horizontal'
@@ -168,7 +191,9 @@
 <ButtonLabel@ButtonBehavior+Label>:
     valign: 'center'
 
-<Row@SelectableLabel>:
+<Row>:
+    markup: True
+    text: root.highlighted_text or root.plain_text
     canvas.before:
         Color:
             rgba: (80/255, 80/255, 80/255, 1) if self.selected else (50/255, 50/255, 50/255, 1)
@@ -178,6 +203,7 @@
     text_size: self.size
     halign: 'left'
     shorten: True
+    shorten_from: 'right'
 
 <GCodeRow>:
     orientation: 'horizontal'
@@ -210,6 +236,7 @@
         valign: 'middle'
         text_size: self.size
         shorten: True
+        shorten_from: 'right'
 
 <DataRow@SelectableBoxLayout>:
     canvas.before:
@@ -294,20 +321,6 @@
     valign: 'middle'
     halign: 'center'
     color: 150/255, 150/255, 150/255, 1
-
-<DropDownSplitter>:
-    size_hint_y: None
-    height: '20dp'
-    font_size: '13sp'
-    text_size: self.size
-    valign: 'middle'
-    color: 150/255, 150/255, 150/255, 1
-    canvas.before:
-        Color:
-            rgba: 60/255, 60/255, 60/255, 1
-        Rectangle:
-            pos: self.pos
-            size: self.size
 
 <StatusContent@BoxLayout>:
     size_hint_y: None
@@ -407,7 +420,7 @@
         disabled: app.state != 'Idle'
         on_release:
             root.select('Third Item')
-            app.root.controller.wcsSet(0, None, None, None)
+            app.root.controller.wcs_set(0, None, None, None)
     Button:
         text: tr._('Set X')
         size_hint_y: None
@@ -435,7 +448,7 @@
         disabled: app.state != 'Idle'
         on_release:
             root.select('Third Item')
-            app.root.controller.wcsSet(None, 0, None, None)
+            app.root.controller.wcs_set(None, 0, None, None)
     Button:
         text: tr._('Set Y')
         size_hint_y: None
@@ -464,7 +477,7 @@
         disabled: app.state != 'Idle'
         on_release:
             root.select('Third Item')
-            app.root.controller.wcsSet(None, None, 0, None)
+            app.root.controller.wcs_set(None, None, 0, None)
     Button:
         text: tr._('Set Z')
         size_hint_y: None
@@ -501,6 +514,12 @@
         on_release:
             root.select('Third Item')
             app.root.controller.clearAutoLeveling()
+    BoxLayout:
+        size_hint_y: None
+        height: '48dp'
+        HelpButton:
+            helpPath: "https://carvera-community.gitbook.io/docs/controller/features/auto-leveling"
+
 
 
 <ADropDown>:
@@ -520,7 +539,7 @@
         disabled: app.state != 'Idle'
         on_release:
             root.select('Third Item')
-            app.root.controller.wcsSet(None, None, None, 0)
+            app.root.controller.wcs_set(None, None, None, 0)
     Button:
         text: tr._('Set A')
         size_hint_y: None
@@ -671,6 +690,7 @@
 
 <SpindleDropDown>:
     vacuum_switch: vacuum_switch
+    extout_switch: extout_switch
     scale_slider: scale_slider
     status_scale: status_scale
     status_target: status_target
@@ -713,7 +733,7 @@
         padding: '0.5dp'
         size_hint_y: None
         height: '40dp'
-        disabled: app.model == 'CA1'
+        disabled: app.model != 'C1'
         Switch:
             id: vacuum_switch
             canvas.before:
@@ -726,6 +746,25 @@
             on_active:
                 if self.set_flag: self.set_flag = False
                 else: app.root.update_control('vacuum_mode', self.active)
+    DropDownHint:
+        text: tr._(' Auto Ext. Out')
+    BoxLayout:
+        padding: '0.5dp'
+        size_hint_y: None
+        height: '40dp'
+        disabled: not (app.is_community_firmware and app.fw_version_digitized >= digitize_v("2.2.0"))
+        Switch:
+            id: extout_switch
+            canvas.before:
+                Color:
+                    rgba: 50/255, 50/255, 50/255, 1
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
+            set_flag: False
+            on_active:
+                if self.set_flag: self.set_flag = False
+                else: app.root.update_control('extout_mode', self.active)
     DropDownHint:
         text: tr._('RPM Scaling')
     BoxLayout:
@@ -804,7 +843,7 @@
             id: status_wpvoltage
             title: tr._('Probe:  ')
             value: '0.00v'
-            disabled: app.model == 'CA1'
+            disabled: app.model == 'CA1' or app.model == 'Z1'
     DropDownHint:
         text: tr._('Laser Mode')
     BoxLayout:
@@ -832,8 +871,8 @@
         values: 'Probe', 'Tool: 1', 'Tool: 2', 'Tool: 3', 'Tool: 4', 'Tool: 5', 'Tool: 6', 'Custom'
         on_text:
             if self.text == 'Custom': app.root.coord_popup.change_tool_popup.open()
-            if self.text == '3D Probe': app.root.controller.changeToolCommand(999990)
-            elif self.text != tr._("Change..."): app.root.controller.changeToolCommand(self.text[-1])
+            if self.text == '3D Probe': app.root.controller.change_tool_command(PROBE_3D_TOOL_NUMBER)
+            elif self.text != tr._("Change..."): app.root.controller.change_tool_command(self.text[-1])
             if self.text != tr._("Change..."): self.text = tr._('Change...')
             root.select('Third Item')
     Button:
@@ -843,6 +882,14 @@
         on_release:
             root.select('Third Item')
             app.root.controller.calibrateToolCommand()
+    Button:
+        text: tr._('Adv Calibrate')
+        size_hint_y: None
+        height: '40dp'
+        disabled: not app.is_community_firmware
+        on_release:
+            root.select('Third Item')
+            app.root.open_adv_calibrate_popup()
     Button:
         text: tr._('Drop')
         size_hint_y: None
@@ -859,8 +906,8 @@
         values: 'Empty', 'Probe', 'Tool: 1', 'Tool: 2', 'Tool: 3', 'Tool: 4', 'Tool: 5', 'Tool: 6', 'Custom'
         on_text:
             if self.text == 'Custom': app.root.coord_popup.settool_popup.open()
-            if self.text == '3D Probe': app.root.controller.setToolCommand(999990)
-            elif self.text != tr._("Set..."): app.root.controller.setToolCommand(self.text[-1])
+            if self.text == '3D Probe': app.root.controller.set_tool_command(PROBE_3D_TOOL_NUMBER)
+            elif self.text != tr._("Set..."): app.root.controller.set_tool_command(self.text[-1])
             if self.text != tr._("Set..."): self.text = tr._('Set...')
             root.select('Third Item')
     Button:
@@ -1055,8 +1102,8 @@
         icon_size: 24
         small_icon: True
         size_hint_y: None
-        height: '50dp' if app.model != 'CA1' else '0dp'
-        opacity: 1 if app.model != 'CA1' else 0
+        height: '50dp' if app.model == 'C1' else '0dp'
+        opacity: 1 if app.model == 'C1' else 0
         disabled: app.state != 'Idle'
         tooltip_txt: tr._('Pair Probe')
         on_release:
@@ -1130,6 +1177,7 @@
 <StatusDropDown>:
     btn_connect_usb: btn_connect_usb
     btn_connect_wifi: btn_connect_wifi
+    btn_connect_network: btn_connect_network
     btn_unlock: btn_unlock
     btn_disconnect: btn_disconnect
     canvas.before:
@@ -1145,7 +1193,8 @@
         height: '40dp'
         disabled: app.state != 'N/A'
         on_release:
-            app.root.reconnect_wifi_conn(self)
+            app.root.reconnect_last_connection(quiet=False, for_app_launch=False)
+            root.select('')
 
     Button:
         id: btn_connect_wifi
@@ -1154,6 +1203,13 @@
         text: tr._('Scan Wi-Fi...')
         on_release:
             app.root.open_wifi_conn_drop_down(self)
+    Button:
+        id: btn_connect_network
+        size_hint_y: None
+        height: '40dp'
+        text: tr._('Network...')
+        on_release:
+            app.root.manually_input_ip()
     Button:
         id: btn_connect_usb
         size_hint_y: None
@@ -1275,45 +1331,6 @@
             text_size: self.size
             halign: "right"
 
-<DirectoryView>:
-    orientation: 'horizontal'
-    selected: False
-    data_text: ''
-    data_icon: 'data/folder-32.png'
-    full_path: ''
-    canvas.before:
-        Color:
-            rgba: 80/255, 80/255, 80/255, 1
-        Rectangle:
-            pos: self.pos
-            size: self.size
-    Label:
-        canvas.before:
-            Color:
-                rgba: 225/255, 225/255, 225/255, 1
-            Rectangle:
-                source: 'data/connected.png'
-                pos: self.center_x - dp(10), self.center_y - dp(10)
-                size: dp(20) if root.selected else dp(0), dp(20) if root.selected else dp(0)
-        text: ''
-        size_hint_x: 0.15
-    Label:
-        canvas.before:
-            Color:
-                rgba: root.color
-            Rectangle:
-                source: 'data/folder-32.png' if root.data_icon == '' else root.data_icon
-                pos: self.center_x - dp(10), self.center_y - dp(10)
-                size: dp(20), dp(20)
-        text: ''
-        size_hint_x: 0.2
-    Label:
-        text: root.data_text
-        color: 225/255, 225/255, 225/255, 1
-        text_size: self.size
-        valign: 'middle'
-        multiline: False
-
 <LanguagePopup>:
     sp_language: sp_language
     size_hint: 0.5, 0.4
@@ -1326,6 +1343,9 @@
             size_hint_y: 0.4
             text: tr._('Select Language')
             bold: True
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             orientation: 'vertical'
             Label:
@@ -1358,6 +1378,9 @@
             id: lb_title
             text: tr._('Input Box')
             bold: True
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             orientation: 'vertical'
             Label:
@@ -1395,6 +1418,9 @@
             id: lb_title1
             text: tr._('Input Box')
             bold: True
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             orientation: 'vertical'
             Label:
@@ -1410,6 +1436,9 @@
             id: lb_title2
             text: tr._('Input Box')
             bold: True
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             orientation: 'vertical'
             Label:
@@ -1434,22 +1463,41 @@
 <ConfirmPopup>:
     lb_title: lb_title
     lb_content: lb_content
+    content_scroll: content_scroll
     size_hint: 0.5, 0.4
     pos_hint: {"right": 0.75, "top": 0.7}
     auto_dismiss: False
     BoxLayout:
         padding: '15dp'
+        spacing: '8dp'
         orientation: 'vertical'
         Label:
-            size_hint_y: 0.4
+            size_hint_y: None
+            height: self.texture_size[1]
             id: lb_title
             text: tr._('Confirm Box')
             bold: True
-        Label:
-            id: lb_content
-            text: tr._('Confirm to continue?')
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.width, None
+        ScrollView:
+            id: content_scroll
+            do_scroll_x: False
+            bar_width: '10dp'
+            scroll_type: ['bars', 'content']
+            bar_inactive_color: 0.5, 0.5, 0.5, 0.5
+            Label:
+                id: lb_content
+                size_hint_y: None
+                # Fill the viewport when short so valign can center; grow and scroll when long.
+                height: max(self.texture_size[1], self.parent.height) if self.parent else self.texture_size[1]
+                text: tr._('Confirm to continue?')
+                halign: 'center'
+                valign: 'middle'
+                text_size: self.width, None
         BoxLayout:
-            size_hint_y: 0.4
+            size_hint_y: None
+            height: '48dp'
             Button:
                 text: tr._('Cancel')
                 on_release:
@@ -1476,9 +1524,15 @@
             id: lb_title
             text: tr._('Machine Is Halted')
             bold: True
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         Label:
             id: lb_content
             text: tr._('Choose unlock option:')
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             size_hint_y: 0.4
             Button:
@@ -1497,6 +1551,12 @@
                     root.dismiss()
                     if root.unlock_safe_z:\
                     root.unlock_safe_z()
+            BoxLayout:
+                size_hint_x: 0.25
+                HelpButton:
+                    size_hint: 1,1
+                    helpPath: "https://carvera-community.gitbook.io/docs/controller/common-error-messages"
+
 
 <SelectAndCalibrateProbePopup>:
     lb_title: lb_title
@@ -1511,6 +1571,9 @@
             id: lb_title
             text: tr._('A probing tool needs to be selected to locate your workpiece')
             bold: True
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             size_hint_y: 0.4
             Button:
@@ -1522,12 +1585,12 @@
                 disabled: not app.is_community_firmware
                 on_release:
                     root.dismiss()
-                    app.root.controller.changeToolCommand(999990)
+                    app.root.controller.change_tool_command(PROBE_3D_TOOL_NUMBER)
             Button:
                 text: tr._('Change to stock Makera probe')
                 on_release:
                     root.dismiss()
-                    app.root.controller.changeToolCommand(0)
+                    app.root.controller.change_tool_command(ZPROBE_TOOL_NUMBER)
 
 <MessagePopup>:
     btn_ok: btn_ok
@@ -1541,6 +1604,9 @@
         Label:
             id: lb_content
             text: tr._('Confirm to continue?')
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             id: btn_ok
             size_hint_y: 0.4
@@ -1559,6 +1625,9 @@
         Label:
             id: lb_content
             text: tr._('Connection lost. Attempting to reconnect...')
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
         BoxLayout:
             size_hint_y: 0.4
             spacing: '10dp'
@@ -1585,6 +1654,8 @@
             id: progress_label
             text: root.progress_text
             halign: 'center'
+            valign: 'middle'
+            text_size: self.size
 
         ProgressBar:
             id: progress_bar
@@ -1642,13 +1713,13 @@
                         group: 'anchor'
                         active: False
                         on_press: root.update_offsets()
-                        disabled: app.has_4axis
+                        disabled: app.has_4axis or not app.has_anchor2
                     MCQLabel:
                         on_press: 
                             cbx_anchor2._do_press()
                             root.update_offsets()
                         text: tr._('Anchor2')
-                        disabled: app.has_4axis
+                        disabled: app.has_4axis or not app.has_anchor2
                     MCQCheckBox:
                         id: cbx_4axis_origin
                         group: 'anchor'
@@ -1725,6 +1796,7 @@
                         id: btn_ok
                         text: tr._('Ok')
                         on_release: root.on_ok_pressed()
+                    
 
         TabbedPanelItem:
             text: tr._('Set By XYZ Probe')
@@ -1809,6 +1881,7 @@
             text: tr._('Z Probe Config')
             halign: 'left'
             valign: 'middle'
+            text_size: self.size
         BoxLayout:
             size_hint_y: None
             height: '50dp'
@@ -1892,6 +1965,7 @@
             text: tr._('XYZ Probe At Current Position')
             halign: 'left'
             valign: 'middle'
+            text_size: self.size
         BoxLayout:
             size_hint_y: None
             height: '25dp'
@@ -1967,6 +2041,7 @@
             text: tr._('Pairing Wireless Probe')
             halign: 'left'
             valign: 'middle'
+            text_size: self.size
         BoxLayout:
             size_hint_y: None
             height: '25dp'
@@ -2031,6 +2106,7 @@
             text: tr._('Auto Leveling Config')
             halign: 'left'
             valign: 'middle'
+            text_size: self.size
         Label:
             size_hint_y: None
             height: '10dp'
@@ -2595,6 +2671,7 @@
                     id: remote_rv
                     root: root
                     app_root: app.root
+                    multi_select_enabled: True
                     scroll_type: ['bars', 'content']
                     scroll_wheel_distance: dp(114)
                     bar_width: dp(10)
@@ -2607,7 +2684,7 @@
                         height: self.minimum_height
                         orientation: 'vertical'
                         spacing: '0.5dp'
-                        multiselect: False
+                        multiselect: True
                         touch_multiselect: False
                 BoxLayout:
                     size_hint_y: None
@@ -2925,8 +3002,9 @@
                 BoxLayout:
                     padding: '0.5dp'
                     size_hint_y: None
-                    height: '30dp'
-                    disabled: app.model == 'CA1'
+                    height: '30dp' if app.model == 'C1' else '0dp'
+                    opacity: 1 if app.model == 'C1' else 0
+                    disabled: app.model != 'C1'
                     Label:
                         text: tr._("Auto Vacuum")
                         halign: "left"
@@ -2951,6 +3029,141 @@
                         active: True if root.vacuummode == 1 else False
                         on_active:
                             app.root.update_control('vacuum_mode', self.active)
+
+                BoxLayout:
+                    padding: '0.5dp'
+                    size_hint_y: None
+                    height: '30dp'
+                    disabled: not (app.is_community_firmware and app.fw_version_digitized >= digitize_v("2.2.0"))
+                    Label:
+                        text: tr._("Auto Ext. Out")
+                        halign: "left"
+                        valign: "middle"
+                        font_size: '13sp'
+                        text_size: self.size
+
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                    ToolTipSwitch:
+                        id: extout_switch_play
+                        tooltip_txt: tr._("Automatically toggles on/off the External Output pin. This can be used to control a vacuum or compressor")
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                        set_flag: False
+                        active: True if root.extoutmode == 1 else False
+                        on_active:
+                            if self.set_flag: self.set_flag = False
+                            else: app.root.update_control('extout_mode', self.active)
+
+                BoxLayout:
+                    padding: '0.5dp'
+                    size_hint_y: None
+                    height: '30dp' if app.model == 'Z1' else '0dp'
+                    opacity: 1 if app.model == 'Z1' else 0
+                    disabled: app.model != 'Z1'
+                    Label:
+                        text: tr._("Auto Blow")
+                        halign: "left"
+                        valign: "middle"
+                        font_size: '13sp'
+                        text_size: self.size
+
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                    ToolTipSwitch:
+                        id: autoblow_switch_play
+                        tooltip_txt: tr._("The spindle fan will always run with this minimum power while the spindle is on.")
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                        set_flag: False
+                        active: True if root.autoblowmode == 1 else False
+                        on_active:
+                            if self.set_flag: self.set_flag = False
+                            else: app.root.update_control('autoblow_mode', self.active)
+
+                BoxLayout:
+                    padding: '0.5dp'
+                    size_hint_y: None
+                    height: '30dp' if app.model == 'Z1' else '0dp'
+                    opacity: 1 if app.model == 'Z1' else 0
+                    disabled: app.model != 'Z1'
+                    Label:
+                        text: tr._("Auto Bed Clean")
+                        halign: "left"
+                        valign: "middle"
+                        font_size: '13sp'
+                        text_size: self.size
+
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                    ToolTipSwitch:
+                        id: autobedclean_switch_play
+                        tooltip_txt: tr._("Runs a cleaning cycle when gcode playback finishes.")
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                        set_flag: False
+                        active: True if root.autobedcleanmode == 1 else False
+                        on_active:
+                            if self.set_flag: self.set_flag = False
+                            else: app.root.update_control('autobedclean_mode', self.active)
+
+                BoxLayout:
+                    padding: '0.5dp'
+                    size_hint_y: None
+                    height: '30dp' if app.model == 'Z1' else '0dp'
+                    opacity: 1 if app.model == 'Z1' else 0
+                    disabled: app.model != 'Z1'
+                    Label:
+                        text: tr._("Ionizer")
+                        halign: "left"
+                        valign: "middle"
+                        font_size: '13sp'
+                        text_size: self.size
+
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                    ToolTipSwitch:
+                        id: ionizer_switch_play
+                        tooltip_txt: tr._("Turn on the static electricity removal unit on Z1.")
+                        canvas.before:
+                            Color:
+                                rgba: 50/255, 50/255, 50/255, 1
+                            Rectangle:
+                                pos: self.pos
+                                size: self.size
+                        set_flag: False
+                        active: True if root.ionizermode == 1 else False
+                        on_active:
+                            if self.set_flag: self.set_flag = False
+                            else: app.root.update_control('ionizer_mode', self.active)
 
                 Label:
                     size_hint_y: None
@@ -3318,7 +3531,7 @@
                     text: tr._('Spindle Fan')
                 Label:
                     id: sw_vacuum
-                    text: tr._('Vacuum') if app.model != 'CA1' else tr._('PowerFan')
+                    text: tr._('Vacuum') if app.model == 'C1' else tr._('PowerFan')
                 SwitchBox:
                     id: sw_laser
                     label: tr._('Engraving Laser')
@@ -3331,13 +3544,13 @@
                     id: sw_air
                     label: tr._('Air Assist')
                     control_name: 'air_switch'
-                    disabled: app.model == 'CA1'
+                    disabled: app.model != 'C1'
             BoxLayout:
                 orientation: 'vertical'
                 size_hint_x: 1.5
                 SliderBox:
                     id: sl_spindle
-                    max: 15000 if app.model != 'CA1' else 12000
+                    max: 15000 if app.model == 'C1' else 13000
                     step: 100
                     control_name: 'spindle_slider'
                 SliderBox:
@@ -3355,11 +3568,11 @@
                     control_name: 'laser_slider'
                 SwitchBox:
                     id: sw_tool_sensor_pwr
-                    label: tr._('ToolSensorPWR') if app.model != 'CA1' else tr._('Probe Laser')
+                    label: tr._('ToolSensorPWR') if app.model == 'C1' else tr._('Probe Laser')
                     control_name: 'tool_sensor_switch'
                 SwitchBox:
                     id: sw_wp_charge_pwr
-                    label: tr._('WPChargePWR') if app.model != 'CA1' else tr._('Beep')
+                    label: tr._('WPChargePWR') if app.model == 'C1' else tr._('Beep')
                     control_name: 'wp_charge_switch'
             BoxLayout:
                 orientation: 'vertical'
@@ -3487,7 +3700,7 @@
     telemetry_chart: telemetry_chart
 
     BoxLayout:
-        padding: dp(5)
+        padding: [app.safe_area_padding[0] + dp(5), app.safe_area_padding[1] + dp(5), app.safe_area_padding[2] + dp(5), app.safe_area_padding[3] + dp(5)]
         spacing: dp(5)
         orientation: 'vertical'
 
@@ -3639,7 +3852,7 @@
                                 size: self.size
                                 radius: [self.height / 2,]
                         BoxLayout:
-                            disabled: not (app.state == 'Idle' or app.state == 'Run' or app.state == 'Pause') or (app.playing and app.state != 'Pause') or (app.state == 'Run' and root.allow_jogging_while_machine_running == '0')
+                            disabled: not app.jog_controls_enabled
                             padding: '25dp'
                             canvas.before:
                                 Color:
@@ -3677,7 +3890,8 @@
                                         center: 0.5, 0.5
                                         size_hint_y: None
                                         height: '40dp'
-                                        text: '10'
+                                        text: app.jog_step_xy
+                                        on_text: app.jog_step_xy = self.text
                                         values: '10', '1', '0.1', '0.01', '0.005'
                                     Label:
 
@@ -3702,12 +3916,12 @@
                                         tooltip_radius: 30 
                                 GridBoxLayout:
                         BoxLayout:
-                            disabled: not (app.state == 'Idle' or app.state == 'Run' or app.state == 'Pause') or (app.playing and app.state != 'Pause') or (app.state == 'Run' and root.allow_jogging_while_machine_running == '0')
                             orientation: 'vertical'
                             padding: '10dp'
                             Widget:
                                 size_hint_y: 0.15
                             BoxLayout:
+                                disabled: not app.jog_controls_enabled
                                 orientation: 'vertical'
                                 padding: '3dp'
                                 size_hint_y: 0.3
@@ -3746,10 +3960,13 @@
                                                 text: tr._('Macro 3')
                                                 height: '35dp'
                                                 on_release: app.root.run_macro(3)
+
                             Widget:
                                 size_hint_y: 0.15
                             BoxLayout:
-                                disabled: app.state != 'Idle'
+                                # Enabled for Idle/Run/Tool/Pause so Light & Ext. Control stay usable mid-job.
+                                # Other buttons below keep their own Idle-only disabled rules.
+                                disabled: app.state != 'Idle' and app.state != 'Run' and app.state != 'Tool' and app.state != 'Pause'
                                 orientation: 'vertical'
                                 padding: '3dp'
                                 size_hint_min_y: '176dp'  # 35dp button x4 + 10dp spacing between buttons x 3 + 3dp padding top + 3dp padding bottom
@@ -3769,14 +3986,17 @@
                                         spacing: dp(3)
                                         GridBoxLayout:
                                             SmallRoundButton:
+                                                disabled: app.state != 'Idle'
                                                 text: tr._('Unlock')
                                                 on_release: root.controller.unlock()
                                         GridBoxLayout:
                                             SmallRoundButton:
+                                                disabled: app.state != 'Idle'
                                                 text: tr._('Reset')
                                                 on_release: root.controller.reset()
                                         GridBoxLayout:
                                             SmallRoundButton:
+                                                disabled: app.state != 'Idle'
                                                 text: tr._('Home')
                                                 on_release: root.controller.home()
                                         GridBoxLayout:
@@ -3816,18 +4036,20 @@
                                             Spinner:
                                                 center: 0.5, 0.5
                                                 height: '35dp'
+                                                disabled: app.state != 'Idle'
                                                 text: tr._('Goto...')
-                                                values: 'Clearance', 'Work Origin', 'Path Origin', 'Anchor1', 'Anchor2'
+                                                values: ['Clearance', 'Work Origin', 'Path Origin', 'Anchor1', 'Anchor2'] if app.has_anchor2 else ['Clearance', 'Work Origin', 'Path Origin', 'Anchor1']
                                                 on_text:
                                                     if self.text != tr._("Goto..."): app.root.controller.gotoPosition(self.text)
                                                     if self.text != tr._("Goto..."): self.text = tr._('Goto...')
                                         GridBoxLayout:
                                             SmallRoundButton:
+                                                disabled: app.state != 'Idle'
                                                 text: tr._('Set Origin')
                                                 on_release: root.coord_popup.origin_popup.open()
                                         GridBoxLayout:
                                             SmallRoundButton:
-                                                disabled: not app.is_community_firmware
+                                                disabled: not app.is_community_firmware or app.state != 'Idle'
                                                 text: tr._('Probing...')
                                                 on_release: app.root.open_probing_popup()
 
@@ -3846,11 +4068,21 @@
                                                 on_release: app.root.controller.setExternalControl(100 if self.state=="down" else 0)
 
                                         GridBoxLayout:
-                                        # empty spot
+                                            Spinner:
+                                                center: 0.5, 0.5
+                                                height: '35dp'
+                                                disabled: not app.is_community_firmware or app.state != 'Idle'
+                                                text: tr._('Tools...')
+                                                values: [tr._('CMM Workbench...'), tr._('Facing...')]
+                                                on_text:
+                                                    if self.text == tr._('CMM Workbench...'): app.root.open_cmm_workbench_popup()
+                                                    if self.text == tr._('Facing...'): app.root.open_facing_popup()
+                                                    if self.text != tr._('Tools...'): self.text = tr._('Tools...')
 
                             Widget:
                                 size_hint_y: 0.1
                             BoxLayout:
+                                disabled: not app.jog_controls_enabled
                                 orientation: 'vertical'
                                 padding: '3dp'
                                 size_hint_y: 0.5
@@ -3883,7 +4115,6 @@
                                                 text: tr._('Jog Mode:Step')
                                                 height: '35dp'
                                                 on_release: app.root.toggle_jog_mode()
-
                                         GridBoxLayout:
                                             ToggleButton:
                                                 id: kb_jog_btn
@@ -3891,7 +4122,6 @@
                                                 height: '35dp'
                                                 state: app.jog_keyboard_enable
                                                 on_release: app.root.toggle_keyboard_jog_control()
-                                    
                                         GridBoxLayout:
                                             ToggleButton:
                                                 id: pendant_jogging_en_btn
@@ -3901,7 +4131,7 @@
                                                 on_release: app.root.toggle_pendant_jog_control()
 
                         BoxLayout:
-                            disabled: not (app.state == 'Idle' or app.state == 'Run' or app.state == 'Pause') or (app.playing and app.state != 'Pause') or (app.state == 'Run' and root.allow_jogging_while_machine_running == '0')
+                            disabled: not app.jog_controls_enabled
                             padding: '25dp'
                             orientation: 'horizontal'
                             canvas.before:
@@ -3936,7 +4166,8 @@
                                         center: 0.5, 0.5
                                         size_hint_y: None
                                         height: '40dp'
-                                        text: '90'
+                                        text: app.jog_step_a
+                                        on_text: app.jog_step_a = self.text
                                         values: '90', '10', '1', '0.1'
                                     Label:
                                 GridBoxLayout:
@@ -3946,7 +4177,8 @@
                                         center: 0.5, 0.5
                                         size_hint_y: None
                                         height: '40dp'
-                                        text: '1'
+                                        text: app.jog_step_z
+                                        on_text: app.jog_step_z = self.text
                                         values: '10', '1', '0.1', '0.01', '0.005'
                                     Label:
                                 GridBoxLayout:
@@ -4124,6 +4356,67 @@
                             Splitter:
                                 sizable_from: 'bottom'
                                 strip_size: '5dp'
+                        FloatBox:
+                            id: float_layout
+                            color_scheme_panel: color_scheme_panel
+                            camera_controls: camera_controls
+                            camera_view: camera_view
+                            tool_bar: tool_bar
+                            gcode_ctl_bar: gcode_ctl_bar
+                            BoxLayout:
+                                orientation: 'vertical'
+                                pos: float_layout.pos
+                                size: float_layout.size
+                                BoxLayout:
+                                    id: gcode_viewer_container
+                                    size_hint_y: 1
+                                    orientation: 'vertical'
+                                CollapsibleSplitter:
+                                    id: camera_splitter
+                                    sizable_from: 'top'
+                                    collapsed: True
+                                    size_hint_y: None
+                                    strip_size: '5dp' if app.supports_camera else 0
+                                    min_size: self.strip_size
+                                    keep_within_parent: True
+                                    opacity: 1 if app.supports_camera else 0
+                                    disabled: not app.supports_camera
+                                    canvas.before:
+                                        Color:
+                                            rgba: 0.6, 0.6, 0.6, 1
+                                        Rectangle:
+                                            pos: self.x, self.y + self.height - self.strip_size
+                                            size: self.width, self.strip_size
+                                    FloatLayout:
+                                        canvas.before:
+                                            Color:
+                                                rgba: 0, 0, 0, 1
+                                            Rectangle:
+                                                pos: self.pos
+                                                size: self.size
+                                        CameraView:
+                                            id: camera_view
+                                            pos: self.parent.pos
+                                            size: self.parent.size
+                                            brightness: app.camera_brightness
+                                            contrast: app.camera_contrast
+                                            gamma: app.camera_gamma
+                                        CameraControls:
+                                            id: camera_controls
+                                            pos_hint: {'x': 0, 'top': 1}
+                            GcodeColorSchemePanel:
+                                id: color_scheme_panel
+                            BoxLayout:
+                                id: tool_bar
+                                orbit: True
+                                show_grid: True
+                                ortho_projection: False
+                                size_hint: None, None
+                                width: self.minimum_width
+                                height: dp(48) if app.show_gcode_ctl_bar else 0
+                                opacity: 1 if app.show_gcode_ctl_bar else 0
+                                disabled: not app.show_gcode_ctl_bar
+                                pos_hint: {'x': 0.0, 'top': 1.0}
                                 canvas.before:
                                     Color:
                                         rgba: 0.6, 0.6, 0.6, 1
@@ -4366,6 +4659,130 @@
                                         size: self.size
                                 StaticMatplotFigureTwinx:
                                     id: telemetry_chart
+                                GcodeViewerToolBarButton:
+                                    width: '50dp'
+                                    active: tool_bar.orbit
+                                    icon: 'data/GcodeViewer/orbit.png'
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        tool_bar.orbit = True
+                                        root.gcode_viewer.set_orbit(True)
+                                GcodeViewerToolBarButton:
+                                    width: '50dp'
+                                    active: not tool_bar.orbit
+                                    icon: 'data/GcodeViewer/pan.png'
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        tool_bar.orbit = False
+                                        root.gcode_viewer.set_orbit(False)
+                                GcodeViewerToolBarButton:
+                                    width: '50dp'
+                                    icon: 'data/GcodeViewer/zoom_in.png'
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        root.gcode_viewer.zoom_in()
+                                GcodeViewerToolBarButton:
+                                    width: '50dp'
+                                    icon: 'data/GcodeViewer/zoom_out.png'
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        root.gcode_viewer.zoom_out()
+                                GcodeViewerToolBarButton:
+                                    width: '50dp'
+                                    icon: 'data/GcodeViewer/zoom_fit.png'
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        root.gcode_viewer.restore_default_view()
+                                GcodeViewerToolBarButton:
+                                    width: '50dp'
+                                    active: tool_bar.show_grid
+                                    icon: 'data/GcodeViewer/grid.png'
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        tool_bar.show_grid = not tool_bar.show_grid
+                                        root.gcode_viewer.set_grid_visible(tool_bar.show_grid)
+                                GcodeViewerToolBarButton:
+                                    width: '44dp'
+                                    valign: 'middle'
+                                    text: 'Ortho'
+                                    active: tool_bar.ortho_projection
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                                    on_release:
+                                        tool_bar.ortho_projection = not tool_bar.ortho_projection
+                                        root.gcode_viewer.set_ortho_projection(tool_bar.ortho_projection)
+
+                            BoxLayout:
+                                id: gcode_ctl_bar
+                                size_hint_x: 1
+                                size_hint_y: 0.2 if app.show_gcode_ctl_bar else 0
+                                opacity: 1 if app.show_gcode_ctl_bar else 0
+                                orientation: 'vertical'
+                                pos: gcode_viewer_container.pos
+                                canvas.before:
+                                    Color:
+                                        rgba: 10/255, 10/255, 10/255, 0.2
+                                    Rectangle:
+                                        pos: self.pos
+                                        size: self.size
+                                BoxLayout:
+                                    Widget:
+                                    TransparentButton:
+                                        height: '0dp'
+                                        icon: 'data/to_start.png'
+                                        icon_size: 24
+                                        disabled: (app.selected_remote_filename == '' and app.selected_local_filename == '') or (app.state != 'Idle' and app.state != 'N/A')
+                                        on_release:
+                                            root.gcode_play_to_start()
+                                    TransparentButton:
+                                        icon: 'data/backward.png'
+                                        icon_size: 24
+                                        disabled: (app.selected_remote_filename == '' and app.selected_local_filename == '') or (app.state != 'Idle' and app.state != 'N/A')
+                                        on_release:
+                                            root.gcode_play_speed_down()
+                                    TransparentButton:
+                                        icon: 'data/suspend.png' if root.gcode_playing else 'data/start.png'
+                                        icon_size: 26 if root.gcode_playing else 18
+                                        disabled: (app.selected_remote_filename == '' and app.selected_local_filename == '') or (app.state != 'Idle' and app.state != 'N/A')
+                                        on_release:
+                                            root.gcode_play_toggle()
+                                    TransparentButton:
+                                        icon: 'data/forward.png'
+                                        icon_size: 24
+                                        disabled: (app.selected_remote_filename == '' and app.selected_local_filename == '') or (app.state != 'Idle' and app.state != 'N/A')
+                                        on_release:
+                                            root.gcode_play_speed_up()
+                                    TransparentButton:
+                                        icon: 'data/to_end.png'
+                                        icon_size: 24
+                                        disabled: (app.selected_remote_filename == '' and app.selected_local_filename == '') or (app.state != 'Idle' and app.state != 'N/A')
+                                        on_release:
+                                            root.gcode_play_to_end()
+
+                                    Widget:
+                                GcodePlaySlider:
+                                    id: gcode_play_slider
+                                    height: '15dp'
+                                    min: 0
+                                    max: 1000
+                                    value: 1000
+                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+                            TransparentButton:
+                                size_hint: None, None
+                                size: '70dp', '28dp'
+                                icon: 'data/camera.png'
+                                icon_size: 17
+                                active: app.camera_streaming
+                                opacity: 1 if app.supports_camera else 0
+                                disabled: not app.supports_camera
+                                tooltip_txt: tr._('Hide camera') if app.camera_streaming else tr._('Show camera')
+                                pos: camera_splitter.center_x - self.width / 2, float_layout.y if camera_splitter.collapsed else (camera_splitter.top - camera_splitter.strip_size / 2 - self.height / 2)
+                                canvas.before:
+                                    Color:
+                                        rgba: 80/255, 80/255, 80/255, 1
+                                    Rectangle:
+                                        pos: self.pos
+                                        size: self.size
+                                on_release: camera_splitter.toggle_collapsed()
 
             SettingPage:
                 name: 'Setting'
@@ -4462,7 +4879,7 @@
                         size_hint_x: None
                         width: '25dp'
                         color: 244/255, 208/255, 63/255, 1
-                    WideProgressBar:
+                    PlayProgressBar:
                         id: wpb_play
                         Label:
                             size_hint_x: None
@@ -4486,7 +4903,7 @@
     Button:
         size_hint: None, None
         size: '40dp', '100dp'
-        pos: root.width - self.width, (root.height - self.height) / 2
+        pos: root.width - self.width - app.safe_area_padding[2], (root.height - self.height) / 2 + (app.safe_area_padding[3] - app.safe_area_padding[1]) / 2
         text: '<' if root.content.current == 'File' else '>'
         background_color: 80/255, 80/255, 80/255, 1
         on_release:
@@ -4496,394 +4913,6 @@
             else:\
             app.root.content.transition.direction = 'right';\
             app.root.content.current = 'File'
-
-<SetXPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Set X Current Pos')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('Enter X Pos')
-                multiline: False
-                text: '0.0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'float'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release: root.on_ok_pressed()
-
-<SetYPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Set Y Current Pos')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('Enter Y Pos')
-                multiline: False
-                text: '0.0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'float'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release: root.on_ok_pressed()
-
-<SetZPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Set Z Current Pos')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('Enter Z Pos')
-                multiline: False
-                text: '0.0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'float'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release: root.on_ok_pressed()
-
-<SetAPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Set A Current Pos')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('Enter A Pos')
-                multiline: False
-                text: '0.0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'float'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release: root.on_ok_pressed()
-
-<SetToolPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Set Current Tool Number')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('Enter New Tool Number')
-                multiline: False
-                text: '0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'int'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release:
-                    app.root.controller.setToolCommand(txt_offset.text)
-                    root.dismiss()
-<ChangeToolPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Change Current Tool')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('New Tool Number')
-                multiline: False
-                text: '0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'int'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release:
-                    app.root.controller.changeToolCommand(txt_offset.text)
-                    root.dismiss()
-
-<MoveAPopup>:
-    size_hint: 0.5, 0.4
-    pos_hint: {"right": 0.75, "top": 0.7}
-    auto_dismiss: False
-    txt_offset: txt_offset
-    BoxLayout:
-        padding: '15dp'
-        orientation: 'vertical'
-        Label:
-            canvas.before:
-                Color:
-                    rgba: 45/255, 45/255, 45/255, 1
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            id: caption
-            size_hint_y: None
-            height: '30dp'
-            text: tr._('Rapidly move the A to')
-            halign: 'left'
-            valign: 'middle'
-        BoxLayout:
-            padding: '15dp'
-            orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '30dp'
-            Label:
-                text: 'Value:'
-                halign: "left"
-                valign: "center"
-                text_size: self.size
-            TextInput:
-                id: txt_offset
-                hint_text: tr._('Enter A Pos')
-                multiline: False
-                text: '0.0'
-                halign: "left"
-                input_type: 'number'
-                input_filter: 'float'
-        BoxLayout:
-            id: empty
-        BoxLayout:
-            spacing: '5dp'
-            size_hint_y: None
-            height: '40dp'
-            Button:
-                id: btn_cancel
-                text: tr._('Cancel')
-                on_release: root.dismiss()
-            Button:
-                id: btn_ok
-                text: tr._('Ok')
-                on_release: root.on_ok_pressed()
 
 <WCSSettingsPopup>:
     size_hint: 0.95, 0.95
@@ -4907,6 +4936,7 @@
             text: tr._('WCS Settings')
             halign: 'left'
             valign: 'middle'
+            text_size: self.size
         
         ScrollView:
             GridLayout:
@@ -5772,6 +5802,11 @@
                 on_release:
                     root.apply_changes()
                     root.dismiss()
+            BoxLayout:
+                size_hint_x: 0.2
+                HelpButton:
+                    helpPath: "https://carvera-community.gitbook.io/docs/controller/features/workspace-management"
+
 
 <SetRotationPopup>:
     size_hint: 0.5, 0.4
@@ -5796,6 +5831,7 @@
             text: tr._('Set Rotation')
             halign: 'left'
             valign: 'middle'
+            text_size: self.size
         
         BoxLayout:
             padding: '15dp'
@@ -5834,6 +5870,11 @@
                 text: tr._('Ok')
                 on_release:
                     on_release: root.on_ok_pressed()
+            BoxLayout:
+                size_hint_x: 0.2
+                HelpButton:
+                    helpPath: "https://carvera-community.gitbook.io/docs/controller/features/wcs-rotation"
+
 
 # Solid disabled look (no faded theme atlas / no ghost text): mute bg + text vs enabled row.
 <OpaqueDisabledButton@Button>:

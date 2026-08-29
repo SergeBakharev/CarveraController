@@ -1,27 +1,28 @@
-#this is for 4 axis now
-
-#import os
-#os.environ['KIVY_GL_BACKEND'] = 'sdl2'
-
-import sys
-from kivy.app import App
-from kivy.uix.widget import Widget
-from kivy.core.window import Window
-from kivy.graphics.instructions import RenderContext
-from kivy.graphics.transformation import Matrix
-from kivy.graphics import *
-from kivy.graphics.opengl import *
-from kivy.clock import Clock
-from kivy.utils import platform
 import logging
 import os
+import sys
 import threading
 from math import *
+
+from kivy.app import App
+from kivy.clock import Clock
+from kivy.config import Config
+from kivy.core.window import Window
+from kivy.graphics import *
+from kivy.graphics.instructions import RenderContext
+from kivy.graphics.opengl import *
+from kivy.graphics.transformation import Matrix
+from kivy.metrics import dp
+from kivy.uix.widget import Widget
+from kivy.utils import platform
 
 logger = logging.getLogger(__name__)
 
 import datetime
+
 start_time = 0
+
+
 def get_elapsed(str):
     global start_time
     if str == "start":
@@ -31,66 +32,103 @@ def get_elapsed(str):
     start_time = end_time
     print(f"{str} -> {elapsed_time}")
 
-from .Objloader import ObjFile
-#arc camera
+
+# arc camera
 import math
-from .arcball_from_cpp import *
-#input
-from kivy.input.provider import MotionEventProvider
+
 from kivy.input.factory import MotionEventFactory
 from kivy.input.motionevent import MotionEvent
 
-#calculate the 3d distance
-def len_3d(pos1,pos2):
-    return math.sqrt((pos1[0] - pos2[0])*(pos1[0] - pos2[0])+(pos1[1]-pos2[1])*(pos1[1]-pos2[1])+(pos1[2]-pos2[2])*(pos1[2]-pos2[2]))
+# input
+from kivy.input.provider import MotionEventProvider
 
-def len_2d(pos1,pos2):
-    return math.sqrt((pos1[0] - pos2[0])*(pos1[0] - pos2[0])+(pos1[1]-pos2[1])*(pos1[1]-pos2[1]))
+from .addons.tool_visualization.mesh_builder import build_tool_meshes
+from .arcball_from_cpp import *
+from .Objloader import ObjFile
+from .ui.ViewCube import (
+    VERTEX_FORMAT as VIEW_CUBE_VERTEX_FORMAT,
+)
+from .ui.ViewCube import (
+    VIEW_FACE_PRESETS,
+    pick_face,
+)
+from .ui.ViewCube import (
+    load_mesh as load_view_cube_mesh,
+)
+
+
+# calculate the 3d distance
+def len_3d(pos1, pos2):
+    return math.sqrt(
+        (pos1[0] - pos2[0]) * (pos1[0] - pos2[0])
+        + (pos1[1] - pos2[1]) * (pos1[1] - pos2[1])
+        + (pos1[2] - pos2[2]) * (pos1[2] - pos2[2])
+    )
+
+
+def len_2d(pos1, pos2):
+    return math.sqrt((pos1[0] - pos2[0]) * (pos1[0] - pos2[0]) + (pos1[1] - pos2[1]) * (pos1[1] - pos2[1]))
+
 
 def normalize(dir):
-    length = len_3d(dir,[0,0,0])
-    if(length < 0.0001):
-        print('normalize failed')
-        return [1,0,0]
+    length = len_3d(dir, [0, 0, 0])
+    if length < 0.0001:
+        print("normalize failed")
+        return [1, 0, 0]
     inv_length = 1.0 / length
-    return [dir[0]*inv_length,dir[1]*inv_length,dir[2]*inv_length]
+    return [dir[0] * inv_length, dir[1] * inv_length, dir[2] * inv_length]
+
 
 def normalize_angle(angle):
-    while (angle < 0): angle += 360
-    while (angle > 360): angle -= 360
+    while angle < 0:
+        angle += 360
+    while angle > 360:
+        angle -= 360
     return angle
-#
-ZOOMSTEP = 1.1
-M_PI = 3.141592653
-#binary search left key
-def binary_find_left(array,key):
-    length=len(array)
-    ans=length
-    l=0
-    r=length-1
-    while(l<=r):
-        mid=(l+r)>>1
-        if(array[mid]>=key):
-            ans=mid
-            r=mid-1
-        else: l=mid+1
-    return ans-1
 
-#rotate point around axis & angle
-#https://stackoverflow.com/questions/6721544/circular-rotation-around-an-arbitrary-axis
-#https://kivy.org/doc/stable/api-kivy.graphics.transformation.html
-def rotate_pt_by_x_axis_angle(pt_x,pt_y,pt_z,angle_in_degree):
-    axis = [1,0,0]
+
+ZOOMSTEP = 1.1
+DEFAULT_ZOOM = 0.65
+PROJ_NEAR = 2.0
+MIN_ZOOM = 0.1
+MAX_ZOOM = 10.0
+M_PI = 3.141592653
+MESH_LINE_CHUNK = 65500  # Max G-code lines per line_strip mesh (65500 vertices)
+
+
+# binary search left key
+def binary_find_left(array, key):
+    length = len(array)
+    ans = length
+    l = 0
+    r = length - 1
+    while l <= r:
+        mid = (l + r) >> 1
+        if array[mid] >= key:
+            ans = mid
+            r = mid - 1
+        else:
+            l = mid + 1
+    return ans - 1
+
+
+# rotate point around axis & angle
+# https://stackoverflow.com/questions/6721544/circular-rotation-around-an-arbitrary-axis
+# https://kivy.org/doc/stable/api-kivy.graphics.transformation.html
+def rotate_pt_by_x_axis_angle(pt_x, pt_y, pt_z, angle_in_degree):
+    axis = [1, 0, 0]
     mat_rot_x = Matrix()
     angle_in_radian = angle_in_degree * 3.1415926 / 180.0
-    mat_rot_x.rotate(angle_in_radian,axis[0],axis[1],axis[2])
-    rot_pt = mat_rot_x.transform_point(pt_x,pt_y,pt_z)
+    mat_rot_x.rotate(angle_in_radian, axis[0], axis[1], axis[2])
+    rot_pt = mat_rot_x.transform_point(pt_x, pt_y, pt_z)
     return rot_pt
+
+
 def rotate_mat_by_x_axis_angle(angle_in_degree):
-    axis = [1,0,0]
+    axis = [1, 0, 0]
     mat_rot_x = Matrix()
     angle_in_radian = angle_in_degree * 3.1415926 / 180.0
-    mat_rot_x.rotate(angle_in_radian,axis[0],axis[1],axis[2])
+    mat_rot_x.rotate(angle_in_radian, axis[0], axis[1], axis[2])
     return mat_rot_x
 
 
@@ -140,13 +178,173 @@ def vec3_distance(v1, v2):
     return vec3_len(v3)
 
 
-class MyMeshManager():
+GRID_STEP_MM = 10.0
+GRID_MAJOR_STEP_MM = 100.0
+GRID_COLOR_MINOR = [0.35, 0.35, 0.35]
+GRID_COLOR_MAJOR = [0.55, 0.55, 0.55]
+# axis.obj points along +Y; rotations map meshes to world axes (see axis arrow setup)
+AXIS_COLOR_X = [1.0, 0.0, 0.0]
+AXIS_COLOR_Y = [0.0, 1.0, 0.0]
+AXIS_COLOR_Z = [0.0, 0.0, 1.0]
 
+# T1–T10 tool colors (matches toolpath.glsl tool_palette_color).
+TOOL_PALETTE = (
+    (0.406684, 0.735902, 0.235489, 1),
+    (0.000000, 0.459774, 0.840728, 1),
+    (0.779915, 0.319537, 0.130857, 1),
+    (0.740127, 0.236840, 0.700182, 1),
+    (0.000000, 0.755849, 0.602221, 1),
+    (0.825216, 0.043248, 0.043248, 1),
+    (0.894806, 0.717161, 0.000000, 1),
+    (0.128923, 0.578319, 0.877916, 1),
+    (0.431518, 0.268501, 0.839063, 1),
+    (0.248716, 0.777237, 0.402157, 1),
+)
+
+DEFAULT_FEED_MM_MIN = 3000.0
+VERTEX_FLOAT_NUM = 11
+
+# Marks a touch this widget took on touch_down, so drags belonging to the
+# controls floating over it are not also treated as orbit or pan.
+TOUCH_CLAIMED = "gcode_viewer_claimed"
+
+COLOR_SCHEME_BY_TYPE = 0
+COLOR_SCHEME_BY_TOOL = 1
+COLOR_SCHEME_BY_SPEED = 2
+COLOR_SCHEME_BY_Z = 3
+COLOR_SCHEME_UI_BY_TYPE = "Move type"
+COLOR_SCHEME_UI_BY_TOOL = "Tool"
+COLOR_SCHEME_UI_BY_SPEED = "Speed"
+COLOR_SCHEME_UI_BY_Z = "Height"
+
+# Legend / shader bucket counts for speed and height filters.
+VISIBILITY_BUCKET_COUNT = 11
+VISIBILITY_ALL_BUCKET_BITS = (1 << VISIBILITY_BUCKET_COUNT) - 1
+
+# Max tool ids that we can pass to the shader (6 x vec4).
+VISIBILITY_MAX_TOOLS = 24
+
+# Height colormap: range from feed-move Z percentiles (ignores G0 and outlier G1).
+Z_HEIGHT_PERCENTILE_LOW = 5.0
+Z_HEIGHT_PERCENTILE_HIGH = 95.0
+
+
+def feed_mm_min_for_move(is_rapid, feed_value=None):
+    """Feed rate (mm/min) stored per vertex; 0 for rapid moves."""
+    if is_rapid:
+        return 0.0
+    if feed_value is not None:
+        try:
+            feed = float(feed_value)
+            if feed > 0.0:
+                return feed
+        except (TypeError, ValueError):
+            pass
+    return DEFAULT_FEED_MM_MIN
+
+
+def _percentile_from_sorted(sorted_vals, percentile):
+    """Linear-interpolation percentile; percentile in 0..100."""
+    n = len(sorted_vals)
+    if n == 0:
+        return 0.0
+    if n == 1:
+        return float(sorted_vals[0])
+    k = (n - 1) * (float(percentile) / 100.0)
+    f = int(k)
+    c = min(f + 1, n - 1)
+    if f == c:
+        return float(sorted_vals[f])
+    return float(sorted_vals[f] + (k - f) * (sorted_vals[c] - sorted_vals[f]))
+
+
+def _feed_z_height_range_mm(
+    positions,
+    raw_feed_rates,
+    low_pct=Z_HEIGHT_PERCENTILE_LOW,
+    high_pct=Z_HEIGHT_PERCENTILE_HIGH,
+):
+    """Z range (mm) for height coloring: percentiles of feed-move vertices only."""
+    if not positions or len(positions) < 3:
+        return 0.0, 1.0
+
+    feeds = raw_feed_rates or []
+    vertex_count = len(positions) // 3
+    zs = []
+    for i in range(vertex_count):
+        if i < len(feeds) and float(feeds[i]) > 0.0:
+            zs.append(float(positions[3 * i + 2]))
+
+    if not zs:
+        zs = [float(positions[i]) for i in range(2, len(positions), 3)]
+    if not zs:
+        return 0.0, 1.0
+
+    zs.sort()
+    z_min = _percentile_from_sorted(zs, low_pct)
+    z_max = _percentile_from_sorted(zs, high_pct)
+    if z_max <= z_min:
+        z_min = zs[0]
+        z_max = zs[-1]
+    if z_max <= z_min:
+        z_max = z_min + 1.0
+    return z_min, z_max
+
+
+def tool_palette_rgb(tool_number):
+    """RGB from tool number, wrapping through TOOL_PALETTE (matches toolpath.glsl)."""
+    idx = (int(tool_number) - 1) % len(TOOL_PALETTE)
+    return TOOL_PALETTE[idx][:3]
+
+
+def tool_marker_palette_rgb(tool_number):
+    """Pastel RGB for progress-bar tool labels, derived from tool_palette_rgb."""
+    r, g, b = tool_palette_rgb(tool_number)
+    t = 0.4
+    return (r * (1 - t) + t, g * (1 - t) + t, b * (1 - t) + t)
+
+
+def speed_colormap_rgb(t):
+    """Match toolpath.glsl speed_colormap."""
+    t = max(0.0, min(1.0, float(t)))
+    if t < 0.33:
+        a = (0.2, 0.4, 0.9)
+        b = (0.1, 0.7, 0.5)
+        u = t / 0.33
+    elif t < 0.66:
+        a = (0.1, 0.7, 0.5)
+        b = (0.95, 0.85, 0.15)
+        u = (t - 0.33) / 0.33
+    else:
+        a = (0.95, 0.85, 0.15)
+        b = (0.9, 0.25, 0.2)
+        u = (t - 0.66) / 0.34
+    return (a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u)
+
+
+GRID_QUAD_MIN_SIZE = 10.0
+CONFIG_GRID_VISIBLE_KEY = "gcode_viewer_show_grid"
+VIEW_CUBE_SIZE = dp(96)
+VIEW_CUBE_MARGIN = dp(10)
+VIEW_CUBE_TOOLBAR_INSET = dp(48)
+VIEW_CUBE_TEXTURE_UNIT = 1
+VIEW_CUBE_WORLD_SCALE = 0.5
+
+
+# Assets (3D models / textures)
+def _gcode_viewer_asset(name):
+    return os.path.join(os.path.dirname(__file__), "data", "GcodeViewer", name)
+
+
+VIEW_CUBE_ATLAS_PATH = _gcode_viewer_asset("view_cube_atlas.png")
+VIEW_CUBE_MODEL_PATH = _gcode_viewer_asset("view_cube_model.obj")
+AXIS_OBJ_PATH = _gcode_viewer_asset("axis.obj")
+
+
+class MeshManager:
     def __init__(self):
-
         ##data container
 
-        # all pts (rotated for 4-axis display)
         self.positions = []
         # raw positions (unrotated G-code coordinates)
         self.raw_positions = []
@@ -158,6 +356,8 @@ class MyMeshManager():
         self.raw_linenumbers = []
         # feed rate (mm/min) per vertex, from CNC parser
         self.raw_feed_rates = []
+        # active tool number per vertex, used to pick the tool mesh to display
+        self.raw_tools = []
         # angles of vertices [4 axis]
         self.angles_of_vertices = []
 
@@ -171,12 +371,12 @@ class MyMeshManager():
         # record the max size of area
         self.area_size = 0.0
         # bounding box (min/max per axis)
-        self.min_pt = [float('inf'), float('inf'), float('inf')]
-        self.max_pt = [float('-inf'), float('-inf'), float('-inf')]
+        self.min_pt = [float("inf"), float("inf"), float("inf")]
+        self.max_pt = [float("-inf"), float("-inf"), float("-inf")]
         # cetner of meshes
         self.area_center_sum = [0, 0, 0]
         self.area_center_sum_index = 0
-        self.position_scale = 1.0 #same to scale_invert
+        self.position_scale = 1.0  # same to scale_invert
 
         ## attributes
         self.is_4_axis = None
@@ -191,6 +391,7 @@ class MyMeshManager():
         # raw numbers
         self.raw_linenumbers.clear()
         self.raw_feed_rates.clear()
+        self.raw_tools.clear()
         # angles of vertices [4 axis]
         self.angles_of_vertices.clear()
         # mesh container
@@ -198,24 +399,17 @@ class MyMeshManager():
         # vertices
         self.vertices.clear()
 
-        #move to origin
+        # move to origin
         self.area_size = 0.0
-        self.min_pt = [float('inf'), float('inf'), float('inf')]
-        self.max_pt = [float('-inf'), float('-inf'), float('-inf')]
-        self.area_center_sum = [0,0,0]
+        self.min_pt = [float("inf"), float("inf"), float("inf")]
+        self.max_pt = [float("-inf"), float("-inf"), float("-inf")]
+        self.area_center_sum = [0, 0, 0]
         self.area_center_sum_index = 0
         self.position_scale = 1.0  # same to scale_invert
         self.is_4_axis = None
 
     def get_pt_count(self):
         return len(self.positions)
-
-    def map_color(self, color_str):
-        if color_str == 'Green':
-            return [0., 1., 0.]
-        elif color_str == 'Red':
-            return [1., 0., 0.]
-        return [1., 1., 1.]
 
     # get center of meshes
     def get_center(self):
@@ -227,110 +421,18 @@ class MyMeshManager():
     def get_center_of_view(self):
         return vec3_mul_float(self.get_center(), self.position_scale)
 
-    def get_vertex_position(self,idx):
-        return [self.vertices[idx*10],self.vertices[idx*10+1],self.vertices[idx*10+2]]
-    # parse single line
-    def parse_line(self, line):
-        arr_pt = line.split(' ')
+    def get_vertex_position(self, idx):
+        base = idx * VERTEX_FLOAT_NUM
+        return [self.vertices[base], self.vertices[base + 1], self.vertices[base + 2]]
 
+    def parse_line_data(self, linedata):
         # position (raw G-code coordinates)
-        raw_pos = [float(arr_pt[1]), float(arr_pt[3]), float(arr_pt[5])]
-        
-        # Store raw positions before rotation
-        self.raw_positions.append(raw_pos[0])
-        self.raw_positions.append(raw_pos[1])
-        self.raw_positions.append(raw_pos[2])
-        
-        # Rotate position for 4-axis display
-        pos = raw_pos
-        if self.is_4_axis:
-            angle = float(arr_pt[7])
-            pos = rotate_pt_by_x_axis_angle(pos[0], pos[1], pos[2], angle)
+        raw_pos = [linedata[0], linedata[1], linedata[2]]
 
-        self.positions.append(pos[0])
-        self.positions.append(pos[1])
-        self.positions.append(pos[2])
-        self.min_pt = vec3_min(self.min_pt, pos)
-        self.max_pt = vec3_max(self.max_pt, pos)
-
-        # for center calculating
-        self.area_center_sum = vec3_add(self.area_center_sum, pos)
-        self.area_center_sum_index += 1
-
-        # get attributes of this point
-        vertex = [0] * 10
-        if self.is_4_axis:
-            # 1 position
-            vertex[0] = pos[0]
-            vertex[1] = pos[1]
-            vertex[2] = pos[2]
-
-            #angle
-            angle = float(arr_pt[7])
-
-            # 2 color
-            color = self.map_color(arr_pt[9])
-            vertex[3] = color[0]
-            vertex[4] = color[1]
-            vertex[5] = color[2]
-
-            # 3 line number in gcode
-            vertex[6] = float(arr_pt[11])
-
-
-            # 4 type id
-            vertex[7] = len(self.positions) - 1
-
-            # 5 distance attribute
-            vertex[8] = 0  # set after length is calculated
-
-            # 6 set tool knife id
-            vertex[9] = float(arr_pt[13])
-
-            # push this vertex to container
-            self.vertices.extend(vertex)
-            self.vertex_types.append(1.0 if arr_pt[9] == "Green" else 2.0)  # line type[red | green]
-            self.raw_linenumbers.append(vertex[6])
-            self.angles_of_vertices.append(angle)
-        else:
-            # 1 position
-            vertex[0] = pos[0]
-            vertex[1] = pos[1]
-            vertex[2] = pos[2]
-
-            # 2 color
-            color = self.map_color(arr_pt[7])
-            vertex[3] = color[0]
-            vertex[4] = color[1]
-            vertex[5] = color[2]
-
-            # 3 line number in gcode
-            vertex[6] = float(arr_pt[9])
-
-            # 4 type id
-            vertex[7] = len(self.positions) - 1
-
-            # 5 distance attribute
-            vertex[8] = 0  # set after length is calculated
-
-            # 6 set tool knife id
-            vertex[9] = float(arr_pt[11])
-
-            # push this vertex to container
-            self.vertices.extend(vertex)
-
-            self.vertex_types.append(1.0 if arr_pt[7] == "Green" else 2.0)  # line type[red | green]
-            self.raw_linenumbers.append(vertex[6])
-
-    def parse_line_data(self,linedata):
-
-        # position (raw G-code coordinates)
-        raw_pos = [linedata[0],linedata[1],linedata[2]]
-        
         # Store raw positions before rotation
         self.raw_positions.extend(raw_pos)
 
-        #angle
+        # angle
         angle = linedata[3]
         pos = rotate_pt_by_x_axis_angle(raw_pos[0], raw_pos[1], raw_pos[2], angle)
 
@@ -343,17 +445,16 @@ class MyMeshManager():
         self.area_center_sum_index += 1
 
         # get attributes of this point
-        vertex = [0] * 10
+        vertex = [0] * VERTEX_FLOAT_NUM
         # 1 position
         vertex[0] = pos[0]
         vertex[1] = pos[1]
         vertex[2] = pos[2]
 
         # angle
-        # angle = linedata[3]
 
         # 2 color
-        color = [1.0,0.0,0.0] if linedata[4] == 0.0 else [0.0,1.0,0.0]
+        color = [1.0, 0.0, 0.0] if linedata[4] == 0.0 else [0.0, 1.0, 0.0]
         vertex[3] = color[0]
         vertex[4] = color[1]
         vertex[5] = color[2]
@@ -370,19 +471,24 @@ class MyMeshManager():
         # 6 set tool knife id
         vertex[9] = linedata[6]
 
+        # 7 feed rate (mm/min)
+        is_rapid = linedata[4] == 0.0 or linedata[4] < 0.5
+        feed_value = linedata[7] if len(linedata) > 7 else None
+        feed = feed_mm_min_for_move(is_rapid, feed_value)
+        vertex[10] = feed
+
         # push this vertex to container
         self.vertices.extend(vertex)
         self.vertex_types.append(1.0 if linedata[4] > 0.5 else 2.0)  # line type[red | green]
         self.raw_linenumbers.append(vertex[6])
-        # feed rate (mm/min) from CNC parser; index 7 if present, else default
-        feed = float(linedata[7]) if len(linedata) > 7 and linedata[7] is not None else 3000.0
         self.raw_feed_rates.append(feed)
+        self.raw_tools.append(vertex[9])
         self.angles_of_vertices.append(angle)
 
     def generate_meshes(self):
         # 0 scale all points to fit largest bbox side in ~2 units
         vertex_count = len(self.positions) // 3
-        vertex_float_num = 10
+        vertex_float_num = VERTEX_FLOAT_NUM
         if vertex_count == 0:
             self.meshes.clear()
             return
@@ -393,16 +499,19 @@ class MyMeshManager():
             self.vertices[vertex_float_num * i + 1] = self.positions[3 * i + 1] * self.position_scale
             self.vertices[vertex_float_num * i + 2] = self.positions[3 * i + 2] * self.position_scale
 
-            # if i % 1000 == 0:
-            #     print(f"{self.vertices[vertex_float_num * i + 0]} % {self.vertices[vertex_float_num * i + 1]} % {self.vertices[vertex_float_num * i + 0]}")
-
         # 1 calculate lengths
         self.lengths = [0] * vertex_count
         for i in range(1, vertex_count):
-            pos1 = [self.vertices[vertex_float_num * (i - 1) + 0], self.vertices[vertex_float_num * (i - 1) + 1],
-                    self.vertices[vertex_float_num * (i - 1) + 2]]
-            pos2 = [self.vertices[vertex_float_num * (i) + 0], self.vertices[vertex_float_num * (i) + 1],
-                    self.vertices[vertex_float_num * (i) + 2]]
+            pos1 = [
+                self.vertices[vertex_float_num * (i - 1) + 0],
+                self.vertices[vertex_float_num * (i - 1) + 1],
+                self.vertices[vertex_float_num * (i - 1) + 2],
+            ]
+            pos2 = [
+                self.vertices[vertex_float_num * (i) + 0],
+                self.vertices[vertex_float_num * (i) + 1],
+                self.vertices[vertex_float_num * (i) + 2],
+            ]
 
             cur_line_len = vec3_distance(pos1, pos2)
             self.lengths[i] = self.lengths[i - 1] + cur_line_len
@@ -411,25 +520,21 @@ class MyMeshManager():
         for i in range(vertex_count):
             self.vertices[vertex_float_num * i + 8] = self.lengths[i]
 
-        self.seg_mesh_vertex_count = 65500
+        self.seg_mesh_vertex_count = MESH_LINE_CHUNK
+
         # 3 construct meshes
         self.meshes.clear()
         mesh_start_id = 0
         mesh_end_id = min(self.seg_mesh_vertex_count, vertex_count)  # not included
 
-        while (True):
+        while True:
             # process each mesh
             indices = []
             for i in range(mesh_end_id - mesh_start_id):
                 indices.append(i)
-            # print(f"vertix index:[{mesh_start_id}-{mesh_end_id}]  indices Index:{len(indices)}")
-            mesh = [self.vertices[vertex_float_num * mesh_start_id:vertex_float_num * mesh_end_id], indices]
+            mesh = [self.vertices[vertex_float_num * mesh_start_id : vertex_float_num * mesh_end_id], indices]
 
             self.meshes.append(mesh)
-
-            # debug
-            # print("start:", mesh_start_id, self.vertices[vertex_float_num * mesh_start_id])
-            # print("end:", mesh_end_id - 1, self.vertices[vertex_float_num * (mesh_end_id - 1)])
 
             # skip to next mesh
             if mesh_end_id == vertex_count:
@@ -439,26 +544,7 @@ class MyMeshManager():
             mesh_start_id = mesh_end_id - 1
             mesh_end_id = min(mesh_start_id + self.seg_mesh_vertex_count, vertex_count)
 
-    def add_lines(self, rawlines):
-        # parse line
-
-        # 1 check gcode type
-        is_4_axis = False
-        if (len(rawlines) > 0 and 'A:' in rawlines[0]):
-            is_4_axis = True
-
-        if self.is_4_axis is None:
-            self.is_4_axis = is_4_axis
-        elif self.is_4_axis != is_4_axis:
-            print("conflict line type!")
-
-        # 2 parse single line
-        for line in rawlines:
-            self.parse_line(line.strip())
-
-        self.generate_meshes()
-
-    def add_data_arrs(self, rawdata,is_end=True):
+    def add_data_arrs(self, rawdata, is_end=True):
         # parse line
 
         # 1 check gcode type
@@ -468,267 +554,27 @@ class MyMeshManager():
         for linedata in rawdata:
             self.parse_line_data(linedata)
 
-        # get_elapsed("parse data")
         if is_end:
             self.generate_meshes()
 
-def load_data(lines):
-    #TODO:https://stackoverflow.com/questions/7111690/python-read-formatted-string
 
-    #X: 0.0 Y: 0.0 Z: 0.0 Color: Green Tool: 1
-    def map_color(color_str):
-        if color_str == 'Green':
-            return [0.,1.,0.]
-        elif color_str == 'Red':
-            return [1.,0.,0.]
-        return [1.,1.,1.]
+def frame_call_back_test(distance, num):
+    print(f"Current line: {num}")
 
-
-    vert_center = [0,0,0]
-
-    meshes = []
-
-    is_4_axis = False
-    if(len(lines)>0 and 'A:' in lines[0]):
-        is_4_axis = True
-
-    print(f"is_4_axis:{is_4_axis}")
-
-    how_many_meshes = int(len(lines) / 65500) + 1
-    line_start = 0
-    line_end = min(65500,len(lines))
-    vertex_id = 0
-    original_vertex_id = 0
-    #get positions of all points
-    #处理数据
-    # tmp_poses = []
-    # for line in lines:
-    #     arr_pt = line.split(' ')
-
-    #     #pos
-    #     pos = [float(arr_pt[1]),float(arr_pt[3]),float(arr_pt[5])]
-    #     tmp_poses.append(pos[0])
-    #     tmp_poses.append(pos[1])
-    #     tmp_poses.append(pos[2])
-
-    #add distance position
-    
-    scale = 1.0
-    positions = []
-    max_pt = [float('-inf'), float('-inf'), float('-inf')]
-    min_pt = [float('inf'), float('inf'), float('inf')]
-    for mesh_id in range(how_many_meshes):
-        for line in lines[line_start:line_end]:
-            arr_pt = line.split(' ')
-
-            pos = [scale*float(arr_pt[1]),scale*float(arr_pt[3]),scale*float(arr_pt[5])]
-            
-            #angle
-            if(is_4_axis):
-                angle = float(arr_pt[7])
-
-                rot_pos = rotate_pt_by_x_axis_angle(pos[0],pos[1],pos[2],angle)
-
-                positions.append(rot_pos[0])
-                positions.append(rot_pos[1])
-                positions.append(rot_pos[2])
-                
-                min_pt[0] = min(min_pt[0], rot_pos[0])
-                min_pt[1] = min(min_pt[1], rot_pos[1])
-                min_pt[2] = min(min_pt[2], rot_pos[2])
-                max_pt[0] = max(max_pt[0],rot_pos[0])
-                max_pt[1] = max(max_pt[1],rot_pos[1])
-                max_pt[2] = max(max_pt[2],rot_pos[2])
-            else:
-                positions.append(pos[0])
-                positions.append(pos[1])
-                positions.append(pos[2])
-
-                    
-                min_pt[0] = min(min_pt[0], pos[0])
-                min_pt[1] = min(min_pt[1], pos[1])
-                min_pt[2] = min(min_pt[2], pos[2])
-                max_pt[0] = max(max_pt[0],pos[0])
-                max_pt[1] = max(max_pt[1],pos[1])
-                max_pt[2] = max(max_pt[2],pos[2])
-
-        line_start = line_end - 1 # -1 to process seam line between two mesh
-        line_end = min(line_start+65500,len(lines))
-    
-    vertices_count = int(len(positions)/3)
-    print(vertices_count)
-    #apply scale to 2
-    max_point = bbox_max_side_length(min_pt, max_pt)
-    scale_invert = (2.0) if max_point == 0 else (2.0 / max_point)
-    for i in range(len(positions)):
-        positions[i] *= scale_invert
-
-    for i in range(vertices_count):
-        vert_center[0] += positions[3*i+0]
-        vert_center[1] += positions[3*i+1]
-        vert_center[2] += positions[3*i+2]
-    #calculate the center of target
-    vert_center[0] /= vertices_count
-    vert_center[1] /= vertices_count
-    vert_center[2] /= vertices_count
-
-    #calculate the distance field
-    lengths = [0]*vertices_count
-    for i in range(1,vertices_count):
-        pos1 = [positions[3*i-3],positions[3*i-2],positions[3*i-1]]
-        pos2 = [positions[3*i],positions[3*i+1],positions[3*i+2]]
-        cur_line_len = len_3d(pos1,pos2)
-        lengths[i] = lengths[i-1] + cur_line_len
-    
-
-    #reset
-    line_start = 0
-    line_end = min(65500,len(lines))
-    angles_of_vertices = []
-    raw_linenumbers = []
-    vertex_types = []
-    for mesh_id in range(how_many_meshes):
-
-        #vertex data for each mesh
-        vertices = []
-        indices = []
-        has_last_vertex = False
-        last_vertex = []
-        #start indices
-        index = 0
-        for line in lines[line_start:line_end]:
-
-
-            arr_pt = line.split(' ')
-
-            #pos
-            pos = [scale_invert*float(arr_pt[1]),scale_invert*float(arr_pt[3]),scale_invert*float(arr_pt[5])]
-            
-            #angle
-            if(is_4_axis):
-                angle = float(arr_pt[7])
-
-                rot_pos = rotate_pt_by_x_axis_angle(pos[0],pos[1],pos[2],angle)
-
-                is_greenpt = arr_pt[9]=="Green"
-
-                
-
-                this_vertex = []
-                this_vertex.append(rot_pos[0])#0
-                this_vertex.append(rot_pos[1])#1
-                this_vertex.append(rot_pos[2])#2  + (1.0 if is_greenpt else 0.0))
-
-                #color
-                color = map_color(arr_pt[9])
-                this_vertex.append(color[0]) #3
-                this_vertex.append(color[1]) #4
-                this_vertex.append(color[2]) #5
-                #line number
-                this_vertex.append(float(arr_pt[11])) #6
-                #type id
-                this_vertex.append(float(vertex_id)) #7
-
-                #distance id
-                #print(f'line number:{float(arr_pt[11])}')
-                raw_linenumbers.append(float(arr_pt[11]))
-                this_vertex.append(lengths[original_vertex_id]) #8
-
-                #store data in memery
-                vertex_types.append(1.0 if arr_pt[9]=="Green" else 2.0) #line type[red | green]
-                angles_of_vertices.append(angle)
-
-                
-                #vertex tool
-                this_vertex.append(float(arr_pt[13])) #9
-
-                # #添加重复的点（红-》绿）  不需要了
-                # if(has_last_vertex):
-                #     #greencolor = map_color('Green')
-                #     last_vertex[0] = this_vertex[0]
-                #     last_vertex[1] = this_vertex[1]
-                #     last_vertex[2] = this_vertex[2]
-                #     vertices += last_vertex
-                #     indices.append(index)
-                #     #fix
-                #     index += 1
-                #     vertex_id = vertex_id + 1
-                #     this_vertex[7] = float(vertex_id)
-                #     this_vertex[8] = float(0)
-                # if(is_greenpt):
-                #     has_last_vertex = True
-                #     last_vertex = this_vertex.copy()
-                # else:
-                #     has_last_vertex = False
-
-                
-                vertices += this_vertex
-            else:
-                is_greenpt = arr_pt[7]=="Green"
-
-                vertices.append(pos[0])
-                vertices.append(pos[1])
-                vertices.append(pos[2])
-
-                #color
-                color = map_color(arr_pt[7])
-                vertices.append(color[0])
-                vertices.append(color[1])
-                vertices.append(color[2])
-                #line number
-                vertices.append(float(arr_pt[9]))
-                #type id
-                vertices.append(float(vertex_id))
-
-                #distance id
-                raw_linenumbers.append(float(arr_pt[9]))
-                vertices.append(lengths[vertex_id])
-
-                #store data in memery
-                vertex_types.append(1.0 if arr_pt[7]=="Green" else 2.0) #line type[red | green]
-
-                
-                #vertextool
-                vertices.append(float(arr_pt[11]))
-
-            indices.append(index)
-            index = index + 1
-            vertex_id = vertex_id + 1
-            original_vertex_id += 1
-
-        line_start = line_end - 1 # -1 to process seam line between two mesh
-        line_end = min(line_start+65500,len(lines))
-
-
-        meshes.append([vertices,indices])
-    print("mesh count: %d"%len(meshes))
-
-
-    #meshes.append([axis_vertices,axis_indices])
-    #for x in range(10):
-    #    print(vertices[x])
-
-    #lengths[vertices_count-1]: max physical distance
-    return [is_4_axis,meshes,vert_center,len(lines),lengths,vertex_types,raw_linenumbers,positions,scale_invert,angles_of_vertices]
-
-
-
-def frame_call_back_test(distance,num):
-    print(f'当前line:{num}')
 
 class GCodeViewer(Widget):
-    axis = (0,0,1)
+    axis = (0, 0, 1)
     angle = 0
 
     three_axis_mode = True
-        
-    g_old_curosr = [0,0]
-    g_cursor = [0,0]
+
+    g_old_curosr = [0, 0]
+    g_cursor = [0, 0]
     left_button_down = False
     middle_button_down = False
     right_button_down = False
     g_wheel_data = 0
-    lines_center = [0,0,0]
+    lines_center = [0, 0, 0]
 
     display_count = 0
     total_line_count = 0
@@ -738,7 +584,7 @@ class GCodeViewer(Widget):
     move_scale = 1.0
     move_scale_by_positon = 1.0
 
-    #清空数据
+    # Clear cached mesh data before loading a new file
     clear_before_new_load = False
 
     # When True, compute segment-based time estimates (distance/feed); when False, skip extra parsing.
@@ -746,23 +592,32 @@ class GCodeViewer(Widget):
 
     line_times = []
     total_time = 0.0
+    legend_durations_cache = None
     lengths = []
     raw_linenumbers = []
     raw_positions = []
     raw_feed_rates = []
+    raw_tools = []
     frame_callback = None
+
+    # Tool number -> ToolDefinition extracted from the loaded file's CAM comments.
+    # Set from outside (see main.py) before/at the final load_array() call.
+    tool_table = {}
+    # Multiplier converting tool-comment dimensions (file units) into the same
+    # millimetre space as parsed coordinates (1.0 for mm files, 25.4 for inch).
+    tool_unit_scale = 1.0
     time_estimate_progress_callback = None
     log_callback = None
     error_popup_callback = None
 
-    #camera
+    # camera
     m_xRot = 30
     m_yRot = 180
 
     m_xRotTarget = 90
     m_yRotTarget = 0
 
-    m_zoom = 1
+    m_zoom = DEFAULT_ZOOM
 
     m_xPan = 0
     m_yPan = 0
@@ -791,38 +646,53 @@ class GCodeViewer(Widget):
     off_y = 0
 
     orbit = True
+    _grid_visible = True
+    _ortho_projection = False
+    color_scheme = COLOR_SCHEME_BY_TOOL
+    feed_min = 0.0
+    feed_max = DEFAULT_FEED_MM_MIN
+    z_min = 0.0
+    z_max = 1.0
+    z_min_mm = 0.0
+    z_max_mm = 1.0
 
     def __init__(self):
         super().__init__()
         self.canvas = RenderContext()
-        if platform != 'android':
-            glsl1 = 'hello_cube.glsl'
-            glsl2 = 'simple.glsl'
-            glsl3 = 'axis_helper.glsl'
-        else:
-            glsl1 = 'hello_cube_apk.glsl'
-            glsl2 = 'simple_apk.glsl'
-            glsl3 = 'axis_helper_apk.glsl'
-        if not os.path.exists(glsl1):
-            glsl1 = os.path.join(os.path.dirname(__file__), glsl1) # adjacent to code
-            glsl2 = os.path.join(os.path.dirname(__file__), glsl2)
-            glsl3 = os.path.join(os.path.dirname(__file__), glsl3)
+        shader_dir = os.path.join(os.path.dirname(__file__), "shaders")
+
+        self.gridmesh = RenderContext()
+        self.gridmesh.shader.source = os.path.join(shader_dir, "grid.glsl")
+        self._setup_grid_quad()
 
         self.linemesh = RenderContext()
-        self.linemesh.shader.source = glsl1
+        self.linemesh.shader.source = os.path.join(shader_dir, "toolpath.glsl")
 
         self.pointermesh = RenderContext()
-        self.pointermesh.shader.source = glsl2
+        self.pointermesh.shader.source = os.path.join(shader_dir, "tool_pointer.glsl")
 
+        axis_shader = os.path.join(shader_dir, "axis_helper.glsl")
         self.axisxmesh = RenderContext()
-        self.axisxmesh.shader.source = glsl3
+        self.axisxmesh.shader.source = axis_shader
         self.axisymesh = RenderContext()
-        self.axisymesh.shader.source = glsl3
+        self.axisymesh.shader.source = axis_shader
         self.axiszmesh = RenderContext()
-        self.axiszmesh.shader.source = glsl3
+        self.axiszmesh.shader.source = axis_shader
 
+        self.viewcubemesh = RenderContext()
+        self.viewcubemesh.shader.source = os.path.join(shader_dir, "view_cube.glsl")
+        self._setup_view_cube_mesh()
 
-        self.meshmanager = MyMeshManager()
+        self.meshmanager = MeshManager()
+        self.positions = []
+
+        # Per-tool generated meshes (tool number -> (vertices, indices, vertex_format)),
+        # rebuilt whenever a new file finishes loading. `pointer_mesh_instrs` holds the
+        # back-face then front-face Mesh pair whose geometry is swapped on tool change.
+        self._tool_meshes = {}
+        self._default_tool_mesh = None
+        self.pointer_mesh_instrs = []
+        self._active_tool_number = None
 
         # Dirty flags: set True whenever the scene must be re-rendered.
         # _scene_dirty covers view/pointer/axis uniform changes; _proj_dirty
@@ -831,21 +701,208 @@ class GCodeViewer(Widget):
         self._proj_dirty = True
 
         # Pre-computed constant matrices reused every frame to avoid per-frame
-        # allocation and rotate() calls.
         self._identity_mat = Matrix()
         self._axis_y_rot = Matrix().rotate(0.5 * math.pi, 1, 0, 0)
         self._axis_z_rot = Matrix().rotate(-0.5 * math.pi, 0, 0, 1)
+        self._proj_matrix = Matrix()
+        self.m_viewMatrix = Matrix()
+        self._grid_visible = Config.getboolean("carvera", CONFIG_GRID_VISIBLE_KEY, fallback=True)
+        self._viewer_meshes_active = False
+
+        self.viewcubemesh["texture0"] = VIEW_CUBE_TEXTURE_UNIT
+        self._view_cube_proj = Matrix()
 
         self.bind(size=self._on_size_change, pos=self._on_size_change)
 
-        Clock.schedule_interval(self._on_frame_tick, 1/60)
+        self.show_rapid = True
+        self.show_feed = True
+        self.speed_bucket_bits = VISIBILITY_ALL_BUCKET_BITS
+        self.z_bucket_bits = VISIBILITY_ALL_BUCKET_BITS
+        self._tool_filter_ids = []
+        self._tool_filter_bits = 0
 
+        self._apply_color_scheme_uniform()
+        self._update_feed_range_uniforms()
+        self._apply_visibility_uniforms()
+        Clock.schedule_interval(self._on_frame_tick, 1 / 60)
 
     def _on_size_change(self, *args):
         self._proj_dirty = True
         self._scene_dirty = True
 
-    #清空渲染
+    def _view_cube_hud_proj(self):
+        """Square ortho projection for the HUD viewport (independent of zoom/pan)."""
+        proj = Matrix()
+        proj.view_clip(-1.0, 1.0, -1.0, 1.0, 0.1, self.m_distance * 4.0, 0)
+        return proj
+
+    def _view_cube_active(self):
+        return self._viewer_meshes_active
+
+    def _update_view_cube_uniforms(self):
+        if not self._view_cube_active():
+            return
+        self._view_cube_proj = self._view_cube_hud_proj()
+        self.viewcubemesh["view_mat"] = self.m_viewMatrix
+        self.viewcubemesh["proj_mat"] = self._view_cube_proj
+        self.viewcubemesh["cube_scale"] = float(VIEW_CUBE_WORLD_SCALE)
+
+    def _setup_view_cube_mesh(self):
+        verts, indices = load_view_cube_mesh(VIEW_CUBE_MODEL_PATH)
+        self.viewcubemesh.clear()
+        with self.viewcubemesh:
+            self._view_cube_cb_setup = Callback(self._setup_view_cube_gl)
+            BindTexture(source=VIEW_CUBE_ATLAS_PATH, index=VIEW_CUBE_TEXTURE_UNIT)
+            Mesh(
+                fmt=VIEW_CUBE_VERTEX_FORMAT,
+                vertices=verts,
+                indices=indices,
+                mode="triangles",
+            )
+            self._view_cube_cb_reset = Callback(self._reset_view_cube_gl)
+
+    def _view_cube_gl_origin(self):
+        """Bottom-left of the GL drawable area (same origin as setup_gl_context)."""
+        return self.pos[0] + self.off_x, self.pos[1] + self.off_y
+
+    def _view_cube_widget_rect(self):
+        """Cube HUD bounds relative to the GL drawable area (origin bottom-left)."""
+        size = int(VIEW_CUBE_SIZE)
+        margin = int(VIEW_CUBE_MARGIN)
+        toolbar = int(VIEW_CUBE_TOOLBAR_INSET)
+        x = margin
+        y = self.size[1] - toolbar - margin - size
+        return x, y, size, size
+
+    def _view_cube_screen_rect(self):
+        """Cube HUD bounds in window coordinates for glViewport."""
+        ox, oy = self._view_cube_gl_origin()
+        x, y, size, _ = self._view_cube_widget_rect()
+        return int(ox + x), int(oy + y), size, size
+
+    def _view_cube_hit_screen_rect(self):
+        """Visible cube bounds — smaller than the HUD viewport (see cube_scale)."""
+        wx, wy, w, h = self._view_cube_screen_rect()
+        scale = float(VIEW_CUBE_WORLD_SCALE)
+        hit_w = w * scale
+        hit_h = h * scale
+        return wx + (w - hit_w) * 0.5, wy + (h - hit_h) * 0.5, hit_w, hit_h
+
+    def _view_cube_touch_ndc(self, touch):
+        """Map a touch to NDC inside the cube HUD, or None if outside."""
+        wx, wy, w, h = self._view_cube_screen_rect()
+        hit_x, hit_y, hit_w, hit_h = self._view_cube_hit_screen_rect()
+        if self.parent is not None:
+            touch_wx, touch_wy = self.parent.to_window(touch.pos[0], touch.pos[1])
+        else:
+            touch_wx, touch_wy = touch.x, touch.y
+        if not (hit_x <= touch_wx <= hit_x + hit_w and hit_y <= touch_wy <= hit_y + hit_h):
+            return None
+        ndc_x = 2.0 * (touch_wx - wx) / w - 1.0
+        ndc_y = 2.0 * (touch_wy - wy) / h - 1.0
+        return ndc_x, ndc_y
+
+    def _setup_view_cube_gl(self, *args):
+        x, y, w, h = self._view_cube_screen_rect()
+        glViewport(int(x), int(y), int(w), int(h))
+        glEnable(GL_DEPTH_TEST)
+        glClear(GL_DEPTH_BUFFER_BIT)
+        glActiveTexture(GL_TEXTURE0 + VIEW_CUBE_TEXTURE_UNIT)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+        self._update_view_cube_uniforms()
+
+    def _reset_view_cube_gl(self, *args):
+        glDisable(GL_DEPTH_TEST)
+        glViewport(0, 0, int(Window.size[0]), int(Window.size[1]))
+
+    def _handle_view_cube_touch(self, touch):
+        if not self._view_cube_active():
+            return False
+        ndc = self._view_cube_touch_ndc(touch)
+        if ndc is None:
+            return False
+        ndc_x, ndc_y = ndc
+        face_id = pick_face(
+            ndc_x,
+            ndc_y,
+            self.m_viewMatrix,
+            self._view_cube_hud_proj(),
+            VIEW_CUBE_WORLD_SCALE,
+        )
+        self.m_xRot, self.m_yRot = VIEW_FACE_PRESETS[face_id]
+        self.update_view()
+        self._scene_dirty = True
+        return True
+
+    def _raise_view_cube_to_top(self):
+        if self.viewcubemesh in self.canvas.children:
+            self.canvas.remove(self.viewcubemesh)
+        self.canvas.add(self.viewcubemesh)
+
+    def _remove_view_cube_from_canvas(self):
+        if self.viewcubemesh in self.canvas.children:
+            self.canvas.remove(self.viewcubemesh)
+
+    def _get_line_vertex_fmt(self):
+        return [
+            (b"position", 3, "float"),
+            (b"color_att", 3, "float"),
+            (b"type", 1, "float"),
+            (b"vertex_id", 1, "float"),
+            (b"distance_id", 1, "float"),
+            (b"vertex_tool", 1, "float"),
+            (b"vertex_feed", 1, "float"),
+        ]
+
+    def _get_grid_vertex_fmt(self):
+        return [(b"position", 3, "float")]
+
+    def _setup_grid_quad(self):
+        """Single quad on the XY plane; grid lines are drawn in the fragment shader."""
+        verts = [-0.5, -0.5, 0.0, 0.5, -0.5, 0.0, -0.5, 0.5, 0.0, 0.5, 0.5, 0.0]
+        indices = [0, 1, 2, 2, 1, 3]
+        self.gridmesh.clear()
+        with self.gridmesh:
+            self.cb = Callback(self.setup_gl_context)
+            Mesh(
+                fmt=self._get_grid_vertex_fmt(),
+                vertices=verts,
+                indices=indices,
+                mode="triangles",
+            )
+            self.cb = Callback(None)
+
+    def _add_canvas_children(self):
+        self.canvas.add(self.gridmesh)
+        self.canvas.add(self.linemesh)
+        self.canvas.add(self.pointermesh)
+        self.canvas.add(self.axisxmesh)
+        self.canvas.add(self.axisymesh)
+        self.canvas.add(self.axiszmesh)
+        self._raise_view_cube_to_top()
+        self._update_view_cube_uniforms()
+        self._viewer_meshes_active = True
+
+    def _grid_quad_extent(self):
+        """World-space quad width so the plane covers the viewport when orbiting."""
+        asp = self.size[0] / max(self.size[1], 1.0)
+        return max(self.m_distance * self.m_zoom * max(asp, 1.0) * 4.0, GRID_QUAD_MIN_SIZE)
+
+    def _update_grid_uniforms(self):
+        scale = self.move_scale_by_positon if self.move_scale_by_positon else 1.0
+        center = getattr(self, "lines_center", [0.0, 0.0, 0.0])
+        self.gridmesh["center_offset"] = Matrix().translate(-center[0], -center[1], -center[2])
+        self.gridmesh["view_mat"] = self.m_viewMatrix
+        self.gridmesh["grid_visible"] = 1.0 if self._grid_visible else 0.0
+        self.gridmesh["grid_size"] = float(self._grid_quad_extent())
+        self.gridmesh["subcell_size"] = float(GRID_STEP_MM * scale)
+        self.gridmesh["cell_size"] = float(GRID_MAJOR_STEP_MM * scale)
+        self.gridmesh["color_minor"] = GRID_COLOR_MINOR
+        self.gridmesh["color_major"] = GRID_COLOR_MAJOR
+        self.gridmesh["color_axis_x"] = AXIS_COLOR_X
+        self.gridmesh["color_axis_y"] = AXIS_COLOR_Y
+
     def clearDisplay(self):
         self.lengths = []
         self._cannot_visualise = False
@@ -853,9 +910,16 @@ class GCodeViewer(Widget):
         self.positions = []
         self.line_times = []
         self.total_time = 0.0
+        self._invalidate_legend_durations()
         self.raw_feed_rates = []
+        self.raw_tools = []
+        self._tool_meshes = {}
+        self._default_tool_mesh = None
+        self.pointer_mesh_instrs = []
+        self._active_tool_number = None
         self.linemesh.clear()
         self.canvas.remove(self.linemesh)
+        self.canvas.remove(self.gridmesh)
         self.canvas.remove(self.pointermesh)
         self.pointermesh.clear()
         self.canvas.remove(self.axisxmesh)
@@ -864,12 +928,12 @@ class GCodeViewer(Widget):
         self.axisymesh.clear()
         self.canvas.remove(self.axiszmesh)
         self.axiszmesh.clear()
+        self._remove_view_cube_from_canvas()
         self.display_count = 0
+        self._viewer_meshes_active = False
 
-    #回调逐帧
     def set_frame_callback(self, framecallback):
         self.frame_callback = framecallback
-
 
     def set_error_popup_callback(self, callback):
         """Set callback(message) to show error in UI (e.g. load_error popup). Called when gcode cannot be visualised."""
@@ -878,152 +942,12 @@ class GCodeViewer(Widget):
     def set_play_over_callback(self, playovercallback):
         self.play_over_callback = playovercallback
 
-    def load_mesh_manager(self,lines):
-        #清空显示
-        self.clearDisplay()
-        #添加对象
-        self.canvas.add(self.linemesh)
-        self.canvas.add(self.pointermesh)
-        self.canvas.add(self.axisxmesh)
-        self.canvas.add(self.axisymesh)
-        self.canvas.add(self.axiszmesh)
-
-        self.meshmanager.add_lines(lines)
-
-        #显示mesh
-
-        if platform != 'android':
-            ff = [
-                (b'my_vertex_position', 3, 'float'),
-                (b'color', 3, 'float'),
-                (b'type', 1, 'float'),
-                (b'vertex_id', 1, 'float'),
-                (b'distance_id', 1, 'float'),
-                (b'vertex_tool', 1, 'float')
-            ]
-        else:
-            ff = [
-                (b'my_vertex_position', 3, 'float'),
-                (b'color_att', 3, 'float'),
-                (b'type', 1, 'float'),
-                (b'vertex_id', 1, 'float'),
-                (b'distance_id', 1, 'float'),
-                (b'vertex_tool', 1, 'float')
-            ]
-
-        self.lengths = self.meshmanager.lengths
-        self.vertex_types = self.meshmanager.vertex_types
-        self.positions = self.meshmanager.positions
-        self.raw_positions = self.meshmanager.raw_positions
-        self.raw_linenumbers = self.meshmanager.raw_linenumbers
-        self.angles_of_vertices = self.meshmanager.angles_of_vertices
-
-        self.total_line_count = self.meshmanager.get_pt_count()
-        self.total_distance = self.meshmanager.lengths[-1]
-        self.move_scale_by_positon = self.meshmanager.position_scale
-
-
-        lines.clear()
-
-        self.is_4_axis = self.meshmanager.is_4_axis
-
-        obj1 = 'pointer.obj'
-        obj2 = 'axis.obj'
-        if not os.path.exists(obj1):
-            obj1 = os.path.join(os.path.dirname(__file__), obj1)
-            obj2 = os.path.join(os.path.dirname(__file__), obj2)
-
-        self.pointer = ObjFile(obj1)
-        self.axis_obj = ObjFile(obj2)
-
-
-        # 旋转刀头还是线
-        self.rotate_line_or_knife = False
-        if (self.is_4_axis):
-            self.rotate_line_or_knife = True
-
-
-        with self.canvas:
-            with self.linemesh:
-                self.cb = Callback(self.setup_gl_context)
-                for mesh in self.meshmanager.meshes:
-                    Mesh(fmt=ff, vertices=mesh[0], indices=mesh[1], mode='line_strip')
-
-                self.cb = Callback(None)
-
-            with self.pointermesh:
-                self.cb = Callback(None)
-                # PushMatrix()
-                m = list(self.pointer.objects.values())[0]
-                self.mesh = Mesh(
-                    vertices=m.vertices,
-                    indices=m.indices,
-                    fmt=m.vertex_format,
-                    mode='triangles',
-                )
-                # PopMatrix()
-                self.cb = Callback(None)
-
-            # axis
-            with self.axisxmesh:
-                self.cb = Callback(None)
-                # PushMatrix()
-                m = list(self.axis_obj.objects.values())[0]
-                self.mesh = Mesh(
-                    vertices=m.vertices,
-                    indices=m.indices,
-                    fmt=m.vertex_format,
-                    mode='triangles',
-                )
-                # PopMatrix()
-                self.cb = Callback(None)
-            with self.axisymesh:
-                self.cb = Callback(None)
-                # PushMatrix()
-                m = list(self.axis_obj.objects.values())[0]
-                self.mesh = Mesh(
-                    vertices=m.vertices,
-                    indices=m.indices,
-                    fmt=m.vertex_format,
-                    mode='triangles',
-                )
-                # PopMatrix()
-                self.cb = Callback(None)
-            with self.axiszmesh:
-                self.cb = Callback(None)
-                # PushMatrix()
-                m = list(self.axis_obj.objects.values())[0]
-                self.mesh = Mesh(
-                    vertices=m.vertices,
-                    indices=m.indices,
-                    fmt=m.vertex_format,
-                    mode='triangles',
-                )
-                # PopMatrix()
-                self.cb = Callback(self.reset_gl_context)
-
-        self.lines_center = self.meshmanager.get_center_of_view()
-        self.linemesh['center_the_cube'] = Matrix().translate(-self.lines_center[0], -self.lines_center[1],
-                                                              -self.lines_center[2])
-
-        # rendering line meshes
-        # self.linemesh['my_view'] = view#self.m_viewMatrix
-        self.linemesh['display_count'] = -1.0
-        # 0 means display all thing
-        self.linemesh['vertex_type_display'] = 0.0
-
-        # rendering pointer
-        # self.pointermesh['modelview_mat'] = view#self.m_viewMatrix
-        self.pointermesh['diffuse_light'] = (0.2, 0.0, 0.8)
-        self.pointermesh['ambient_light'] = (0.1, 0.3, 0.1)
-        self.pointermesh['offset'] = (-self.lines_center[0], -self.lines_center[1], -self.lines_center[2])
-
-        self.update_proj()
-        self.update_view()
-        self._scene_dirty = True
-        #force update
-        self.canvas.ask_update()
-
+    def begin_new_file_load(self):
+        """Drop leftover path vertices so a new file cannot inherit the previous load."""
+        self.clear_before_new_load = False
+        self.meshmanager.clear()
+        self.total_distance = 0.0
+        self.total_line_count = 0
 
     def clear_loaded_memery(self):
         if self.clear_before_new_load:
@@ -1031,24 +955,81 @@ class GCodeViewer(Widget):
 
             self.meshmanager.clear()
 
+    def _tool_number_at_index(self, vertex_idx):
+        """Return the active tool number (int) at a given vertex index, or None."""
+        if not self.raw_tools:
+            return None
+        vertex_idx = max(0, min(vertex_idx, len(self.raw_tools) - 1))
+        return int(self.raw_tools[vertex_idx])
+
+    def _get_tool_mesh(self, tool_number):
+        """Return the (vertices, indices, vertex_format) mesh for a tool number.
+
+        Falls back to the default (basic pointed) mesh when the tool number
+        is unknown or has no metadata in the loaded file.
+        """
+        if tool_number is not None and tool_number in self._tool_meshes:
+            return self._tool_meshes[tool_number]
+        return self._default_tool_mesh
+
+    def _log_tool_mesh_summary(self):
+        """Log which tools used in the loaded file have real geometry vs. a fallback mesh."""
+        used_tool_numbers = sorted({int(t) for t in self.raw_tools}) if self.raw_tools else []
+        known = [t for t in used_tool_numbers if t in self._tool_meshes]
+        unknown = [t for t in used_tool_numbers if t not in self._tool_meshes]
+        unit_note = (
+            f"; tool dimensions converted from inches (x{self.tool_unit_scale:g})"
+            if self.tool_unit_scale != 1.0
+            else ""
+        )
+        logger.info(
+            f"Tool meshes ready: {len(known)}/{len(used_tool_numbers)} used tools have geometry "
+            f"from the tool table ({known}); using default (pointed) mesh for {unknown}{unit_note}"
+        )
+
+    def _setup_pointer_gl_back(self, *args):
+        """Draw back faces first so translucent tool surfaces sort correctly."""
+        glEnable(GL_CULL_FACE)
+        glCullFace(GL_FRONT)
+
+    def _setup_pointer_gl_front(self, *args):
+        """Draw front faces second, blending over the back faces."""
+        glCullFace(GL_BACK)
+
+    def _reset_pointer_gl(self, *args):
+        glDisable(GL_CULL_FACE)
+        glCullFace(GL_BACK)
+
+    def _update_pointer_tool_mesh(self, vertex_idx):
+        """Swap the pointer mesh geometry if the active tool changed."""
+        if not self.pointer_mesh_instrs:
+            return
+        tool_number = self._tool_number_at_index(vertex_idx)
+        if tool_number == self._active_tool_number:
+            return
+        vertices, indices, _fmt = self._get_tool_mesh(tool_number)
+        for mesh in self.pointer_mesh_instrs:
+            mesh.vertices = vertices
+            mesh.indices = indices
+        self._active_tool_number = tool_number
+        self._scene_dirty = True
 
     def load_array(self, tmpdataarrs, is_end=True):
         self.clear_loaded_memery()
 
         dataarrs = []
-        # 过滤lines，插入过渡的线条数据
+        # Insert bridging segments when feed/rapid colors change
         last_color = -1
         last_line = -1
         for line in tmpdataarrs:
-
             color = line[4]
 
             need_regenerate = False
-            if (color >= 0 and last_color >= 0):
-                if (color != last_color):
+            if color >= 0 and last_color >= 0:
+                if color != last_color:
                     need_regenerate = True
 
-            if (need_regenerate):
+            if need_regenerate:
                 replace_str = last_color
                 copyline = line.copy()
                 copyline[4] = last_color
@@ -1062,45 +1043,16 @@ class GCodeViewer(Widget):
             last_line = line
             last_color = color
 
-
         if is_end:
-            #清空显示
             self.clear_before_new_load = True
             self.clearDisplay()
 
-            # get_elapsed("clear")
-            #添加对象
-            self.canvas.add(self.linemesh)
-            self.canvas.add(self.pointermesh)
-            self.canvas.add(self.axisxmesh)
-            self.canvas.add(self.axisymesh)
-            self.canvas.add(self.axiszmesh)
+            self._add_canvas_children()
 
+        self.meshmanager.add_data_arrs(dataarrs, is_end)
 
-        # get_elapsed("add mesh")
-        self.meshmanager.add_data_arrs(dataarrs,is_end)
-
-        # get_elapsed("add line data")
         if is_end:
-            #显示mesh
-            if platform != 'android':
-                ff = [
-                    (b'my_vertex_position', 3, 'float'),
-                    (b'color', 3, 'float'),
-                    (b'type', 1, 'float'),
-                    (b'vertex_id', 1, 'float'),
-                    (b'distance_id', 1, 'float'),
-                    (b'vertex_tool', 1, 'float')
-                ]
-            else:
-                ff = [
-                    (b'my_vertex_position', 3, 'float'),
-                    (b'color_att', 3, 'float'),
-                    (b'type', 1, 'float'),
-                    (b'vertex_id', 1, 'float'),
-                    (b'distance_id', 1, 'float'),
-                    (b'vertex_tool', 1, 'float')
-                ]
+            ff = self._get_line_vertex_fmt()
 
             self.lengths = self.meshmanager.lengths
             self.vertex_types = self.meshmanager.vertex_types
@@ -1108,10 +1060,11 @@ class GCodeViewer(Widget):
             self.raw_positions = self.meshmanager.raw_positions
             self.raw_linenumbers = self.meshmanager.raw_linenumbers
             self.raw_feed_rates = self.meshmanager.raw_feed_rates
+            self.raw_tools = self.meshmanager.raw_tools
             self.angles_of_vertices = self.meshmanager.angles_of_vertices
 
             self.total_line_count = self.meshmanager.get_pt_count()
-            self.total_distance = self.meshmanager.lengths[-1]
+            self.total_distance = self.meshmanager.lengths[-1] if self.meshmanager.lengths else 0.0
             self.move_scale_by_positon = self.meshmanager.position_scale
 
             self.is_4_axis = self.meshmanager.is_4_axis
@@ -1120,782 +1073,178 @@ class GCodeViewer(Widget):
             if self.high_precision_time_estimate and len(self.raw_feed_rates) >= len(self.raw_linenumbers or []):
                 self._compute_line_times_async()
 
-            # get_elapsed("fetch meshdata")
+            self._update_feed_range_uniforms()
 
-            obj1 = 'pointer.obj'
-            obj2 = 'axis.obj'
-            if not os.path.exists(obj1):
-                obj1 = os.path.join(os.path.dirname(__file__), obj1)
-                obj2 = os.path.join(os.path.dirname(__file__), obj2)
+            self.axis_obj = ObjFile(AXIS_OBJ_PATH)
 
-            self.pointer = ObjFile(obj1)
-            self.axis_obj = ObjFile(obj2)
+            # Build a basic 3D mesh per known tool (from CAM comments), plus a
+            # default (basic pointed) mesh used for tools with no metadata.
+            # tool_unit_scale converts inch tool dims into the mm coordinate space.
+            self._tool_meshes, self._default_tool_mesh = build_tool_meshes(
+                self.tool_table or {}, scale=self.move_scale_by_positon * self.tool_unit_scale
+            )
+            self._active_tool_number = self._tool_number_at_index(0)
+            self._log_tool_mesh_summary()
 
-
-            # get_elapsed("load pointer and axis mesh")
-            # 旋转刀头还是线
+            # 4-axis: rotate toolhead mesh instead of the toolpath
             self.rotate_line_or_knife = False
-            if (self.is_4_axis):
+            if self.is_4_axis:
                 self.rotate_line_or_knife = True
-
 
             with self.canvas:
                 with self.linemesh:
                     self.cb = Callback(self.setup_gl_context)
                     for mesh in self.meshmanager.meshes:
-                        Mesh(fmt=ff, vertices=mesh[0], indices=mesh[1], mode='line_strip')
+                        Mesh(fmt=ff, vertices=mesh[0], indices=mesh[1], mode="line_strip")
 
                     self.cb = Callback(None)
 
                 with self.pointermesh:
-                    self.cb = Callback(None)
-                    # PushMatrix()
-                    m = list(self.pointer.objects.values())[0]
-                    self.mesh = Mesh(
-                        vertices=m.vertices,
-                        indices=m.indices,
-                        fmt=m.vertex_format,
-                        mode='triangles',
+                    # Two-pass translucent draw: back faces, then front faces.
+                    # A single pass fights the depth buffer and makes one side of the
+                    # tool look hollow depending on camera orientation.
+                    verts, idxs, fmt = self._get_tool_mesh(self._active_tool_number)
+                    Callback(self._setup_pointer_gl_back)
+                    back_mesh = Mesh(
+                        vertices=verts,
+                        indices=idxs,
+                        fmt=fmt,
+                        mode="triangles",
                     )
-                    # PopMatrix()
-                    self.cb = Callback(None)
+                    Callback(self._setup_pointer_gl_front)
+                    front_mesh = Mesh(
+                        vertices=verts,
+                        indices=idxs,
+                        fmt=fmt,
+                        mode="triangles",
+                    )
+                    Callback(self._reset_pointer_gl)
+                    self.pointer_mesh_instrs = [back_mesh, front_mesh]
 
                 # axis
                 with self.axisxmesh:
                     self.cb = Callback(None)
-                    # PushMatrix()
                     m = list(self.axis_obj.objects.values())[0]
                     self.mesh = Mesh(
                         vertices=m.vertices,
                         indices=m.indices,
                         fmt=m.vertex_format,
-                        mode='triangles',
+                        mode="triangles",
                     )
-                    # PopMatrix()
                     self.cb = Callback(None)
                 with self.axisymesh:
                     self.cb = Callback(None)
-                    # PushMatrix()
                     m = list(self.axis_obj.objects.values())[0]
                     self.mesh = Mesh(
                         vertices=m.vertices,
                         indices=m.indices,
                         fmt=m.vertex_format,
-                        mode='triangles',
+                        mode="triangles",
                     )
-                    # PopMatrix()
                     self.cb = Callback(None)
                 with self.axiszmesh:
                     self.cb = Callback(None)
-                    # PushMatrix()
                     m = list(self.axis_obj.objects.values())[0]
                     self.mesh = Mesh(
                         vertices=m.vertices,
                         indices=m.indices,
                         fmt=m.vertex_format,
-                        mode='triangles',
+                        mode="triangles",
                     )
-                    # PopMatrix()
                     self.cb = Callback(self.reset_gl_context)
 
-            # get_elapsed("upload mesh")
-
             self.lines_center = self.meshmanager.get_center_of_view()
-            self.linemesh['center_the_cube'] = Matrix().translate(-self.lines_center[0], -self.lines_center[1],
-                                                                  -self.lines_center[2])
+            self.linemesh["center_offset"] = Matrix().translate(
+                -self.lines_center[0], -self.lines_center[1], -self.lines_center[2]
+            )
 
             # rendering line meshes
-            # self.linemesh['my_view'] = view#self.m_viewMatrix
-            self.linemesh['display_count'] = -1.0
-            # 0 means display all thing
-            self.linemesh['vertex_type_display'] = 0.0
+            self.linemesh["display_count"] = -1.0
+            self.reset_visibility_filters()
 
-            # rendering pointer
-            # self.pointermesh['modelview_mat'] = view#self.m_viewMatrix
-            self.pointermesh['diffuse_light'] = (0.2, 0.0, 0.8)
-            self.pointermesh['ambient_light'] = (0.1, 0.3, 0.1)
-            self.pointermesh['offset'] = (-self.lines_center[0], -self.lines_center[1], -self.lines_center[2])
+            self.pointermesh["offset"] = (-self.lines_center[0], -self.lines_center[1], -self.lines_center[2])
 
+            self.m_zoom = self._default_zoom_for_projection()
+            self._clamp_zoom()
             self.update_proj()
             self.update_view()
             self._scene_dirty = True
-            #force update
+            # force update
             self.canvas.ask_update()
 
-            # get_elapsed("uodate frame")
-
-
-    def load_1data_display(self,lines):
-        #TODO:https://stackoverflow.com/questions/7111690/python-read-formatted-string
-
-        #X: 0.0 Y: 0.0 Z: 0.0 Color: Green Tool: 1
-        def map_color(color_str):
-            if color_str == 'Green':
-                return [0.,1.,0.]
-            elif color_str == 'Red':
-                return [1.,0.,0.]
-            return [1.,1.,1.]
-
-
-        vert_center = [0,0,0]
-
-        meshes = []
-
-        is_4_axis = False
-        if(len(lines)>0 and 'A:' in lines[0]):
-            is_4_axis = True
-
-        print(f"is_4_axis:{is_4_axis}")
-
-        how_many_meshes = 1#int(len(lines) / 65500) + 1
-        line_start = 0
-        line_end = min(65536,len(lines))
-        # vertex_id = 0
-        original_vertex_id = 0
-        #get positions of all points
-        #处理数据
-        # tmp_poses = []
-        # for line in lines:
-        #     arr_pt = line.split(' ')
-
-        #     #pos
-        #     pos = [float(arr_pt[1]),float(arr_pt[3]),float(arr_pt[5])]
-        #     tmp_poses.append(pos[0])
-        #     tmp_poses.append(pos[1])
-        #     tmp_poses.append(pos[2])
-
-        #add distance position
-        
-        scale = 1.0
-        positions = []
-        max_pt = [float('-inf'), float('-inf'), float('-inf')]
-        min_pt = [float('inf'), float('inf'), float('inf')]
-        for mesh_id in range(how_many_meshes):
-            for line in lines[line_start:line_end]:
-                arr_pt = line.split(' ')
-
-                pos = [scale*float(arr_pt[1]),scale*float(arr_pt[3]),scale*float(arr_pt[5])]
-                
-                #angle
-                if(is_4_axis):
-                    angle = float(arr_pt[7])
-
-                    rot_pos = rotate_pt_by_x_axis_angle(pos[0],pos[1],pos[2],angle)
-
-                    positions.append(rot_pos[0])
-                    positions.append(rot_pos[1])
-                    positions.append(rot_pos[2])
-                    
-                    min_pt[0] = min(min_pt[0], rot_pos[0])
-                    min_pt[1] = min(min_pt[1], rot_pos[1])
-                    min_pt[2] = min(min_pt[2], rot_pos[2])
-                    max_pt[0] = max(max_pt[0],rot_pos[0])
-                    max_pt[1] = max(max_pt[1],rot_pos[1])
-                    max_pt[2] = max(max_pt[2],rot_pos[2])
-                else:
-                    positions.append(pos[0])
-                    positions.append(pos[1])
-                    positions.append(pos[2])
-
-                        
-                    min_pt[0] = min(min_pt[0], pos[0])
-                    min_pt[1] = min(min_pt[1], pos[1])
-                    min_pt[2] = min(min_pt[2], pos[2])
-                    max_pt[0] = max(max_pt[0],pos[0])
-                    max_pt[1] = max(max_pt[1],pos[1])
-                    max_pt[2] = max(max_pt[2],pos[2])
-
-            line_start = line_end - 1 # -1 to process seam line between two mesh
-            line_end = min(line_start+65536,len(lines))
-        
-        vertices_count = int(len(positions)/3)
-        print(vertices_count)
-        #apply scale to 2
-        max_point = bbox_max_side_length(min_pt, max_pt)
-        scale_invert = (2.0) if max_point == 0 else (2.0 / max_point)
-        for i in range(len(positions)):
-            positions[i] *= scale_invert
-
-        for i in range(vertices_count):
-            vert_center[0] += positions[3*i+0]
-            vert_center[1] += positions[3*i+1]
-            vert_center[2] += positions[3*i+2]
-        #calculate the center of target
-        vert_center[0] /= vertices_count
-        vert_center[1] /= vertices_count
-        vert_center[2] /= vertices_count
-
-        #calculate the distance field
-
-        lengths = [0]*vertices_count
-        for i in range(0,vertices_count):
-            if i == 0:
-                if len(self.positions) > 0:
-                    pos1 = [self.positions[-3],self.positions[-2],self.positions[-1]]
-                    pos2 = [self.positions[3*i],self.positions[3*i+1],self.positions[3*i+2]]
-                    cur_line_len = len_3d(pos1, pos2)
-                    lengths[i] = self.lengths[-1] + cur_line_len
-
-            else:
-                pos1 = [positions[3*i-3],positions[3*i-2],positions[3*i-1]]
-                pos2 = [positions[3*i],positions[3*i+1],positions[3*i+2]]
-                cur_line_len = len_3d(pos1,pos2)
-                lengths[i] = lengths[i-1] + cur_line_len
-
-
-        
-
-        #reset
-        line_start = 0
-        line_end = min(65536,len(lines))
-        angles_of_vertices = []
-        raw_linenumbers = []
-        vertex_types = []
-        for mesh_id in range(how_many_meshes):
-
-            #vertex data for each mesh
-            vertices = []
-            indices = []
-            has_last_vertex = False
-            last_vertex = []
-            #start indices
-            index = 0
-            for line in lines[line_start:line_end]:
-
-
-                arr_pt = line.split(' ')
-
-                #pos
-                pos = [scale_invert*float(arr_pt[1]),scale_invert*float(arr_pt[3]),scale_invert*float(arr_pt[5])]
-                #pos = [float(arr_pt[1]),float(arr_pt[3]),float(arr_pt[5])]
-                
-                #angle
-                if(is_4_axis):
-                    angle = float(arr_pt[7])
-
-                    rot_pos = rotate_pt_by_x_axis_angle(pos[0],pos[1],pos[2],angle)
-
-                    is_greenpt = arr_pt[9]=="Green"
-
-                    
-
-                    this_vertex = []
-                    this_vertex.append(rot_pos[0])#0
-                    this_vertex.append(rot_pos[1])#1
-                    this_vertex.append(rot_pos[2])#2  + (1.0 if is_greenpt else 0.0))
-
-                    #color
-                    color = map_color(arr_pt[9])
-                    this_vertex.append(color[0]) #3
-                    this_vertex.append(color[1]) #4
-                    this_vertex.append(color[2]) #5
-                    #line number
-                    this_vertex.append(float(arr_pt[11])) #6
-                    #type id
-                    this_vertex.append(float(self.vertex_id)) #7
-
-                    #distance id
-                    #print(f'line number:{float(arr_pt[11])}')
-                    raw_linenumbers.append(float(arr_pt[11]))
-                    this_vertex.append(lengths[original_vertex_id]) #8
-
-                    #store data in memery
-                    vertex_types.append(1.0 if arr_pt[9]=="Green" else 2.0) #line type[red | green]
-                    angles_of_vertices.append(angle)
-
-                    
-                    #vertex tool
-                    this_vertex.append(float(arr_pt[13])) #9
-
-                    # #添加重复的点（红-》绿）  不需要了
-                    # if(has_last_vertex):
-                    #     #greencolor = map_color('Green')
-                    #     last_vertex[0] = this_vertex[0]
-                    #     last_vertex[1] = this_vertex[1]
-                    #     last_vertex[2] = this_vertex[2]
-                    #     vertices += last_vertex
-                    #     indices.append(index)
-                    #     #fix
-                    #     index += 1
-                    #     vertex_id = vertex_id + 1
-                    #     this_vertex[7] = float(vertex_id)
-                    #     this_vertex[8] = float(0)
-                    # if(is_greenpt):
-                    #     has_last_vertex = True
-                    #     last_vertex = this_vertex.copy()
-                    # else:
-                    #     has_last_vertex = False
-
-                    
-                    vertices += this_vertex
-                else:
-                    is_greenpt = arr_pt[7]=="Green"
-
-                    vertices.append(pos[0])
-                    vertices.append(pos[1])
-                    vertices.append(pos[2])
-
-                    #color
-                    color = map_color(arr_pt[7])
-                    vertices.append(color[0])
-                    vertices.append(color[1])
-                    vertices.append(color[2])
-                    #line number
-                    vertices.append(float(arr_pt[9]))
-                    #type id
-                    vertices.append(float(self.vertex_id))
-
-                    #distance id
-                    raw_linenumbers.append(float(arr_pt[9]))
-                    vertices.append(lengths[original_vertex_id])
-
-                    #store data in memery
-                    vertex_types.append(1.0 if arr_pt[7]=="Green" else 2.0) #line type[red | green]
-
-                    
-                    #vertextool
-                    vertices.append(float(arr_pt[11]))
-
-                indices.append(index)
-                index = index + 1
-                self.vertex_id = self.vertex_id + 1
-                original_vertex_id += 1
-
-            line_start = line_end - 1 # -1 to process seam line between two mesh
-            line_end = min(line_start+65500,len(lines))
-
-
-            meshes.append([vertices,indices])
-        print("mesh count: %d"%len(meshes))
-
-
-        #meshes.append([axis_vertices,axis_indices])
-        #for x in range(10):
-        #    print(vertices[x])
-
-        #lengths[vertices_count-1]: max physical distance
-        return [is_4_axis,meshes,vert_center,len(lines),lengths,vertex_types,raw_linenumbers,positions,scale_invert,angles_of_vertices]
-
-
-    #渐进式加载数据
-    def load_with_display(self,tmplines):
-        self.clearDisplay()
-
-        #设置容器
-        self.canvas.add(self.linemesh)
-        self.canvas.add(self.pointermesh)
-        self.canvas.add(self.axisxmesh)
-        self.canvas.add(self.axisymesh)
-        self.canvas.add(self.axiszmesh)
-
-        #记录临时变量
-        last_color = ''
-        last_line = ''
-        if platform != 'android':
-            ff = [
-                (b'my_vertex_position',3,'float'),
-                (b'color',3,'float'),
-                (b'type',1,'float'),
-                (b'vertex_id',1,'float'),
-                (b'distance_id',1,'float'),
-                (b'vertex_tool',1,'float')
-            ]
-        else:
-            ff = [
-                (b'my_vertex_position', 3, 'float'),
-                (b'color_att', 3, 'float'),
-                (b'type', 1, 'float'),
-                (b'vertex_id', 1, 'float'),
-                (b'distance_id', 1, 'float'),
-                (b'vertex_tool', 1, 'float')
-            ]
-        #every 65535
-        meshes = []
-        lines = []
-        current_processed_count = 0
-        self.vertex_id = 0
-        for i in range(len(tmplines)):
-
-            #process line varibles
-            thisline = tmplines[i]
-            color = ''
-            if 'Green' in thisline:
-                color = 'Green'
-            elif 'Red' in thisline:
-                color = 'Red'
-
-            #process
-            need_regenerate = False
-            if(len(color) > 0 and len(last_color)>0):
-                if(color != last_color):
-                    need_regenerate = True
-
-            # if(need_regenerate):
-            #     copyline = thisline.replace(color,last_color)
-                
-            #     lines.append(copyline)
-            #     lines.append(thisline)
-
-            # else:
-            #     lines.append(thisline)
-
-            lines.append(thisline)
-
-            if len(lines) == 65536:
-                #create mesh and refresh display
-                [is_4_axis,mmeshes,vert_center,total_line_count,lengths,vertex_types,raw_linenumbers,positions,position_scale,angles_of_vertices] = \
-                    self.load_1data_display(lines)
-
-
-                if len(self.positions) == 0:
-                    self.lines_center = vert_center
-                else:
-                    total_pt_count = len(self.positions)
-                    this__pt_count = len(positions)
-                    total_sum_position = [ self.lines_center[0] * total_pt_count + vert_center[0] * this__pt_count,\
-                                        self.lines_center[1]  * total_pt_count + vert_center[1] * this__pt_count, \
-                                        self.lines_center[2]  * total_pt_count + vert_center[2] * this__pt_count]
-                    
-                    total_pt_count += this__pt_count
-                    self.lines_center = [total_sum_position[0]/total_pt_count,total_sum_position[1]/total_pt_count,total_sum_position[2]/total_pt_count]
-            
-
-                print(vert_center)
-                print(self.lines_center)
-                # print(mmeshes)
-                # print(lengths)
-                self.lengths += lengths
-                self.vertex_types += vertex_types
-                self.positions += positions
-                lines.clear()
-
-                self.is_4_axis = is_4_axis
-                with self.canvas:
-                    with self.linemesh:
-                        # self.cb = Callback(self.setup_gl_context)
-                        for mesh in mmeshes:
-                            Mesh(fmt=ff, vertices=mesh[0], indices=mesh[1], mode='line_strip')
-                        
-                        # self.cb = Callback(None)
-                    
-                self.linemesh['center_the_cube'] = Matrix().translate(-self.lines_center[0],-self.lines_center[1],-self.lines_center[2])
-
-
-                #rendering line meshes
-                #self.linemesh['my_view'] = view#self.m_viewMatrix
-                self.linemesh['display_count'] = -1.0
-                #0 means display all thing
-                self.linemesh['vertex_type_display'] = 0.0
-
-                #rendering pointer
-                #self.pointermesh['modelview_mat'] = view#self.m_viewMatrix
-                self.pointermesh['diffuse_light'] = (0.2, 0.0, 0.8)
-                self.pointermesh['ambient_light'] = (0.1, 0.3, 0.1)
-                self.pointermesh['offset'] = (-self.lines_center[0],-self.lines_center[1],-self.lines_center[2])
-
-                self.update_proj()
-                self.update_view()
-                self._scene_dirty = True
-
-        #剩下的lines
-        if len(lines)>0:
-            #create mesh and refresh display
-            [is_4_axis,mmeshes,vert_center,total_line_count,lengths,vertex_types,raw_linenumbers,positions,position_scale,angles_of_vertices] = \
-                self.load_1data_display(lines)
-
-            
-            if len(self.positions) == 0:
-                self.lines_center = vert_center
-            else:
-                total_pt_count = len(self.positions)
-                this__pt_count = len(positions)
-                total_sum_position = [ self.lines_center[0] * total_pt_count + vert_center[0] * this__pt_count,\
-                                      self.lines_center[1]  * total_pt_count + vert_center[1] * this__pt_count, \
-                                      self.lines_center[2]  * total_pt_count + vert_center[2] * this__pt_count]
-                
-                total_pt_count += this__pt_count
-                self.lines_center = [total_sum_position[0]/total_pt_count,total_sum_position[1]/total_pt_count,total_sum_position[2]/total_pt_count]
-            
-            # print(self.lines_center)
-            # # print(lengths)
-            # if len(lengths) > 0:
-            #     last_length = 0.0
-            #     if len(self.lengths)>0:
-            #         last_length = self.lengths[len(self.lengths)-1] +
-            #             self.positions[-1]
-            #
-            #     for i in range(len(lengths)):
-            self.lengths += lengths
-
-            self.vertex_types += vertex_types
-            self.positions += positions
-            lines.clear()
-
-            self.is_4_axis = is_4_axis
-            with self.canvas:
-                
-                with self.linemesh:
-                    self.cb = Callback(self.setup_gl_context)
-                    for mesh in mmeshes:
-                        Mesh(fmt=ff, vertices=mesh[0], indices=mesh[1], mode='line_strip')
-                    
-                    self.cb = Callback(None)
-                
-            self.linemesh['center_the_cube'] = Matrix().translate(-self.lines_center[0],-self.lines_center[1],-self.lines_center[2])
-
-
-            #rendering line meshes
-            #self.linemesh['my_view'] = view#self.m_viewMatrix
-            self.linemesh['display_count'] = -1.0
-            #0 means display all thing
-            self.linemesh['vertex_type_display'] = 0.0
-
-            #rendering pointer
-            #self.pointermesh['modelview_mat'] = view#self.m_viewMatrix
-            self.pointermesh['diffuse_light'] = (0.2, 0.0, 0.8)
-            self.pointermesh['ambient_light'] = (0.1, 0.3, 0.1)
-            self.pointermesh['offset'] = (-self.lines_center[0],-self.lines_center[1],-self.lines_center[2])
-
-            self.update_proj()
-            self.update_view()
-            self._scene_dirty = True
-    #加载数据
-    def load(self, tmplines):
-
-        # self.load_mesh_manager(tmplines)
-        # return
-
-        self.clearDisplay()
-
-
-        #过滤lines，插入过渡的线条数据
-        lines = []
-        last_color = ''
-        last_line = ''
-        for line in tmplines:
-            color = ''
-            if 'Green' in line:
-                color = 'Green'
-            elif 'Red' in line:
-                color = 'Red'
-            
-            need_regenerate = False
-            if(len(color) > 0 and len(last_color)>0):
-                if(color != last_color):
-                    need_regenerate = True
-            
-            if(need_regenerate):
-                replace_str = last_color
-                copyline = line.replace(color,last_color)
-                
-                lines.append(copyline)
-                lines.append(line)
-
-            else:
-                lines.append(line)
-
-            last_line = line
-            last_color = color
-
-        self.canvas.add(self.linemesh)
-        self.canvas.add(self.pointermesh)
-        self.canvas.add(self.axisxmesh)
-        self.canvas.add(self.axisymesh)
-        self.canvas.add(self.axiszmesh)
-        if platform != 'android':
-            ff = [
-                (b'my_vertex_position',3,'float'),
-                (b'color',3,'float'),
-                (b'type',1,'float'),
-                (b'vertex_id',1,'float'),
-                (b'distance_id',1,'float'),
-                (b'vertex_tool',1,'float')
-            ]
-        else:
-            ff = [
-                (b'my_vertex_position', 3, 'float'),
-                (b'color_att', 3, 'float'),
-                (b'type', 1, 'float'),
-                (b'vertex_id', 1, 'float'),
-                (b'distance_id', 1, 'float'),
-                (b'vertex_tool', 1, 'float')
-            ]
-        
-        [is_4_axis,meshes,vert_center,total_line_count,lengths,vertex_types,raw_linenumbers,positions,position_scale,angles_of_vertices] = load_data(lines)
-        print("how many meshes:",len(meshes))
-
-        self.positions = positions
-        self.lengths = lengths
-        self._cannot_visualise = False
-        self.raw_linenumbers = raw_linenumbers
-        
-        self.vertex_types = vertex_types
-        self.move_scale_by_positon = position_scale
-        self.angles_of_vertices = angles_of_vertices
-
-        self.is_4_axis = is_4_axis
-        self.total_line_count = total_line_count
-        self.total_distance = lengths[len(lengths) - 1]
-        # No raw gcode file in this path; time estimate will use machine value
-        self.line_times = []
-        self.total_time = 0.0
-
-        obj1 = 'pointer.obj'
-        obj2 = 'axis.obj'
-        if not os.path.exists(obj1):
-            obj1 = os.path.join(os.path.dirname(__file__), obj1)
-            obj2 = os.path.join(os.path.dirname(__file__), obj2)
-
-        self.pointer = ObjFile(obj1)
-
-        self.axis_obj = ObjFile(obj2)
-
-        #旋转刀头还是线
-        self.rotate_line_or_knife = False
-        if(self.is_4_axis):
-            self.rotate_line_or_knife = True
-
-        with self.canvas:
-            
-            with self.linemesh:
-                self.cb = Callback(self.setup_gl_context)
-                for mesh in meshes:
-                    Mesh(fmt=ff, vertices=mesh[0], indices=mesh[1], mode='line_strip')
-                
-                self.cb = Callback(None)
-
-            with self.pointermesh:
-
-                self.cb = Callback(None)
-                #PushMatrix()
-                m = list(self.pointer.objects.values())[0]
-                self.mesh = Mesh(
-                    vertices=m.vertices,
-                    indices=m.indices,
-                    fmt=m.vertex_format,
-                    mode='triangles',
-                )
-                #PopMatrix()
-                self.cb = Callback(None)
-            
-            #axis
-            with self.axisxmesh:
-                self.cb = Callback(None)
-                #PushMatrix()
-                m = list(self.axis_obj.objects.values())[0]
-                self.mesh = Mesh(
-                    vertices=m.vertices,
-                    indices=m.indices,
-                    fmt=m.vertex_format,
-                    mode='triangles',
-                )
-                #PopMatrix()
-                self.cb = Callback(None)
-            with self.axisymesh:
-                self.cb = Callback(None)
-                #PushMatrix()
-                m = list(self.axis_obj.objects.values())[0]
-                self.mesh = Mesh(
-                    vertices=m.vertices,
-                    indices=m.indices,
-                    fmt=m.vertex_format,
-                    mode='triangles',
-                )
-                #PopMatrix()
-                self.cb = Callback(None)
-            with self.axiszmesh:
-                self.cb = Callback(None)
-                #PushMatrix()
-                m = list(self.axis_obj.objects.values())[0]
-                self.mesh = Mesh(
-                    vertices=m.vertices,
-                    indices=m.indices,
-                    fmt=m.vertex_format,
-                    mode='triangles',
-                )
-                #PopMatrix()
-                self.cb = Callback(self.reset_gl_context)
-        #move to center
-        self.linemesh['center_the_cube'] = Matrix().translate(-vert_center[0],-vert_center[1],-vert_center[2])
-
-
-        #rendering line meshes
-        #self.linemesh['my_view'] = view#self.m_viewMatrix
-        self.linemesh['display_count'] = -1.0
-        #0 means display all thing
-        self.linemesh['vertex_type_display'] = 0.0
-
-        #rendering pointer
-        #self.pointermesh['modelview_mat'] = view#self.m_viewMatrix
-        self.pointermesh['diffuse_light'] = (0.2, 0.0, 0.8)
-        self.pointermesh['ambient_light'] = (0.1, 0.3, 0.1)
-        self.pointermesh['offset'] = (-vert_center[0],-vert_center[1],-vert_center[2])
-        self.lines_center = vert_center
-
-        self.update_proj()
-        self.update_view()
-        self._scene_dirty = True
-        #print(self.size)
-        #init for arccamera
-
     def update_proj(self):
-        asp = self.size[0] / self.size[1] 
+        asp = self.size[0] / max(self.size[1], 1.0)
         proj = Matrix()
         zoomidx = self.m_zoom
-        #proj.perspective(45,aspect,.1,100)
-        proj.view_clip((-0.5 + self.m_xPan) * asp * zoomidx, (0.5 + self.m_xPan) * asp * zoomidx, (-0.5 + self.m_yPan)*zoomidx, (0.5 + self.m_yPan)*zoomidx, 2, self.m_distance * 2,1)
-        self.linemesh['my_proj'] = proj
-        self.pointermesh['projection_mat'] = proj
-        self.axisxmesh['projection_mat'] = proj
-        self.axisymesh['projection_mat'] = proj
-        self.axiszmesh['projection_mat'] = proj
+        persp = 0 if self._ortho_projection else 1
+        proj.view_clip(
+            (-0.5 + self.m_xPan) * asp * zoomidx,
+            (0.5 + self.m_xPan) * asp * zoomidx,
+            (-0.5 + self.m_yPan) * zoomidx,
+            (0.5 + self.m_yPan) * zoomidx,
+            PROJ_NEAR,
+            self.m_distance * 2,
+            persp,
+        )
+        self._proj_matrix = proj
+        self.linemesh["proj_mat"] = proj
+        self.gridmesh["proj_mat"] = proj
+        self._update_grid_uniforms()
+        self.pointermesh["projection_mat"] = proj
+        self.axisxmesh["projection_mat"] = proj
+        self.axisymesh["projection_mat"] = proj
+        self.axiszmesh["projection_mat"] = proj
 
     def update_view(self):
-        #self.m_viewMatrix = Matrix()
         r = self.m_distance
         angY = -M_PI / 180.0 * self.m_yRot
         angX = M_PI / 180.0 * self.m_xRot
 
-        eye = (r * math.cos(angX) * math.sin(angY) + self.m_xLookAt, r * math.cos(angX) * math.cos(angY) + self.m_yLookAt, r * math.sin(angX) + self.m_zLookAt)
-        
-        center = (self.m_xLookAt, self.m_yLookAt, self.m_zLookAt)
-        up = (-math.sin(angY + (M_PI if self.m_xRot < 0 else 0)) if abs(self.m_xRot) == 90 else 0, 
-            -math.cos(angY + (M_PI if self.m_xRot < 0 else 0)) if abs(self.m_xRot) == 90 else 0,
-            math.cos(angX))
-        up = normalize(up)
-        self.m_viewMatrix=Matrix().look_at(eye[0],eye[1],eye[2], center[0],center[1],center[2],up[0],up[1],up[2])
+        eye = (
+            r * math.cos(angX) * math.sin(angY) + self.m_xLookAt,
+            r * math.cos(angX) * math.cos(angY) + self.m_yLookAt,
+            r * math.sin(angX) + self.m_zLookAt,
+        )
 
-        #self.m_viewMatrix = self.m_viewMatrix.translate(self.m_xLookAt, self.m_yLookAt, self.m_zLookAt)
-        #self.m_viewMatrix = self.m_viewMatrix.scale(self.m_zoom, self.m_zoom, self.m_zoom)
-        #self.m_viewMatrix = self.m_viewMatrix.translate(-self.m_xLookAt, -self.m_yLookAt, -self.m_zLookAt)
-        #self.m_viewMatrix = self.m_viewMatrix.rotate(-90, 1.0, 0.0, 0.0)
+        center = (self.m_xLookAt, self.m_yLookAt, self.m_zLookAt)
+        up = (
+            -math.sin(angY + (M_PI if self.m_xRot < 0 else 0)) if abs(self.m_xRot) == 90 else 0,
+            -math.cos(angY + (M_PI if self.m_xRot < 0 else 0)) if abs(self.m_xRot) == 90 else 0,
+            math.cos(angX),
+        )
+        up = normalize(up)
+        self.m_viewMatrix = Matrix().look_at(
+            eye[0], eye[1], eye[2], center[0], center[1], center[2], up[0], up[1], up[2]
+        )
+        self._update_grid_uniforms()
+        self._update_view_cube_uniforms()
 
     def setup_gl_context(self, *args):
-        glViewport(self.pos[0]+self.off_x,self.pos[1]+self.off_y,self.size[0],self.size[1])
+        glViewport(self.pos[0] + self.off_x, self.pos[1] + self.off_y, self.size[0], self.size[1])
         glEnable(GL_DEPTH_TEST)
-        #glDisable(GL_CULL_FACE)
-        pass
+
     def reset_gl_context(self, *args):
         glDisable(GL_DEPTH_TEST)
-        #glEnable(GL_CULL_FACE)
-        glViewport(0,0,Window.size[0],Window.size[1])
+        glViewport(0, 0, Window.size[0], Window.size[1])
         pass
 
-    #get total segment count
+    # get total segment count
     def get_total_seg_count(self):
         return self.total_line_count
 
-    #get max distance
+    # get max distance
     def get_total_distance(self):
-        return self.lengths[len(self.lengths)-1]
+        if not self.lengths:
+            return 0.0
+        return self.lengths[-1]
 
-    #set display offset
-    def set_display_offset(self,offx,offy):
+    # set display offset
+    def set_display_offset(self, offx, offy):
         self.off_x = offx
         self.off_y = offy
         self._scene_dirty = True
 
-    #set displaying limit
+    # set displaying limit
     def set_pos_by_distance(self, distance):
         if distance > self.get_total_distance():
             print("distance is out of bounds")
@@ -1908,7 +1257,9 @@ class GCodeViewer(Widget):
             line_index = binary_find_left(self.lengths, cur_display_distance)
             line_ratio = 0.0
             if line_index < len(self.lengths) - 1 and self.lengths[line_index + 1] > self.lengths[line_index]:
-                line_ratio = (cur_display_distance - self.lengths[line_index]) / (self.lengths[line_index + 1] - self.lengths[line_index])
+                line_ratio = (cur_display_distance - self.lengths[line_index]) / (
+                    self.lengths[line_index + 1] - self.lengths[line_index]
+                )
             self.cur_line_index = line_index + line_ratio
         # Trigger frame callback to update line highlighting
         if self.frame_callback is not None:
@@ -1924,7 +1275,8 @@ class GCodeViewer(Widget):
         """Apply worker result on main thread."""
         self.line_times = line_times if line_times else []
         self.total_time = self.line_times[-1] if self.line_times else 0.0
-        self._report_time_estimate_progress('done', 100)
+        self._invalidate_legend_durations()
+        self._report_time_estimate_progress("done", 100)
 
     def _compute_line_times_async(self):
         """
@@ -1934,12 +1286,12 @@ class GCodeViewer(Widget):
         """
         self.line_times = []
         self.total_time = 0.0
+        self._invalidate_legend_durations()
         n = len(self.raw_linenumbers) if self.raw_linenumbers else 0
         if n < 2 or not self.raw_positions or len(self.raw_positions) < n * 3:
             return
         if not self.raw_feed_rates or len(self.raw_feed_rates) < n:
             return
-        # Copy data for worker (avoid mutation during thread)
         raw_positions = list(self.raw_positions)
         raw_linenumbers = list(self.raw_linenumbers)
         raw_feed_rates = list(self.raw_feed_rates)
@@ -1951,11 +1303,11 @@ class GCodeViewer(Widget):
 
         def worker():
             line_times = _compute_line_times_worker(
-                raw_positions, raw_linenumbers, raw_feed_rates,
-                lambda pct: report('progress', pct), PROGRESS_INTERVAL)
+                raw_positions, raw_linenumbers, raw_feed_rates, lambda pct: report("progress", pct), PROGRESS_INTERVAL
+            )
             Clock.schedule_once(lambda dt: viewer._apply_line_times_result(line_times), 0)
 
-        report('start', 0)
+        report("start", 0)
         threading.Thread(target=worker, daemon=True).start()
 
     def _compute_line_times(self):
@@ -1966,15 +1318,16 @@ class GCodeViewer(Widget):
         """
         self.line_times = []
         self.total_time = 0.0
+        self._invalidate_legend_durations()
         n = len(self.raw_linenumbers) if self.raw_linenumbers else 0
         if n < 2 or not self.raw_positions or len(self.raw_positions) < n * 3:
             return
         if not self.raw_feed_rates or len(self.raw_feed_rates) < n:
             return
-        result = _compute_line_times_worker(
-            self.raw_positions, self.raw_linenumbers, self.raw_feed_rates, None, 0)
+        result = _compute_line_times_worker(self.raw_positions, self.raw_linenumbers, self.raw_feed_rates, None, 0)
         self.line_times = result
         self.total_time = self.line_times[-1] if self.line_times else 0.0
+        self._invalidate_legend_durations()
 
     def get_elapsed_time_by_distance(self, distance):
         """
@@ -2016,22 +1369,109 @@ class GCodeViewer(Widget):
             return None
         return max(0.0, self.total_time - elapsed)
 
-    #根据line number 返回实际距离
-    def get_distance_by_lineidx(self,lineidx,ratio):
+    def _invalidate_legend_durations(self):
+        self.legend_durations_cache = None
+
+    def _compute_all_legend_durations(self):
+        """Return a dict of color_scheme -> {(kind, key): seconds}."""
+        n = len(self.line_times)
+        feeds = self.raw_feed_rates or []
+        tools = self.raw_tools or []
+        positions = self.positions or []
+
+        feed_min = float(getattr(self, "feed_min", 0.0) or 0.0)
+        feed_max = float(getattr(self, "feed_max", 0.0) or 0.0)
+        if feed_max <= feed_min:
+            feed_max = feed_min + 1.0
+
+        z_min_mm = float(getattr(self, "z_min_mm", 0.0) or 0.0)
+        z_max_mm = float(getattr(self, "z_max_mm", 0.0) or 0.0)
+        if z_max_mm <= z_min_mm:
+            z_max_mm = z_min_mm + 1.0
+
+        by_scheme = {
+            COLOR_SCHEME_BY_TYPE: {},
+            COLOR_SCHEME_BY_TOOL: {},
+            COLOR_SCHEME_BY_SPEED: {},
+            COLOR_SCHEME_BY_Z: {},
+        }
+
+        def add(scheme, kind, key, duration):
+            if duration <= 0.0:
+                return
+            entry_key = (kind, key)
+            bucket = by_scheme[scheme]
+            bucket[entry_key] = bucket.get(entry_key, 0.0) + duration
+
+        for i in range(1, n):
+            duration = float(self.line_times[i]) - float(self.line_times[i - 1])
+            if duration <= 0.0:
+                continue
+
+            feed = 0.0
+            if i < len(feeds):
+                try:
+                    feed = float(feeds[i])
+                except (TypeError, ValueError):
+                    feed = 0.0
+            is_rapid = feed < 0.5
+
+            tool = int(tools[i]) if i < len(tools) else -1
+            add(COLOR_SCHEME_BY_TOOL, "tool", tool, duration)
+
+            if is_rapid:
+                add(COLOR_SCHEME_BY_TYPE, "rapid", "rapid", duration)
+                add(COLOR_SCHEME_BY_SPEED, "rapid", "rapid", duration)
+            else:
+                add(COLOR_SCHEME_BY_TYPE, "feed", "feed", duration)
+                add(
+                    COLOR_SCHEME_BY_SPEED,
+                    "speed_bucket",
+                    _speed_bucket_index(feed, feed_min, feed_max),
+                    duration,
+                )
+                z_mm = 0.0
+                if len(positions) >= 3 * (i + 1):
+                    z_mm = float(positions[3 * i + 2])
+                add(
+                    COLOR_SCHEME_BY_Z,
+                    "z_bucket",
+                    _z_bucket_index(z_mm, z_min_mm, z_max_mm),
+                    duration,
+                )
+
+        return by_scheme
+
+    def get_legend_durations(self, color_scheme=None):
+        """
+        Return cached segment-duration totals for one color-scheme legend (dict of (kind, key) -> seconds).
+        If line_times are unavailable (eg high-precision estimate disabled / not finished / empty), returns None.
+        """
+        if not self.line_times or len(self.line_times) < 2:
+            return None
+
+        if self.legend_durations_cache is None:
+            self.legend_durations_cache = self._compute_all_legend_durations()
+
+        if color_scheme is None:
+            color_scheme = self.color_scheme
+        return self.legend_durations_cache.get(color_scheme, {})
+
+    def get_distance_by_lineidx(self, lineidx, ratio):
         # Validate that we have the necessary data
         if not self.raw_linenumbers or not self.lengths:
             return None
 
-        left_pos = binary_find_left(self.raw_linenumbers,lineidx)
-        while(left_pos>0 and self.raw_linenumbers[left_pos-1] == lineidx):
+        left_pos = binary_find_left(self.raw_linenumbers, lineidx)
+        while left_pos > 0 and self.raw_linenumbers[left_pos - 1] == lineidx:
             left_pos = left_pos - 1
 
         right_pos = left_pos
-        while (right_pos<len(self.raw_linenumbers)-1 and self.raw_linenumbers[right_pos+1] == lineidx):
+        while right_pos < len(self.raw_linenumbers) - 1 and self.raw_linenumbers[right_pos + 1] == lineidx:
             right_pos = right_pos + 1
-        #skip to next pos(lineidx+1)
+        # skip to next pos(lineidx+1)
         right_pos = right_pos + 1
-        
+
         # Ensure bounds are valid since not all lines are movements
         if left_pos >= len(self.lengths):
             left_pos = len(self.lengths) - 1
@@ -2041,31 +1481,30 @@ class GCodeViewer(Widget):
             left_pos = 0
         if right_pos < 0:
             right_pos = 0
-        
+
         # Ensure we have valid indices
         if left_pos >= len(self.lengths) or right_pos >= len(self.lengths):
             return None
-            
-        #start point
+
+        # start point
         start_distance = self.lengths[left_pos]
         end_distance = self.lengths[right_pos]
 
-        return start_distance*(1.0 - ratio) + end_distance * ratio
+        return start_distance * (1.0 - ratio) + end_distance * ratio
 
-    #根据line number 返回实际距离
-    def set_distance_by_lineidx(self,lineidx,ratio):
+    def set_distance_by_lineidx(self, lineidx, ratio):
         # Validate that we have the necessary data
         if not self.raw_linenumbers or not self.lengths:
             return
 
-        left_pos = binary_find_left(self.raw_linenumbers,lineidx)
-        while(left_pos>0 and self.raw_linenumbers[left_pos-1] == lineidx):
+        left_pos = binary_find_left(self.raw_linenumbers, lineidx)
+        while left_pos > 0 and self.raw_linenumbers[left_pos - 1] == lineidx:
             left_pos = left_pos - 1
 
         right_pos = left_pos
-        while(right_pos<len(self.raw_linenumbers)-1 and self.raw_linenumbers[right_pos+1] == lineidx):
+        while right_pos < len(self.raw_linenumbers) - 1 and self.raw_linenumbers[right_pos + 1] == lineidx:
             right_pos = right_pos + 1
-        #skip to next pos(lineidx+1)
+        # skip to next pos(lineidx+1)
         right_pos = right_pos + 1
 
         # Ensure bounds are valid since not all lines are movements
@@ -2077,106 +1516,188 @@ class GCodeViewer(Widget):
             left_pos = 0
         if right_pos < 0:
             right_pos = 0
-        
+
         # Ensure we have valid indices
         if left_pos >= len(self.lengths) or right_pos >= len(self.lengths):
             return
-            
-        #start point
+
+        # start point
         start_distance = self.lengths[left_pos]
         end_distance = self.lengths[right_pos]
 
-        cur_distance = start_distance*(1.0 - ratio) + end_distance*ratio
+        cur_distance = start_distance * (1.0 - ratio) + end_distance * ratio
         self.set_pos_by_distance(cur_distance)
 
-    #获得当前显示位置和行号
     def get_cur_pos_index(self):
         line_number = -1
-        
-        #print(f'cur_line_index:{self.cur_line_index},raw_linenumbers size:{len(self.raw_linenumbers)}')
+
         if self.cur_line_index < len(self.raw_linenumbers):
             line_number = self.raw_linenumbers[int(self.cur_line_index)]
-        
-        return [self.display_count,line_number]
 
-    #设置自动走刀路
-    def enable_dynamic_displaying(self,dynamic_display):
+        return [self.display_count, line_number]
+
+    def enable_dynamic_displaying(self, dynamic_display):
         self.dynamic_display = dynamic_display
         self._scene_dirty = True
 
-    #显示全部数据
     def show_all(self):
         self.dynamic_display = False
         self.display_count = self.get_total_distance()
         self._scene_dirty = True
 
-    #恢复默认视角
     def restore_default_view(self):
         self.m_xLookAt = 0
         self.m_yLookAt = 0
         self.m_zLookAt = 0
         self.m_xRot = 30
         self.m_yRot = 180
-        self.m_zoom = 1
+        self.m_zoom = self._default_zoom_for_projection()
+        self._clamp_zoom()
         self.m_xPan = 0
         self.m_yPan = 0
         self.update_proj()
         self.update_view()
         self._scene_dirty = True
 
-    #设置移动速度
-    def set_move_speed(self,mov_speed):
+    def set_move_speed(self, mov_speed):
         self.move_speed = mov_speed
 
-    #设置显示mask(float)最多支持5种类别
-    #1：显示第一类
-    #10:显示第二类
-    #11：显示第一类和第二类
-    def set_display_mask(self,mask_val):
-        #if(mask_val > 999999):
-        #    mask_val -= int(mask_val / 1000000) * 1000000
-        self.linemesh['vertex_type_display'] = mask_val
+    def reset_visibility_filters(self, used_tools=None):
+        """Show every path category; optionally seed the tool filter from used_tools."""
+        self.show_rapid = True
+        self.show_feed = True
+        self.speed_bucket_bits = VISIBILITY_ALL_BUCKET_BITS
+        self.z_bucket_bits = VISIBILITY_ALL_BUCKET_BITS
+        tools = []
+        if used_tools:
+            tools = sorted({int(t) for t in used_tools if int(t) >= 0})[:VISIBILITY_MAX_TOOLS]
+        self._tool_filter_ids = tools
+        self._tool_filter_bits = (1 << len(tools)) - 1 if tools else 0
+        self._apply_visibility_uniforms()
         self._scene_dirty = True
 
-    #repeat this function every 1/60 s
+    def set_visibility_filters(
+        self,
+        *,
+        show_rapid=None,
+        show_feed=None,
+        speed_bucket_bits=None,
+        z_bucket_bits=None,
+        tool_ids=None,
+        tool_bits=None,
+    ):
+        """Update path visibility uniforms. Omitted args keep their current value."""
+        if show_rapid is not None:
+            self.show_rapid = bool(show_rapid)
+        if show_feed is not None:
+            self.show_feed = bool(show_feed)
+        if speed_bucket_bits is not None:
+            self.speed_bucket_bits = int(speed_bucket_bits) & VISIBILITY_ALL_BUCKET_BITS
+        if z_bucket_bits is not None:
+            self.z_bucket_bits = int(z_bucket_bits) & VISIBILITY_ALL_BUCKET_BITS
+        if tool_ids is not None:
+            self._tool_filter_ids = [int(t) for t in tool_ids][:VISIBILITY_MAX_TOOLS]
+        if tool_bits is not None:
+            max_bits = (1 << max(len(self._tool_filter_ids), 1)) - 1 if self._tool_filter_ids else 0
+            self._tool_filter_bits = int(tool_bits) & max_bits if self._tool_filter_ids else 0
+        self._apply_visibility_uniforms()
+        self._scene_dirty = True
+
+    def _apply_visibility_uniforms(self):
+        mesh = self.linemesh
+        mesh["show_rapid"] = 1.0 if self.show_rapid else 0.0
+        mesh["show_feed"] = 1.0 if self.show_feed else 0.0
+        mesh["speed_bucket_bits"] = float(self.speed_bucket_bits)
+        mesh["z_bucket_bits"] = float(self.z_bucket_bits)
+
+        ids = list(self._tool_filter_ids)[:VISIBILITY_MAX_TOOLS]
+        packed = [0.0] * VISIBILITY_MAX_TOOLS
+        for i, tool_id in enumerate(ids):
+            packed[i] = float(tool_id)
+        mesh["tool_filter_count"] = float(len(ids))
+        mesh["tool_bits"] = float(self._tool_filter_bits if ids else 0)
+        mesh["tool_ids0"] = packed[0:4]
+        mesh["tool_ids1"] = packed[4:8]
+        mesh["tool_ids2"] = packed[8:12]
+        mesh["tool_ids3"] = packed[12:16]
+        mesh["tool_ids4"] = packed[16:20]
+        mesh["tool_ids5"] = packed[20:24]
+
+    def _apply_color_scheme_uniform(self):
+        self.linemesh["color_scheme"] = float(self.color_scheme)
+
+    def _update_feed_range_uniforms(self):
+        feeds = [float(f) for f in (self.raw_feed_rates or []) if f and float(f) > 0.0]
+        if feeds:
+            self.feed_min = min(feeds)
+            self.feed_max = max(feeds)
+        else:
+            self.feed_min = 0.0
+            self.feed_max = DEFAULT_FEED_MM_MIN
+        if self.feed_max <= self.feed_min:
+            self.feed_max = self.feed_min + 1.0
+        self.linemesh["feed_min"] = float(self.feed_min)
+        self.linemesh["feed_max"] = float(self.feed_max)
+        self._update_z_range_uniforms()
+
+    def _update_z_range_uniforms(self):
+        """Height scheme: P5–P95 of feed-move Z (mm); shader uses Z * move_scale_by_positon."""
+        scale = float(getattr(self, "move_scale_by_positon", 1.0) or 1.0)
+        positions = getattr(self, "positions", None) or []
+        feeds = getattr(self, "raw_feed_rates", None) or []
+        self.z_min_mm, self.z_max_mm = _feed_z_height_range_mm(positions, feeds)
+
+        self.z_min = self.z_min_mm * scale
+        self.z_max = self.z_max_mm * scale
+        if self.z_max <= self.z_min:
+            self.z_max = self.z_min + max(scale, 1e-6)
+
+        self.linemesh["z_min"] = float(self.z_min)
+        self.linemesh["z_max"] = float(self.z_max)
+
+    def set_color_scheme(self, scheme):
+        """Set toolpath color scheme from UI label or internal id."""
+        if scheme in (COLOR_SCHEME_UI_BY_TOOL, "by_tool", COLOR_SCHEME_BY_TOOL):
+            self.color_scheme = COLOR_SCHEME_BY_TOOL
+        elif scheme in (COLOR_SCHEME_UI_BY_SPEED, "by_speed", COLOR_SCHEME_BY_SPEED):
+            self.color_scheme = COLOR_SCHEME_BY_SPEED
+        elif scheme in (COLOR_SCHEME_UI_BY_Z, "by_z", COLOR_SCHEME_BY_Z):
+            self.color_scheme = COLOR_SCHEME_BY_Z
+        else:
+            self.color_scheme = COLOR_SCHEME_BY_TYPE
+        self._apply_color_scheme_uniform()
+        self._scene_dirty = True
+
+    # repeat this function every 1/60 s
     def _on_frame_tick(self, _):
-
-        if self.lengths is None or len(self.lengths) <= 1:
-            #data is not loaded yet
-            return
-        
-        # Skip the entire frame when nothing has changed and playback is paused.
-        if not self.dynamic_display and not self._scene_dirty:
-            return
-
         # Recompute projection only when it is actually stale (resize / zoom / pan).
         if self._proj_dirty:
             self.update_proj()
             self._proj_dirty = False
 
+        if self.lengths is None or len(self.lengths) <= 1:
+            return
+
+        # Skip the entire frame when nothing has changed and playback is paused.
+        if not self.dynamic_display and not self._scene_dirty:
+            return
+
         if self.dynamic_display:
             self.add_dir = self.move_speed * self.move_scale * self.move_scale_by_positon
 
-            if (self.display_count >= self.get_total_distance()):
+            if self.display_count >= self.get_total_distance():
                 self.dynamic_display = False
             else:
                 self.display_count = self.display_count + self.add_dir
 
-            
+        self.linemesh["display_count"] = float(self.display_count)
 
-        #debug
-        #self.display_count = self.get_total_distance()
-
-        
-
-        self.linemesh['display_count'] = float(self.display_count)
-
-        #which segment we are located
+        # which segment we are located
         cur_display_distance = float(self.display_count)
-        line_index = binary_find_left(self.lengths,cur_display_distance)
+        line_index = binary_find_left(self.lengths, cur_display_distance)
         line_ratio = 0
-        if(line_index < len(self.lengths)-1):
-            segment_length = self.lengths[int(line_index)+1] - self.lengths[int(line_index)]
+        if line_index < len(self.lengths) - 1:
+            segment_length = self.lengths[int(line_index) + 1] - self.lengths[int(line_index)]
             if segment_length == 0:
                 if not self._cannot_visualise:
                     msg = "Gcode cannot be visualised due to parser error or gcode complexity.\n\nFeatures of the Controller that depend on visualisations have been disabled.\n\nFile playback can be attempted."
@@ -2187,128 +1708,114 @@ class GCodeViewer(Widget):
                 self.dynamic_display = False
                 return
             line_ratio = (cur_display_distance - self.lengths[int(line_index)]) / segment_length
-            
+
         line_index_withratio = line_index + line_ratio
 
         self.cur_line_index = line_index_withratio
 
-        #逐帧回调 - only when in dynamic display mode (playing)
-        if self.frame_callback is not None and self.dynamic_display:
-            [cur_distance,linenumber]= self.get_cur_pos_index()
-            self.frame_callback(cur_distance,linenumber)
-            #debug
-            # if(linenumber>100):
-            #     lines = []
-            #     with open('out2.txt','r') as file:
-            #         for line in file:
-            #             lines.append(line)
-            #     self.load(lines)
-            #     return
+        self._update_pointer_tool_mesh(int(line_index_withratio))
 
-        #print(self.vertex_types[line_index])
-        if(self.vertex_types[line_index] > 1.0):
+        # Per-frame callback during toolpath playback only
+        if self.frame_callback is not None and self.dynamic_display:
+            [cur_distance, linenumber] = self.get_cur_pos_index()
+            self.frame_callback(cur_distance, linenumber)
+
+        if self.vertex_types[line_index] > 1.0:
             self.move_scale = 2.0
         else:
             self.move_scale = 1.0
 
+        self.linemesh["rotation_mat"] = self._identity_mat
 
+        self.linemesh["view_mat"] = self.m_viewMatrix
+        self._update_grid_uniforms()
 
-        #print(view)
-        self.linemesh['my_rotation'] = self._identity_mat
-        
-        self.linemesh['my_view'] = self.m_viewMatrix#rotation_mat
-           
-        pointer_updated_pos = 3*int(line_index_withratio)
-        #print(pointer_updated_pos)
-        
-        #if(not self.is_4_axis):
-        self.pointermesh['rotation'] = self._identity_mat
-        #.rotate(-90, 1.0, 0.0, 0.0)
+        pointer_updated_pos = 3 * int(line_index_withratio)
+
+        self.pointermesh["rotation"] = self._identity_mat
         if pointer_updated_pos < len(self.positions):
             base_start = int(line_index_withratio)
             ratio = line_index_withratio - base_start
             offset = 0.0
-            # print(f"{pointer_updated_pos} / {len(self.positions)}\n")
 
-            #load func
-            #last_pos = [self.positions[pointer_updated_pos]-self.lines_center[0],self.positions[pointer_updated_pos+1]-self.lines_center[1],self.positions[pointer_updated_pos+2]-self.lines_center[2]]
-            #load_meshmanager func
-            last_pos = vec3_sub(self.meshmanager.get_vertex_position(int(line_index_withratio)),self.lines_center)
+            last_pos = vec3_sub(self.meshmanager.get_vertex_position(int(line_index_withratio)), self.lines_center)
 
-            if(self.is_4_axis):
-                last_angle = self.angles_of_vertices[int(pointer_updated_pos/3)]
-            
-            if(ratio>0.0 and pointer_updated_pos+5 < len(self.positions)):
-                #next_pos = [self.positions[pointer_updated_pos+3]-self.lines_center[0],self.positions[pointer_updated_pos+4]-self.lines_center[1],self.positions[pointer_updated_pos+5]-self.lines_center[2]]
-                # load_meshmanager func
-                next_pos = vec3_sub(self.meshmanager.get_vertex_position(int(line_index_withratio)+1),self.lines_center)
-                lerp_pos = [next_pos[0] * ratio + (1.0 - ratio)*last_pos[0],next_pos[1] * ratio + (1.0 - ratio)*last_pos[1],next_pos[2] * ratio + (1.0 - ratio)*last_pos[2]]
-                self.pointermesh['offset'] = lerp_pos
-                
-                #print(f'{lerp_pos[0]+self.lines_center[0]}')
-                #normal    
-                #calculate normal of pointer
-                if(self.is_4_axis):
-                    next_angle = self.angles_of_vertices[int(pointer_updated_pos/3)+1]
-                    lerp_angle = next_angle * ratio + (1.0 - ratio)*last_angle
-                    # lerp_angle = 0 - lerp_angle
-                    if(not self.rotate_line_or_knife):
-                        self.pointermesh['rotation'] = rotate_mat_by_x_axis_angle(lerp_angle)
+            if self.is_4_axis:
+                last_angle = self.angles_of_vertices[int(pointer_updated_pos / 3)]
+
+            if ratio > 0.0 and pointer_updated_pos + 5 < len(self.positions):
+                next_pos = vec3_sub(
+                    self.meshmanager.get_vertex_position(int(line_index_withratio) + 1), self.lines_center
+                )
+                lerp_pos = [
+                    next_pos[0] * ratio + (1.0 - ratio) * last_pos[0],
+                    next_pos[1] * ratio + (1.0 - ratio) * last_pos[1],
+                    next_pos[2] * ratio + (1.0 - ratio) * last_pos[2],
+                ]
+                self.pointermesh["offset"] = lerp_pos
+
+                if self.is_4_axis:
+                    next_angle = self.angles_of_vertices[int(pointer_updated_pos / 3) + 1]
+                    lerp_angle = next_angle * ratio + (1.0 - ratio) * last_angle
+                    if not self.rotate_line_or_knife:
+                        self.pointermesh["rotation"] = rotate_mat_by_x_axis_angle(lerp_angle)
                     else:
-                        #self.linemesh['my_view']=self.linemesh['my_view'].multiply(rotate_mat_by_x_axis_angle(-lerp_angle))
-                        self.linemesh['my_rotation'] = rotate_mat_by_x_axis_angle(-lerp_angle)
-                        len_to_center = len_2d([lerp_pos[1],lerp_pos[2]],[-self.lines_center[1],-self.lines_center[2]])
-                        #print(f'{len_to_center}')
-                        rot_point = self.linemesh['my_rotation'].transform_point(lerp_pos[0],lerp_pos[1],lerp_pos[2])
+                        self.linemesh["rotation_mat"] = rotate_mat_by_x_axis_angle(-lerp_angle)
+                        len_to_center = len_2d(
+                            [lerp_pos[1], lerp_pos[2]], [-self.lines_center[1], -self.lines_center[2]]
+                        )
+                        rot_point = self.linemesh["rotation_mat"].transform_point(lerp_pos[0], lerp_pos[1], lerp_pos[2])
 
-
-                        self.pointermesh['offset'] = rot_point#[x_offset-self.lines_center[0],y_offset-self.lines_center[1], z_offset-self.lines_center[2]]
+                        self.pointermesh["offset"] = rot_point
             else:
-                #wont enter here
-                #self.pointermesh['offset'] = last_pos
-                if(self.is_4_axis):
-                    if(not self.rotate_line_or_knife):
-                        self.pointermesh['rotation'] = rotate_mat_by_x_axis_angle(last_angle)
+                if self.is_4_axis:
+                    if not self.rotate_line_or_knife:
+                        self.pointermesh["rotation"] = rotate_mat_by_x_axis_angle(last_angle)
                     else:
-                        self.linemesh['my_view']=self.linemesh['my_view'].multiply(rotate_mat_by_x_axis_angle(-last_angle))
-                        
-                        len_to_center = len_3d(last_pos,[-self.lines_center[0],-self.lines_center[1],0])
-                        self.pointermesh['offset'] = [-self.lines_center[0],-self.lines_center[1],len_to_center -self.lines_center[2]]
+                        self.linemesh["view_mat"] = self.linemesh["view_mat"].multiply(
+                            rotate_mat_by_x_axis_angle(-last_angle)
+                        )
 
+                        len_to_center = len_3d(last_pos, [-self.lines_center[0], -self.lines_center[1], 0])
+                        self.pointermesh["offset"] = [
+                            -self.lines_center[0],
+                            -self.lines_center[1],
+                            len_to_center - self.lines_center[2],
+                        ]
 
-        
-        
-        self.pointermesh['modelview_mat'] = self.m_viewMatrix
+        self.pointermesh["modelview_mat"] = self.m_viewMatrix
 
-        #axis
-        axis_offset = (-self.lines_center[0],-self.lines_center[1],-self.lines_center[2])
-        self.axisxmesh['offset'] = axis_offset
-        self.axisxmesh['rotation'] = self._identity_mat
-        self.axisxmesh['diff_color'] = [0.0,1.0,0.0]
+        # axis
+        axis_offset = (-self.lines_center[0], -self.lines_center[1], -self.lines_center[2])
+        self.axisxmesh["offset"] = axis_offset
+        self.axisxmesh["rotation"] = self._identity_mat
+        self.axisxmesh["diff_color"] = AXIS_COLOR_Y
 
-        self.axisymesh['offset'] = axis_offset
-        self.axisymesh['rotation'] = self._axis_y_rot
-        self.axisymesh['diff_color'] = [0.0,0.0,1.0]
+        self.axisymesh["offset"] = axis_offset
+        self.axisymesh["rotation"] = self._axis_y_rot
+        self.axisymesh["diff_color"] = AXIS_COLOR_Z
 
-        self.axiszmesh['offset'] = axis_offset
-        self.axiszmesh['rotation'] = self._axis_z_rot
-        self.axiszmesh['diff_color'] = [1.0,0.0,0.0]
+        self.axiszmesh["offset"] = axis_offset
+        self.axiszmesh["rotation"] = self._axis_z_rot
+        self.axiszmesh["diff_color"] = AXIS_COLOR_X
 
-        self.axisxmesh['modelview_mat'] = self.m_viewMatrix
-        self.axisymesh['modelview_mat'] = self.m_viewMatrix
-        self.axiszmesh['modelview_mat'] = self.m_viewMatrix
+        self.axisxmesh["modelview_mat"] = self.m_viewMatrix
+        self.axisymesh["modelview_mat"] = self.m_viewMatrix
+        self.axiszmesh["modelview_mat"] = self.m_viewMatrix
 
-        self.g_old_curosr  = self.g_cursor
+        self.g_old_curosr = self.g_cursor
         self.g_wheel_data = 0
         self._scene_dirty = False
 
-    #mouse event
-    #     return super(GCodeViewer, self).on_touch_move(touch)
-    #     if self.collide_point(*touch.pos):
+    # mouse event
     #
     def on_touch_down(self, touch):
         if self.collide_point(*touch.pos):
             try:
+                if self._handle_view_cube_touch(touch):
+                    return True
+
+                touch.ud[TOUCH_CLAIMED] = True
                 touchpos = [touch.pos[0], self.size[1] - touch.pos[1]]
                 self.m_lastPos = touchpos.copy()
                 self.m_xLastRot = self.m_xRot
@@ -2316,11 +1823,11 @@ class GCodeViewer(Widget):
                 self.m_xLastPan = self.m_xPan
                 self.m_yLastPan = self.m_yPan
 
-                if 'button' in touch.profile:
+                if "button" in touch.profile:
                     if touch.is_mouse_scrolling:
-                        if touch.button == 'scrolldown':
+                        if touch.button == "scrolldown":
                             self.zoom_out()
-                        elif touch.button == 'scrollup':
+                        elif touch.button == "scrollup":
                             self.zoom_in()
 
                 self.update_proj()
@@ -2334,17 +1841,19 @@ class GCodeViewer(Widget):
                 print(sys.exc_info()[1])
 
     def on_touch_move(self, touch):
-        if self.collide_point(*touch.pos):
+        if touch.ud.get(TOUCH_CLAIMED) and self.collide_point(*touch.pos):
             try:
                 touchpos = [touch.pos[0], self.size[1] - touch.pos[1]]
 
-                if (not 'button' in touch.profile or touch.button == 'left'):
+                if not "button" in touch.profile or touch.button == "left":
                     if self.orbit:
                         self.m_yRot = normalize_angle(self.m_yLastRot - (touchpos[0] - self.m_lastPos[0]) * 0.5)
                         self.m_xRot = self.m_xLastRot + (touchpos[1] - self.m_lastPos[1]) * 0.5
 
-                        if (self.m_xRot < -90): self.m_xRot = -90.0
-                        if (self.m_xRot > 90): self.m_xRot = 90.0
+                        if self.m_xRot < -90:
+                            self.m_xRot = -90.0
+                        if self.m_xRot > 90:
+                            self.m_xRot = 90.0
 
                         self.update_view()
                     else:
@@ -2353,7 +1862,7 @@ class GCodeViewer(Widget):
 
                         self.update_proj()
 
-                elif ('button' in touch.profile and touch.button == 'right'):
+                elif "button" in touch.profile and touch.button == "right":
                     self.m_xPan = self.m_xLastPan - (touchpos[0] - self.m_lastPos[0]) * 1 / self.size[0]
                     self.m_yPan = self.m_yLastPan + (touchpos[1] - self.m_lastPos[1]) * 1 / self.size[1]
 
@@ -2365,28 +1874,109 @@ class GCodeViewer(Widget):
                 print(sys.exc_info()[1])
 
     def on_touch_up(self, touch):
-        if self.collide_point(*touch.pos):
+        if touch.ud.get(TOUCH_CLAIMED) and self.collide_point(*touch.pos):
             try:
                 self.g_old_curosr = self.g_cursor = [touch.pos[0], touch.pos[1]]
             except:
                 print(sys.exc_info()[1])
 
     def zoom_in(self):
-        if (self.m_zoom > 0.1):
+        lo, _ = self._zoom_bounds()
+        if self.m_zoom > lo:
             self.m_zoom /= ZOOMSTEP
             self.update_proj()
             self.update_view()
             self._scene_dirty = True
 
     def zoom_out(self):
-        if (self.m_zoom < 10):
+        _, hi = self._zoom_bounds()
+        if self.m_zoom < hi:
             self.m_zoom *= ZOOMSTEP
             self.update_proj()
             self.update_view()
             self._scene_dirty = True
 
-    def set_orbit(self, orbit = True):
+    def set_orbit(self, orbit=True):
         self.orbit = orbit
+
+    def set_grid_visible(self, visible=True):
+        visible = bool(visible)
+        if visible == self._grid_visible:
+            return
+        self._grid_visible = visible
+        Config.set("carvera", CONFIG_GRID_VISIBLE_KEY, "1" if visible else "0")
+        Config.write()
+        self._update_grid_uniforms()
+        self._scene_dirty = True
+
+    def is_grid_visible(self):
+        return self._grid_visible
+
+    def _ortho_zoom_factor(self):
+        """Ortho zoom is r/PROJ_NEAR larger than perspective for the same apparent
+        scale at the look-at distance; perspective factor is 1."""
+        if not self._ortho_projection:
+            return 1.0
+        r = max(self.m_distance, PROJ_NEAR + 1e-6)
+        return r / PROJ_NEAR
+
+    def _zoom_bounds(self):
+        """Zoom clamp scaled by the projection factor so the usable zoom range is
+        equivalent in ortho and perspective (raw MIN/MAX_ZOOM are perspective units)."""
+        factor = self._ortho_zoom_factor()
+        return MIN_ZOOM * factor, MAX_ZOOM * factor
+
+    def _clamp_zoom(self):
+        lo, hi = self._zoom_bounds()
+        self.m_zoom = max(lo, min(hi, self.m_zoom))
+
+    def _default_zoom_for_projection(self):
+        """DEFAULT_ZOOM adjusted for the active projection so resets keep the same
+        apparent scale as the perspective default (ortho needs r/PROJ_NEAR more zoom)."""
+        return DEFAULT_ZOOM * self._ortho_zoom_factor()
+
+    def _zoom_for_projection_switch(self, to_ortho):
+        """Match apparent scale at the look-at distance when toggling projection."""
+        r = max(self.m_distance, PROJ_NEAR + 1e-6)
+        if to_ortho:
+            return self.m_zoom * r / PROJ_NEAR
+        return self.m_zoom * PROJ_NEAR / r
+
+    def set_ortho_projection(self, ortho=True):
+        ortho = bool(ortho)
+        if ortho == self._ortho_projection:
+            return
+        self.m_zoom = self._zoom_for_projection_switch(ortho)
+        self._ortho_projection = ortho
+        self._clamp_zoom()
+        self.update_proj()
+        self._scene_dirty = True
+
+
+def _clamp01(value):
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return float(value)
+
+
+def _speed_bucket_index(feed, feed_min, feed_max):
+    """Match toolpath.glsl speed-bucket indexing (0..10)."""
+    feed_span = max(float(feed_max) - float(feed_min), 1.0)
+    feed_t = _clamp01((float(feed) - float(feed_min)) / feed_span)
+    bucket = int(math.floor(feed_t * 10.0 + 0.5))
+    return min(max(bucket, 0), VISIBILITY_BUCKET_COUNT - 1)
+
+
+def _z_bucket_index(z_mm, z_min_mm, z_max_mm):
+    """Match toolpath.glsl height-bucket indexing (0=high Z .. 10=low Z)."""
+    z_span = float(z_max_mm) - float(z_min_mm)
+    if z_span < 1e-6:
+        z_span = 1e-6
+    z_t = _clamp01((float(z_mm) - float(z_min_mm)) / z_span)
+    bucket = int(math.floor((1.0 - z_t) * 10.0 + 0.5))
+    return min(max(bucket, 0), VISIBILITY_BUCKET_COUNT - 1)
 
 
 def _compute_line_times_worker(raw_positions, raw_linenumbers, raw_feed_rates, progress_callback, progress_interval):
@@ -2429,110 +2019,39 @@ def _compute_line_times_worker(raw_positions, raw_linenumbers, raw_feed_rates, p
     return line_times
 
 
-#----------------test func----------------------
+if __name__ == "__main__":
 
-if __name__ == '__main__':
-    import re
     class MyApp(App):
         def build(self):
             viewer = GCodeViewer()
             viewer.set_play_over_callback(frame_call_back_test)
-            filename = 'parsernew/out_tap2.txt'
             lines = []
-            # with open(filename,'r') as file:
-            #     for line in file:
-            #         if(len(line.strip()) > 0):
-            #             lines.append(line)
-
-            # filename = 'parsernew/laser test.txt'
-            # lines = []
-            # with open(filename,'r') as file:
-            #     for line in file:
-            #         line = line.strip()
-            #         if(len(line) > 0):
-            #             line = line[1:-1] #remove ( and )
-            #             segs = line.split(',')
-            #             segs = [x.replace(',','').strip()  for x in segs]
-                        
-            #             color_str = 'Red' if segs[4] == 'True' else 'Green'
-            #             newline = f'X: {segs[0]} Y: {segs[1]} Z: {segs[2]} A: {segs[3]} Color: {color_str} Line: {segs[5]} Tool: 1'
-            #             lines.append(newline)
-
-
-
-            # viewer.load(lines)
-            # viewer.load_with_display(lines)
-            # viewer.show_all()
-
-            # with open("parsernew/out_tap2.txt") as file:
-            #     lines = []
-            #     for line in file:
-            #         lines.append(line)
-            # seg = 60000
-            # for i in range(len(lines) // seg + 1):
-            #     end = min((1 + i) * seg, len(lines))
-            #     print(f"{i * seg} -> {end}")
-            #     viewer.load_mesh_manager(lines[(i * seg):(i * seg + seg)])
-
-            # with open('parsernew/gcodes.txt',"r") as file:
-            #     content = file.read()[1:-2]
-            #     arraylines = content.split('\', \'')
-            #     for line in arraylines:
-            #         lines.append(line.replace("\'","").strip())
-
-            data_arr = []
-            with open('parsernew/gcodes(1).txt',"r") as file:
-            # with open('parsernew/laser.txt', "r") as file:
+            with open("parsernew/gcodes(1).txt") as file:
                 content = file.read()[2:-2]
-                arraylines = content.split('], [')
-                for line in arraylines:
-                    arr = line.split(',')
-                    linedata = [float(arr[0]),float(arr[1]),float(arr[2]),float(arr[3]),float(arr[4]),float(arr[5]),float(arr[6])]
-                    lines.append(linedata)
+                for line in content.split("], ["):
+                    arr = line.split(",")
+                    lines.append(
+                        [
+                            float(arr[0]),
+                            float(arr[1]),
+                            float(arr[2]),
+                            float(arr[3]),
+                            float(arr[4]),
+                            float(arr[5]),
+                            float(arr[6]),
+                        ]
+                    )
 
-            # with open('parsernew/laser_old.txt', "r") as file:
-            #     content = file.read()[2:-2]
-            #     arraylines = content.split('\', \'')
-            #
-            # viewer.load(arraylines)
-            # viewer.show_all()
-            # return viewer
-            # with open('parsernew/laser_old.txt', "r") as file:
-            #     content = file.read()[2:-2]
-            #     arraylines = content.split('\', \'')
-            #     for line in arraylines:
-            #         arr = re.split(":|\s",line)[2::3]
-            #         linedata = [float(arr[0]),float(arr[1]),float(arr[2]),float(arr[3]),0.0 if arr[4] == "Red" else 1.0,float(arr[5]),float(arr[6])]
-            #         lines.append(linedata)
-
-
-            # viewer.load(lines)
             get_elapsed("start")
-
-            #1.169662
-            # get_elapsed("start_once")
-            # viewer.load_array(lines)
-            # get_elapsed("loaded")
-
-            #4.619259
-            get_elapsed("start_multiple")
             step = 10000
-            for idx in range(1):
-                for i in range(len(lines)//step+1):
-                    start_idx = i * step
-                    end_idx = min((i+1)*step,len(lines))
-                    is_end = end_idx == len(lines)
-                    # print(f"{start_idx}-{end_idx} {is_end}")
-                    viewer.load_array(lines[start_idx:end_idx],is_end)
-                get_elapsed(f"loaded {idx}")
+            for i in range(len(lines) // step + 1):
+                start_idx = i * step
+                end_idx = min((i + 1) * step, len(lines))
+                viewer.load_array(lines[start_idx:end_idx], end_idx == len(lines))
+            get_elapsed("loaded")
 
-                viewer.set_distance_by_lineidx(1000,0.5)
-
-
-
-            # viewer.enable_dynamic_displaying(True)
+            viewer.set_distance_by_lineidx(1000, 0.5)
             viewer.show_all()
             return viewer
 
-    #load_data('data/raw_pts.txt')
     MyApp().run()

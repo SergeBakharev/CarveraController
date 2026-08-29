@@ -376,6 +376,8 @@
                                 tooltip_image: ''
                                 on_press: root.on_probeTip_probing_pressed("Anchor2")
                                 image: 'addons/probing/data/icons_1024x768/calibration/Calibrate_On_Anchor_2.png'
+                                opacity: 1 if app.has_anchor2 else 0
+                                disabled: not app.has_anchor2
                             ProbeButton:
                                 
                                 tooltip_txt: tr._('Calibrate probe tip using a known boss in the Y direction')
@@ -405,10 +407,10 @@
 
                             ProbeButton:
                                 
-                                tooltip_txt: 'Calibrate 4th Axis Center'
-                                tooltip_image: 'addons/probing/data/icons_1024x768/calibration/Calibrate_4th_Axis_Y_TT.png'
+                                tooltip_txt: 'Calibrate 4th Axis Center (M469.6)'
+                                tooltip_image: 'addons/probing/data/icons_1024x768/calibration/Calibrate_4th_Axis_M469.6_Front.png'
                                 on_press: root.on_callibration_probing_pressed("FourthY")
-                                image: 'addons/probing/data/icons_1024x768/calibration/Calibrate_4th_Axis_Y.png'
+                                image: 'addons/probing/data/icons_1024x768/calibration/Calibrate_4th_Axis_M469.6_Top.png'
                             ProbeButton:
                                 
                                 tooltip_txt: 'Calibrate 4th Axis Z offset'
@@ -428,6 +430,8 @@
                                 tooltip_image: ''
                                 on_press: root.on_callibration_probing_pressed("Anchor2")
                                 image: 'addons/probing/data/icons_1024x768/calibration/Calibrate_Anchor_2.png'
+                                opacity: 1 if app.has_anchor2 else 0
+                                disabled: not app.has_anchor2
 
                         BoxLayout:
                             size_hint_x: 0.6
@@ -489,7 +493,7 @@
                             size: self.size
                             radius: [self.height / 2,self.height / 2]
                     BoxLayout:
-                        disabled: not (app.state == 'Idle' or app.state == 'Run' or app.state == 'Pause') or (app.playing and app.state != 'Pause') or (app.state == 'Run' and app.root.allow_jogging_while_machine_running == '0')
+                        disabled: not app.jog_controls_enabled
                         padding: '0dp'
                         canvas.before:
                             Color:
@@ -503,8 +507,8 @@
                             GridBoxLayout:
                             GridBoxLayout:
                                 SmallRoundButton:
-                                    text: 'Y-'
-                                    on_press: app.root.controller.jog("Y-{}".format(step_xy.text))
+                                    text: 'Y+' if app.invert_y_axis_jogging else 'Y-'
+                                    on_press: app.root.controller.jog("Y{}{}".format('' if app.invert_y_axis_jogging else '-', step_xy.text))
                                     on_release: app.root.controller.stopContinuousJog()
                             GridBoxLayout:
                             GridBoxLayout:
@@ -519,7 +523,8 @@
                                     center: 0.5, 0.5
                                     size_hint_y: None
                                     height: '30dp'
-                                    text: '10'
+                                    text: app.jog_step_xy
+                                    on_text: app.jog_step_xy = self.text
                                     values: '10', '1', '0.1', '0.01', '0.005'
                                 Label:
                             GridBoxLayout:
@@ -530,18 +535,18 @@
                             GridBoxLayout:
                             GridBoxLayout:
                                 SmallRoundButton:
-                                    text: 'Y+'
-                                    on_press: app.root.controller.jog("Y{}".format(step_xy.text))
+                                    text: 'Y-' if app.invert_y_axis_jogging else 'Y+'
+                                    on_press: app.root.controller.jog("Y{}{}".format('-' if app.invert_y_axis_jogging else '', step_xy.text))
                                     on_release: app.root.controller.stopContinuousJog()
                             GridBoxLayout:
                 BoxLayout:
                     size_hint_x: 0.1
-                    disabled: not (app.state == 'Idle' or app.state == 'Run' or app.state == 'Pause') or (app.playing and app.state != 'Pause') or (app.state == 'Run' and app.root.allow_jogging_while_machine_running == '0')
+                    disabled: not app.jog_controls_enabled
                     padding: '0dp'
                     orientation: 'horizontal'
                 #A and Z controls
                 BoxLayout:
-                    disabled: not (app.state == 'Idle' or app.state == 'Run' or app.state == 'Pause') or (app.playing and app.state != 'Pause') or (app.state == 'Run' and app.root.allow_jogging_while_machine_running == '0')
+                    disabled: not app.jog_controls_enabled
                     padding: '0dp'
                     orientation: 'horizontal'
                     canvas.before:
@@ -574,7 +579,8 @@
                                 center: 0.5, 0.5
                                 size_hint_y: 0.9
                                 height: '30dp'
-                                text: '90'
+                                text: app.jog_step_a
+                                on_text: app.jog_step_a = self.text
                                 values: '90', '10', '1', '0.1'
                             Label:
                         GridBoxLayout:
@@ -584,7 +590,8 @@
                                 center: 0.5, 0.5
                                 size_hint_y: 0.9
                                 height: '30dp'
-                                text: '1'
+                                text: app.jog_step_z
+                                on_text: app.jog_step_z = self.text
                                 values: '10', '1', '0.1', '0.01', '0.005'
                             Label:
                         GridBoxLayout:
@@ -601,7 +608,7 @@
                                 on_release: app.root.controller.stopContinuousJog()
                 BoxLayout:
                     size_hint_x: 0.1
-                    disabled: not (app.state == 'Idle' or app.state == 'Run' or app.state == 'Pause') or (app.playing and app.state != 'Pause') or (app.state == 'Run' and app.root.allow_jogging_while_machine_running == '0')
+                    disabled: not app.jog_controls_enabled
                     padding: '0dp'
                     orientation: 'horizontal'
                 BoxLayout:
@@ -664,17 +671,14 @@
             Label:
                 size_hint_min_x: dp(90)
                 padding: '5dp'
-                halign: 'center'
+                halign: 'right'
                 valign: 'middle'
                 text_size: self.size
                 multiline: False
                 text: tr._('Note: Most of these operations require a true 3 axis probe, not the manual probe supplied with the Carvera. See the documentation for more info')
 
-            Button:
-                text: "More Info"
-                size_hint_x: None
-                width: dp(100)
-                on_release: root.open_probe_info_url()
+            HelpButton:
+                helpPath: "https://carvera-community.gitbook.io/docs/firmware/features/3d-probe-support"
         
         BoxLayout:
             spacing: '5dp'

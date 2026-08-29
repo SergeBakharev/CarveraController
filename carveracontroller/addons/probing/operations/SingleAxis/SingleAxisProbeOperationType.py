@@ -1,10 +1,14 @@
 from enum import Enum
-from carveracontroller.addons.probing.operations.SingleAxis.SingleAxisProbeOperationXAxis import \
-    SingleAxisProbeOperationXAxis
-from carveracontroller.addons.probing.operations.SingleAxis.SingleAxisProbeOperationYAxis import \
-    SingleAxisProbeOperationYAxis
-from carveracontroller.addons.probing.operations.SingleAxis.SingleAxisProbeOperationZAxis import \
-    SingleAxisProbeOperationZAxis
+
+from carveracontroller.addons.probing.operations.SingleAxis.SingleAxisProbeOperationXAxis import (
+    SingleAxisProbeOperationXAxis,
+)
+from carveracontroller.addons.probing.operations.SingleAxis.SingleAxisProbeOperationYAxis import (
+    SingleAxisProbeOperationYAxis,
+)
+from carveracontroller.addons.probing.operations.SingleAxis.SingleAxisProbeOperationZAxis import (
+    SingleAxisProbeOperationZAxis,
+)
 
 
 class SingleAxisProbeOperationType(Enum):

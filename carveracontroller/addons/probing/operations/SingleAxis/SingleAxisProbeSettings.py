@@ -4,8 +4,9 @@ from kivy.uix.textinput import TextInput
 
 from carveracontroller.addons.probing.operations.ConfigUtils import ConfigUtils
 from carveracontroller.addons.probing.operations.OperationsBase import ProbeSettingDefinition
-from carveracontroller.addons.probing.operations.SingleAxis.SingleAxisProbeParameterDefinitions import \
-    SingleAxisProbeParameterDefinitions
+from carveracontroller.addons.probing.operations.SingleAxis.SingleAxisProbeParameterDefinitions import (
+    SingleAxisProbeParameterDefinitions,
+)
 
 
 class SingleAxisProbeSettings(BoxLayout):
@@ -15,7 +16,7 @@ class SingleAxisProbeSettings(BoxLayout):
     def __init__(self, **kwargs):
         self.config = ConfigUtils.load_config(self.config_filename)
         self.config = self.order_config(self.config)
-        super(SingleAxisProbeSettings, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
     def setting_changed(self, key: str, value: float):
         param = getattr(SingleAxisProbeParameterDefinitions, key, None)
