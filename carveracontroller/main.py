@@ -274,7 +274,13 @@ from .GcodeViewer import (
     GCodeViewer,
 )
 from .ui import widget_helpers
-from .ui.PlayProgressBar import play_percent_from_line, tool_change_markers_to_percents
+from .ui.PlayProgressBar import (
+    next_tool_change_after_line,
+    play_percent_from_line,
+    seconds_from_start,
+    seconds_until_target,
+    tool_change_markers_to_percents,
+)
 from .ui.popups.adv_calibrate import AdvCalibratePopup
 from .ui.popups.set_position import (
     ChangeToolPopup,
@@ -3397,6 +3403,8 @@ class Makera(RelativeLayout):
 
         self._load_gcode_highlight_settings()
         self._load_playbar_tool_change_marker_settings()
+        if self.wpb_play:
+            self.wpb_play.marker_tooltip_provider = self._playbar_tool_change_tooltip
 
         # blink timer
         Clock.schedule_interval(self.blink_state, 0.5)
@@ -3937,6 +3945,8 @@ class Makera(RelativeLayout):
         self.status_index = self.status_index + 1
         if self.status_index >= 6:
             self.status_index = 0
+        if self._progress_smooth_clock is not None:
+            self._update_progress_smooth(0)
 
     # -----------------------------------------------------------------------
     def check_model_metadata(self, *args):
@@ -6065,12 +6075,91 @@ class Makera(RelativeLayout):
             self.progressFinish()
             # Legend row durations become available once line_times are applied.
             self.refresh_gcode_color_legend()
+            self._refresh_idle_progress_info()
 
     # --------------------------------------------------------------`---------
     _PROGRESS_TIMER_PAUSED_STATES = frozenset({"Hold", "Pause", "Wait", "Tool"})
 
     def _current_remaining_sec(self):
         return max(0.0, self._remaining_anchor_sec - (time.time() - self._remaining_anchor_time))
+
+    def _seconds_until_line(self, line_no, live_remaining=None):
+        """Seconds until a line: from start when idle, from the playhead when running."""
+        if line_no is None or not self.selected_file_line_count:
+            return None
+        remaining_at = self.gcode_viewer.get_remaining_time_by_lineidx
+        total_time = self.gcode_viewer.total_time or 0.0
+        percent_target = play_percent_from_line(line_no, self.selected_file_line_count)
+        if live_remaining is None:
+            return seconds_from_start(
+                gcode_remaining_target=remaining_at(line_no, 0.0),
+                total_time=total_time,
+                percent_target=percent_target,
+            )
+        current_line = self.played_lines or 1
+        return seconds_until_target(
+            gcode_remaining_now=remaining_at(current_line, 0.5),
+            gcode_remaining_target=remaining_at(line_no, 0.0),
+            live_remaining=live_remaining,
+            percent_now=self.wpb_play.value,
+            percent_target=percent_target,
+        )
+
+    def _tool_change_display_name(self, label):
+        if label == "L":
+            return tr._("Laser")
+        if label == "P":
+            return tr._("Probe")
+        if label == "3DP":
+            return tr._("3D Probe")
+        return label
+
+    def _playbar_tool_change_tooltip(self, label, line_no):
+        app = App.get_running_app()
+        playing = bool(app and app.playing)
+        if playing and app.state in self._PROGRESS_TIMER_PAUSED_STATES:
+            live_remaining = max(0.0, self._remaining_anchor_sec)
+        elif playing:
+            live_remaining = self._current_remaining_sec()
+        else:
+            live_remaining = None
+        seconds = self._seconds_until_line(line_no, live_remaining)
+        tool_name = self._tool_change_display_name(label)
+        if seconds is None:
+            return tr._("Tool change to {}").format(tool_name)
+        if playing and seconds <= 0:
+            return tr._("Tool change to {} passed").format(tool_name)
+        return tr._("Tool change to {} in {}").format(tool_name, Utils.second2hour(int(seconds)))
+
+    def _format_file_progress_info(self, *, playing, remaining_sec=None):
+        """Progress-bar text while a file is selected, playing or idle."""
+        app = App.get_running_app()
+        path = (app.selected_remote_filename or app.selected_local_filename) if app else ""
+        filename = os.path.basename(path) if path else ""
+        if not playing:
+            duration_sec = self.gcode_viewer.total_time or 0.0
+            if duration_sec <= 0:
+                return f" {filename}" if filename else ""
+            return f" {filename} ({Utils.second2hour(int(duration_sec))} {tr._('estimated')})"
+        remaining = remaining_sec if remaining_sec is not None else 0.0
+        time_phrase = "{} to go".format(Utils.second2hour(int(remaining)))
+        next_change = next_tool_change_after_line(self.tool_change_markers, self.played_lines)
+        if next_change is not None and self.status_index % 2 == 1:
+            next_line, next_label = next_change
+            until_sec = self._seconds_until_line(next_line, remaining)
+            if until_sec is not None:
+                time_phrase = tr._("{} until {}").format(Utils.second2hour(int(until_sec)), next_label)
+        return (
+            f" {filename} ( {self.played_lines}/{self.selected_file_line_count} - {int(self.wpb_play.value)}%,"
+            f" {Utils.second2hour(int(CNC.vars.get('playedseconds', 0) or 0))} {tr._('elapsed')}, {time_phrase} )"
+        )
+
+    def _refresh_idle_progress_info(self):
+        app = App.get_running_app()
+        if app is None or app.playing:
+            return
+        if app.selected_remote_filename or app.selected_local_filename:
+            self.progress_info = self._format_file_progress_info(playing=False)
 
     def _update_progress_smooth(self, dt):
         """Refresh elapsed/remaining display every second while playing."""
@@ -6084,9 +6173,9 @@ class Makera(RelativeLayout):
         ):
             # While held/paused/disconnected, leave the last progress_info unchanged so both timers freeze.
             return
-        remaining_display = self._current_remaining_sec()
-        filename = os.path.basename(app.selected_remote_filename or app.selected_local_filename)
-        self.progress_info = f" {filename} ( {self.played_lines}/{self.selected_file_line_count} - {int(self.wpb_play.value)}%, {Utils.second2hour(CNC.vars['playedseconds'])} elapsed, {Utils.second2hour(int(remaining_display))} to go )"
+        self.progress_info = self._format_file_progress_info(
+            playing=True, remaining_sec=self._current_remaining_sec()
+        )
 
     # --------------------------------------------------------------`---------
     def updateCompressProgress(self, value):
@@ -6527,7 +6616,6 @@ class Makera(RelativeLayout):
                 self.wpb_zprobe.value = 0
                 self.wpb_leveling.value = 0
                 self.wpb_play.value = 0
-                self.progress_info = ""
                 # Stop smooth progress updates
                 if self._progress_smooth_clock is not None:
                     self._progress_smooth_clock.cancel()
@@ -6536,11 +6624,8 @@ class Makera(RelativeLayout):
                 last_job_elapsed = ""
                 if CNC.vars["playedseconds"] > 0:
                     last_job_elapsed = " ( {} elapsed )".format(Utils.second2hour(CNC.vars["playedseconds"]))
-                # show file name on progress bar area
-                if app.selected_remote_filename != "":
-                    self.progress_info = " " + app.selected_remote_filename + last_job_elapsed
-                elif app.selected_local_filename != "":
-                    self.progress_info = " " + app.selected_local_filename + last_job_elapsed
+                if app.selected_remote_filename or app.selected_local_filename:
+                    self.progress_info = self._format_file_progress_info(playing=False)
                 else:
                     self.progress_info = tr._(" No Remote File Selected") + last_job_elapsed
             else:

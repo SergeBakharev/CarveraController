@@ -1,4 +1,7 @@
 [unreleased]
+- Enhancement: Tool-change flags have tooltip showing time until the change
+- Enhancement: Remaining time text alternates with time until the next tool change and playback completion
+- Enhancement: Selected files show estimated run time on the playback bar before the job starts
 - Enhancement: Intellisense-like popups explaining commands in lines selected in the gcode viewer and MDI terminal
 - Enhancement: Support for connect to the Makera Z1 over USB
 - Enhancement: The step size is now synchronized between the main screen and the Probing screen
