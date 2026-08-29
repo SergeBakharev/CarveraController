@@ -137,6 +137,14 @@ _kivy_widget._widget_destructor = _safe_widget_destructor
 
 from carveracontroller.addons.cam import CamMetadata, extract_cam_metadata
 from carveracontroller.addons.facing.FacingWizardPopup import FacingWizardPopup
+from carveracontroller.addons.beds.catalog import is_known_machine
+from carveracontroller.addons.beds.store import (
+    get_bed,
+    load_store,
+    resolve_mesh_path,
+    selected_id,
+)
+from carveracontroller.addons.beds.ui.BedSettingsPopup import BedSettingsPopup
 from carveracontroller.addons.pendant import (
     SUPPORTED_PENDANTS,
     OverrideController,
@@ -3369,6 +3377,7 @@ class Makera(RelativeLayout):
         self.cmm_workbench_popup = None
         self.facing_popup = FacingWizardPopup()
         self.stock_settings_popup = StockSettingsPopup()
+        self.bed_settings_popup = BedSettingsPopup()
         self.adv_calibrate_popup = AdvCalibratePopup()
         self.wcs_settings_popup = WCSSettingsPopup(self.controller, self.wcs_names)
         self.set_rotation_popup = SetRotationPopup(self.controller, self.cnc)
@@ -3402,6 +3411,8 @@ class Makera(RelativeLayout):
         self.float_layout.tool_bar.show_grid = self.gcode_viewer.is_grid_visible()
         self.gcode_viewer.bind(stock_visible=self._on_viewer_stock_visible)
         self._on_viewer_stock_visible(self.gcode_viewer, self.gcode_viewer.stock_visible)
+        self.gcode_viewer.bind(bed_visible=self._on_viewer_bed_visible)
+        self._on_viewer_bed_visible(self.gcode_viewer, self.gcode_viewer.bed_visible)
         self.path_hidden_tools = set()
 
         # init camera live view
@@ -3762,6 +3773,42 @@ class Makera(RelativeLayout):
         popup.rotary_mode = bool(App.get_running_app().has_4axis)
         popup.has_off_axis_y = bool(App.get_running_app().has_off_axis_y)
         popup.open()
+
+    def open_bed_settings_popup(self):
+        self._pre_modal_keyboard_jog = self.keyboard_jog_control
+        self.toggle_keyboard_jog_control(True)
+        self.bed_settings_popup.open()
+
+    def apply_bed_settings(self) -> bool:
+        """Push the saved bed for the current machine into the 3D viewer."""
+        if self.gcode_viewer is None:
+            return False
+        app = App.get_running_app()
+        model = (getattr(app, "model", "") or "").strip() if app is not None else ""
+        file_loaded = bool(app is not None and (app.selected_remote_filename or app.selected_local_filename))
+        connected = app is not None and app.state != NOT_CONNECTED and is_known_machine(model)
+        if not file_loaded or not connected:
+            return bool(self.gcode_viewer.set_bed(None, visible=False))
+        store = load_store()
+        bed = get_bed(store, model, selected_id(store, model))
+        if bed is None:
+            return bool(self.gcode_viewer.set_bed(None, visible=False))
+        path = resolve_mesh_path(bed)
+        if path is None:
+            self.show_message_popup(tr._("Bed mesh is missing."), False)
+            self.gcode_viewer.set_bed(None, visible=False)
+            return False
+        ok = bool(
+            self.gcode_viewer.set_bed(
+                path,
+                mcs_xyz=(bed["mcs_x"], bed["mcs_y"], bed["mcs_z"]),
+                material=bed["material"],
+                visible=True,
+            )
+        )
+        if not ok:
+            self.show_message_popup(tr._("Could not load the bed mesh."), False)
+        return ok
 
     def apply_stock_settings(self, settings: dict) -> bool:
         """Push stock settings from the popup into the 3D viewer.
@@ -5248,6 +5295,7 @@ class Makera(RelativeLayout):
             app.selected_remote_filename = ""
             self._last_loaded_file_key = None
             self._selected_file_machine_key = current_key
+            self.apply_bed_settings()
         self.updateStatus()
 
     def _get_current_machine_connection_key(self):
@@ -5571,6 +5619,8 @@ class Makera(RelativeLayout):
                     self.config_loading = False
 
             Clock.schedule_once(_reload_machine_config, 0.1)
+        if model_changed:
+            self.apply_bed_settings()
 
     # -----------------------------------------------------------------------
     def downloadCallback(self, remote_path, packet_size, success_count, error_count):
@@ -5604,6 +5654,7 @@ class Makera(RelativeLayout):
         app = App.get_running_app()
         app.selected_local_filename = ""
         app.selected_remote_filename = ""
+        self.apply_bed_settings()
 
     # -----------------------------------------------------------------------
     def startLoadWiFi(self, button):
@@ -6430,6 +6481,8 @@ class Makera(RelativeLayout):
                     self.camera_checked = False
                     self.camera_probe += 1  # discard the result of a probe still in flight
                     self.camera_stream.stop()
+                    if self.gcode_viewer is not None:
+                        self.gcode_viewer.set_bed(None, visible=False)
                     self.controller.is_community_firmware = False
                     self.machine_metadata_query_time = 0
 
@@ -6734,6 +6787,9 @@ class Makera(RelativeLayout):
                 self.coord_system_data_view.main_text = coord_system_name
             self.coord_system_data_view.minr_text = coord_system_name
             self.coord_system_data_view.scale = 80.0 if abs(rotation_angle) > 0.01 else 100.0
+
+            if self.gcode_viewer is not None and self.gcode_viewer.bed_visible:
+                self.gcode_viewer.update_bed_wcs()
 
             # Update WCS Settings popup if it's open
             if hasattr(self, "wcs_settings_popup") and self.wcs_settings_popup.parent:
@@ -8001,6 +8057,12 @@ class Makera(RelativeLayout):
         if tool_bar is not None:
             tool_bar.show_stock = bool(visible)
 
+    def _on_viewer_bed_visible(self, _instance, visible):
+        """Keep the Bed toolbar button highlight in sync with viewer visibility."""
+        tool_bar = getattr(getattr(self, "float_layout", None), "tool_bar", None)
+        if tool_bar is not None:
+            tool_bar.show_bed = bool(visible)
+
     # -----------------------------------------------------------------------
     def gcode_play_call_back(self, distance, line_number):
         if not self.loading_file:
@@ -8314,6 +8376,7 @@ class Makera(RelativeLayout):
             origin=origin,
             show_stock=self._should_auto_show_header_stock(metadata.stock),
         )
+        self.apply_bed_settings()
         self.coord_popup.load_config()
 
         self.file_popup.dismiss()

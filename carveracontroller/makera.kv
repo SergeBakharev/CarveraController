@@ -24,6 +24,7 @@
 #:include addons/cmm_workbench/ui/CMMWorkbenchPopup.kv
 #:include addons/facing/FacingWizardPopup.kv
 #:include addons/stock/ui/StockSettingsPopup.kv
+#:include addons/beds/ui/BedSettingsPopup.kv
 #:include addons/camera/CameraControls.kv
 
 <Label>:
@@ -4421,6 +4422,7 @@
                                 show_grid: True
                                 ortho_projection: False
                                 show_stock: False
+                                show_bed: False
                                 size_hint: None, None
                                 width: self.minimum_width
                                 height: dp(48) if app.show_gcode_ctl_bar else 0
@@ -4491,6 +4493,14 @@
                                     active: tool_bar.show_stock
                                     disabled: (app.selected_remote_filename == '' and app.selected_local_filename == '')
                                     on_release: root.open_stock_settings_popup()
+                                GcodeViewerToolBarButton:
+                                    width: '50dp'
+                                    valign: 'middle'
+                                    text: 'Bed'
+                                    tooltip_txt: tr._('Bed')
+                                    active: tool_bar.show_bed
+                                    disabled: (app.selected_remote_filename == '' and app.selected_local_filename == '') or app.state == 'N/A' or app.model not in ['C1', 'CA1', 'Z1']
+                                    on_release: root.open_bed_settings_popup()
 
                             BoxLayout:
                                 id: gcode_ctl_bar
