@@ -1,4 +1,5 @@
 """Based on the example https://github.com/mp-007/kivy_matplotlib_widget/tree/main/examples/example_live_data"""
+
 from __future__ import annotations
 
 import copy

@@ -4,11 +4,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from kivy.factory import Factory
+from kivy.metrics import dp
+from kivy.properties import BooleanProperty, NumericProperty, StringProperty
+from kivy.uix.boxlayout import BoxLayout
+
 from carveracontroller.translation import tr
 
 GRAPH_METRIC_NONE = "none"
 GRAPH_METRIC_DEFAULT_LINE1 = "temp"
 GRAPH_METRIC_DEFAULT_LINE2 = "spindle_power"
+GRAPH_DEFAULT_TIME_RANGE = 300
+GRAPH_DEFAULT_GRANULARITY = 1.0
+GRAPH_TIME_RANGES = (30, 60, 300, 900)
+GRAPH_GRANULARITIES = (0.2, 1, 5, 30)
 
 
 @dataclass(frozen=True)
@@ -60,3 +69,73 @@ def graph_metric_ylim(key: str, samples: list[float] | tuple[float, ...] | None 
         ymin = min(ymin, min(samples))
         ymax = max(ymax, max(samples))
     return ymin, ymax
+
+
+def graph_number_label(value: float | int) -> str:
+    number = float(value)
+    if number.is_integer():
+        return str(int(number))
+    return str(number)
+
+
+def graph_number_choices(values: tuple[float, ...] | list[float]) -> list[str]:
+    return [graph_number_label(value) for value in values]
+
+
+def graph_number_from_label(label: str, allowed: tuple[float, ...] | list[float]) -> float | None:
+    try:
+        parsed = float(label)
+    except (TypeError, ValueError):
+        return None
+    for option in allowed:
+        if abs(float(option) - parsed) < 1e-9:
+            return float(option)
+    return None
+
+
+class GraphControls(BoxLayout):
+    """Top-right graph overlay. Width stays 250dp so opening only grows down."""
+
+    adjust_open = BooleanProperty(False)
+    line1_metric = StringProperty("")
+    line2_metric = StringProperty("")
+    time_range = NumericProperty(GRAPH_DEFAULT_TIME_RANGE)
+    granularity = NumericProperty(GRAPH_DEFAULT_GRANULARITY)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(size=self._reanchor)
+
+    def on_parent(self, _instance, parent):
+        if parent is not None:
+            parent.bind(pos=self._reanchor, size=self._reanchor)
+        self._reanchor()
+
+    def _reanchor(self, *_args):
+        parent = self.parent
+        if parent is None:
+            return
+        self.right = parent.right
+        self.top = parent.top
+
+    def collide_point(self, x, y):
+        if not super().collide_point(x, y):
+            return False
+        if self.adjust_open:
+            return True
+        return x >= self.right - dp(25)
+
+    def on_touch_down(self, touch):
+        if not self.collide_point(*touch.pos):
+            return False
+        for child in self.children[:]:
+            # Collapsed settings still layout their spinners; skip them so the
+            # gear click is not stolen by the hidden Granularity dropdown.
+            if not self.adjust_open and not getattr(child, "visible", True):
+                continue
+            if child.dispatch("on_touch_down", touch):
+                return True
+        return self.adjust_open
+
+
+Factory.register("GraphControls", cls=GraphControls)

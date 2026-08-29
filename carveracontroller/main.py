@@ -293,12 +293,18 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from .ui.graph_controls import (
+from .ui.graph_controls import (  # noqa: F401  – GraphControls registers with Kivy Factory
+    GRAPH_DEFAULT_GRANULARITY,
+    GRAPH_DEFAULT_TIME_RANGE,
+    GRAPH_GRANULARITIES,
     GRAPH_METRIC_DEFAULT_LINE1,
     GRAPH_METRIC_DEFAULT_LINE2,
     GRAPH_METRICS_BY_KEY,
+    GRAPH_TIME_RANGES,
+    GraphControls,
     graph_metric_key_from_label,
     graph_metric_ylim,
+    graph_number_from_label,
 )
 from .ui.graph_widget_twinx import StaticMatplotFigureTwinx  # noqa: F401  – registers widget with Kivy Factory
 
@@ -3134,6 +3140,8 @@ class Makera(RelativeLayout):
     graph_pane_open = BooleanProperty(False)
     graph_line1_metric = StringProperty(GRAPH_METRIC_DEFAULT_LINE1)
     graph_line2_metric = StringProperty(GRAPH_METRIC_DEFAULT_LINE2)
+    graph_time_range = NumericProperty(GRAPH_DEFAULT_TIME_RANGE)
+    graph_granularity = NumericProperty(GRAPH_DEFAULT_GRANULARITY)
 
     probing_popup = ObjectProperty()
     coord_config = {}
@@ -3380,11 +3388,9 @@ class Makera(RelativeLayout):
         Clock.schedule_once(lambda dt: self._update_dock_toggle_buttons(), 0)
 
         # init graph chart
-        self._graph_samples = {
-            key: deque(maxlen=Makera._GRAPH_WINDOW) for key, metric in GRAPH_METRICS_BY_KEY.items() if metric.cnc_var
-        }
+        self._graph_samples = self._make_graph_samples()
         self._init_graph_chart()
-        Clock.schedule_interval(lambda dt: self._update_graph_chart(), 1.0)
+        self._graph_clock = Clock.schedule_interval(self._update_graph_chart, self.graph_granularity)
         Clock.schedule_once(lambda dt: self._render_graph_chart(), 0)
 
         # init settings
@@ -6164,9 +6170,32 @@ class Makera(RelativeLayout):
                 Clock.schedule_once(lambda dt: callback(), 0.1)
 
     # -----------------------------------------------------------------------
-    _GRAPH_WINDOW = 300  # seconds / points shown at once
     _GRAPH_LINE1_COLOR = "#ff6b35"
     _GRAPH_LINE2_COLOR = "#4ec9b0"
+
+    def _graph_sample_count(self):
+        gran = float(self.graph_granularity) or 1.0
+        return max(1, round(float(self.graph_time_range) / gran))
+
+    def _make_graph_samples(self, previous=None):
+        maxlen = self._graph_sample_count()
+        samples = {}
+        for key, metric in GRAPH_METRICS_BY_KEY.items():
+            if not metric.cnc_var:
+                continue
+            old = list(previous[key]) if previous and key in previous else []
+            samples[key] = deque(old[-maxlen:], maxlen=maxlen)
+        return samples
+
+    def _apply_graph_window(self, keep_samples=True):
+        self._graph_samples = self._make_graph_samples(self._graph_samples if keep_samples else None)
+        if self.graph_chart is not None:
+            self.graph_chart.xmin = -self.graph_time_range
+        clock = getattr(self, "_graph_clock", None)
+        if clock is not None:
+            clock.cancel()
+        self._graph_clock = Clock.schedule_interval(self._update_graph_chart, self.graph_granularity)
+        self._render_graph_chart()
 
     def _init_graph_chart(self):
         fs = dp(8) * 1.2
@@ -6189,7 +6218,7 @@ class Makera(RelativeLayout):
             ax.spines["top"].set_visible(False)
 
         self.graph_chart.figure = fig
-        self.graph_chart.xmin = -self._GRAPH_WINDOW
+        self.graph_chart.xmin = -self.graph_time_range
         self.graph_chart.xmax = 0
         self._style_graph_axes()
         self._render_graph_chart()
@@ -6226,6 +6255,24 @@ class Makera(RelativeLayout):
         self._style_graph_axes()
         self._render_graph_chart()
 
+    def set_graph_setting(self, setting, label):
+        if setting in ("line1", "line2"):
+            self.set_graph_line_metric(1 if setting == "line1" else 2, label)
+            return
+        if setting == "time_range":
+            value = graph_number_from_label(label, GRAPH_TIME_RANGES)
+            if value is None or abs(value - self.graph_time_range) < 1e-9:
+                return
+            self.graph_time_range = value
+            self._apply_graph_window()
+            return
+        if setting == "granularity":
+            value = graph_number_from_label(label, GRAPH_GRANULARITIES)
+            if value is None or abs(value - self.graph_granularity) < 1e-9:
+                return
+            self.graph_granularity = value
+            self._apply_graph_window(keep_samples=False)
+
     # -----------------------------------------------------------------------
     def _close_graph_controls(self):
         controls = self.ids.get("graph_controls")
@@ -6243,7 +6290,7 @@ class Makera(RelativeLayout):
             return 0.0
 
     # -----------------------------------------------------------------------
-    def _update_graph_chart(self):
+    def _update_graph_chart(self, *_args):
         for key, metric in GRAPH_METRICS_BY_KEY.items():
             if metric.cnc_var:
                 self._graph_samples[key].append(self._cnc_float(metric.cnc_var))
@@ -6255,7 +6302,9 @@ class Makera(RelativeLayout):
         if self.graph_chart is None or getattr(self, "_graph_line1", None) is None:
             return
         n = max((len(samples) for samples in self._graph_samples.values()), default=0)
-        times = list(range(-(n - 1), 1)) if n else []
+        gran = float(self.graph_granularity)
+        times = [-(n - 1 - i) * gran for i in range(n)] if n else []
+        self.graph_chart.xmin = -self.graph_time_range
         self._render_graph_line(self._graph_line1, self.graph_line1_metric, times, "ymin", "ymax")
         self._render_graph_line(self._graph_line2, self.graph_line2_metric, times, "ymin2", "ymax2")
         self.graph_chart.home()
