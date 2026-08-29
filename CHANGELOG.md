@@ -1,14 +1,16 @@
 [unreleased]
 - Enhancement: Intellisense-like popups explaining commands in lines selected in the gcode viewer and MDI terminal
 - Enhancement: Support for connect to the Makera Z1 over USB
-- Enhancement: The step size is now synchronized between the main screen and the Probing screen
 - Enhancement: Add Auto Blow, Auto Bed Clean, and Ionizer toggles to the Config and Run screen on Z1
 - Enhancement: Add Z1 bed background
 - Enhancement: Machine bed background images in the config-n-run preview screen now filtered to show images that match the machine model connected
 - Change: Hide Auto Vacuum on the Config and Run screen when the machine is not a C1
 - Change: Config and Run preview now uses now uses the configured worksize_x/y for the bed size
-- Fixed: Y+/Y- jogging buttons on the Probing screen respect the configured Y axis inversion setting
 - Fixed: Harden the gcode parser against "zero length" movement, and prevent division by zero in play slider
+
+[2.2.0-RC3]
+- Enhancement: The step size is now synchronized between the main screen and the Probing screen
+- Fixed: Y+/Y- jogging buttons on the Probing screen respect the configured Y axis inversion setting
 
 [2.2.0-RC2]
 - Enhancement: Adds "Allow Jogging When Spindle or Laser Is On" option (disabled by default). "Allow Jogging When Machine Running" will now be enabled by default. Existing configs that already allowed jogging while the machine is running also enable the new spindle/laser option.
