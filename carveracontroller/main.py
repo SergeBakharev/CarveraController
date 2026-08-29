@@ -6142,7 +6142,7 @@ class Makera(RelativeLayout):
                 return f" {filename}" if filename else ""
             return f" {filename} ({Utils.second2hour(int(duration_sec))} {tr._('estimated')})"
         remaining = remaining_sec if remaining_sec is not None else 0.0
-        time_phrase = "{} to go".format(Utils.second2hour(int(remaining)))
+        time_phrase = f"{Utils.second2hour(int(remaining))} to go"
         next_change = next_tool_change_after_line(self.tool_change_markers, self.played_lines)
         if next_change is not None and self.status_index % 2 == 1:
             next_line, next_label = next_change
@@ -6173,9 +6173,7 @@ class Makera(RelativeLayout):
         ):
             # While held/paused/disconnected, leave the last progress_info unchanged so both timers freeze.
             return
-        self.progress_info = self._format_file_progress_info(
-            playing=True, remaining_sec=self._current_remaining_sec()
-        )
+        self.progress_info = self._format_file_progress_info(playing=True, remaining_sec=self._current_remaining_sec())
 
     # --------------------------------------------------------------`---------
     def updateCompressProgress(self, value):
