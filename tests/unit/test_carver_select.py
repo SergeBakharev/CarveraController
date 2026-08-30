@@ -7,6 +7,7 @@ from carveracontroller.addons.stock.simulator.carver_select import (
     BACKEND_HEIGHTMAP,
     BACKEND_VOXEL,
     MODE_AUTO,
+    MODE_CYLINDRICAL,
     MODE_HEIGHTMAP,
     MODE_VOXEL,
     normalize_carver_mode,
@@ -137,8 +138,54 @@ def test_auto_4axis_cylindrical():
         tool_table={1: _flat_tool()},
     )
     assert rec.has_4axis
+    assert not rec.has_off_axis_y
     assert rec.backend == BACKEND_CYLINDRICAL
     assert BACKEND_HEIGHTMAP not in rec.allowed
+
+
+def test_auto_4axis_off_axis_y_voxels():
+    rec = recommend_carver(
+        mode=MODE_AUTO,
+        has_4axis=True,
+        has_off_axis_y=True,
+        tool_table={1: _flat_tool()},
+    )
+    assert rec.has_off_axis_y
+    assert rec.backend == BACKEND_VOXEL
+    assert BACKEND_CYLINDRICAL in rec.allowed
+    assert BACKEND_HEIGHTMAP not in rec.allowed
+
+
+def test_auto_3axis_off_axis_y_still_heightmap():
+    rec = recommend_carver(
+        mode=MODE_AUTO,
+        has_4axis=False,
+        has_off_axis_y=True,
+        tool_table={1: _flat_tool()},
+    )
+    assert rec.backend == BACKEND_HEIGHTMAP
+
+
+def test_undercut_wins_over_wrapping():
+    rec = recommend_carver(
+        mode=MODE_AUTO,
+        has_4axis=True,
+        has_off_axis_y=False,
+        tool_table={1: _lollipop()},
+    )
+    assert rec.has_undercut
+    assert rec.backend == BACKEND_VOXEL
+
+
+def test_cylindrical_override_on_index_job():
+    rec = recommend_carver(
+        mode=MODE_CYLINDRICAL,
+        has_4axis=True,
+        has_off_axis_y=True,
+        tool_table={1: _flat_tool()},
+    )
+    assert rec.recommended == BACKEND_VOXEL
+    assert rec.backend == BACKEND_CYLINDRICAL
 
 
 def test_thread_mill_recommends_heightmap():

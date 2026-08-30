@@ -3752,6 +3752,7 @@ class Makera(RelativeLayout):
         self.toggle_keyboard_jog_control(True)
         popup = self.stock_settings_popup
         popup.rotary_mode = bool(App.get_running_app().has_4axis)
+        popup.has_off_axis_y = bool(App.get_running_app().has_off_axis_y)
         popup.open()
 
     def apply_stock_settings(self, settings: dict) -> bool:
@@ -8206,6 +8207,7 @@ class Makera(RelativeLayout):
             self._last_loaded_file_key = current_file_key
 
         app.has_4axis = self.cnc.has_4axis
+        app.has_off_axis_y = bool(self.cnc.has_off_axis_y)
         if app.has_4axis:
             self.coord_popup.set_config("leveling", "active", False)
             self.coord_popup.set_config("origin", "anchor", 3)
@@ -8222,6 +8224,7 @@ class Makera(RelativeLayout):
         popup = getattr(self, "stock_settings_popup", None)
         if popup is not None:
             popup.rotary_mode = bool(app.has_4axis)
+            popup.has_off_axis_y = bool(app.has_off_axis_y)
         metadata = getattr(self, "cam_metadata", None) or CamMetadata.empty()
         self._reset_stock_settings(
             shape=shape,
@@ -8615,6 +8618,7 @@ class MakeraApp(App):
     spindle_or_laser_is_on = BooleanProperty(False)
     jog_controls_enabled = BooleanProperty(False)
     has_4axis = BooleanProperty(False)
+    has_off_axis_y = BooleanProperty(False)
     has_atc = BooleanProperty(False)
     has_anchor2 = BooleanProperty(True)
     lasering = BooleanProperty(False)

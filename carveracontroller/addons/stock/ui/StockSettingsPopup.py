@@ -246,6 +246,7 @@ class StockSettingsPopup(ModalView):
     simulation_available = BooleanProperty(True)
     simulation_hint = StringProperty("")
     rotary_mode = BooleanProperty(False)
+    has_off_axis_y = BooleanProperty(False)
 
     def __init__(self, **kwargs):
         self._corner_pairs = None
@@ -263,6 +264,7 @@ class StockSettingsPopup(ModalView):
         self.bind(on_open=self._on_open, on_dismiss=self._on_dismiss)
         self.bind(simulation_available=self._schedule_fit_popup_height)
         self.bind(rotary_mode=self._on_rotary_mode)
+        self.bind(has_off_axis_y=self._on_off_axis_y)
         self.simulation_hint = tr._("Cut simulation needs tool geometry from CAM comments in the loaded G-code file.")
         self._ensure_lists()
         self._populate_spinner_choices()
@@ -301,6 +303,7 @@ class StockSettingsPopup(ModalView):
         return recommend_carver(
             mode=mode,
             has_4axis=bool(self.rotary_mode),
+            has_off_axis_y=bool(getattr(self, "has_off_axis_y", False)),
             tool_table=tool_table,
             tool_unit_scale=scale,
         )
@@ -476,6 +479,10 @@ class StockSettingsPopup(ModalView):
         if "spn_shape" in getattr(self, "ids", {}):
             self._update_dimension_field_visibility()
             self._populate_spinner_choices()
+        self._refresh_carver_spinner_options()
+        self._refresh_resolution_spinner_labels()
+
+    def _on_off_axis_y(self, *_args) -> None:
         self._refresh_carver_spinner_options()
         self._refresh_resolution_spinner_labels()
 

@@ -1,4 +1,4 @@
-"""Recommend a stock carver backend from 3/4-axis and tool profiles."""
+"""Recommend a stock carver backend from 3/4-axis, wrapping vs index, and tool profiles."""
 
 from __future__ import annotations
 
@@ -46,6 +46,7 @@ class CarverRecommendation:
     recommended: str
     has_4axis: bool
     has_undercut: bool
+    has_off_axis_y: bool
 
 
 def normalize_carver_mode(value: Any) -> str:
@@ -131,11 +132,11 @@ def _allowed_backends(has_4axis: bool) -> frozenset[str]:
     return frozenset({BACKEND_HEIGHTMAP, BACKEND_VOXEL})
 
 
-def _auto_backend(has_4axis: bool, has_undercut: bool) -> str:
+def _auto_backend(has_4axis: bool, has_undercut: bool, has_off_axis_y: bool = False) -> str:
     if has_undercut:
         return BACKEND_VOXEL
     if has_4axis:
-        return BACKEND_CYLINDRICAL
+        return BACKEND_VOXEL if has_off_axis_y else BACKEND_CYLINDRICAL
     return BACKEND_HEIGHTMAP
 
 
@@ -143,15 +144,17 @@ def recommend_carver(
     *,
     mode: str = MODE_AUTO,
     has_4axis: bool = False,
+    has_off_axis_y: bool = False,
     tool_table: dict | None = None,
     tool_unit_scale: float = 1.0,
 ) -> CarverRecommendation:
-    """Pick backend + allowed overrides from the file's 4-axis flag and tools."""
+    """Pick backend + allowed overrides from 4-axis, wrapping vs index, and tools."""
     mode = normalize_carver_mode(mode)
     rotary = bool(has_4axis)
+    off_axis = bool(has_off_axis_y)
     has_undercut = tool_table_has_undercut(tool_table, tool_unit_scale)
     allowed = _allowed_backends(rotary)
-    recommended = _auto_backend(rotary, has_undercut)
+    recommended = _auto_backend(rotary, has_undercut, off_axis)
 
     if mode == MODE_AUTO:
         backend = recommended
@@ -170,4 +173,5 @@ def recommend_carver(
         recommended=recommended,
         has_4axis=rotary,
         has_undercut=has_undercut,
+        has_off_axis_y=off_axis,
     )

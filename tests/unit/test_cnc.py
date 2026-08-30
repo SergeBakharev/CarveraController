@@ -70,3 +70,93 @@ class TestLaserModalS:
         off = by_x[5.0]
         assert off[4] == 0
         assert off[8] == 0.0
+
+
+def _parse_lines(cnc, lines):
+    for i, line in enumerate(lines, 1):
+        cnc.parseLine(line, i)
+
+
+class TestOffAxisYCounts:
+    def test_wrapping_g1_xa_at_y0_is_on_axis(self):
+        cnc = CNC()
+        _parse_lines(
+            cnc,
+            [
+                "G90 G21",
+                "G0 X0 Y0 Z5",
+                "G1 Z1 F200",
+                "G1 X10 A90",
+                "G1 X20 A180",
+                "G1 X30 A270",
+            ],
+        )
+        assert cnc.has_4axis
+        assert cnc.feed_move_count >= 3
+        assert cnc.off_axis_y_count == 0
+        assert not cnc.has_off_axis_y
+
+    def test_g0_y_is_ignored(self):
+        cnc = CNC()
+        _parse_lines(
+            cnc,
+            [
+                "G90 G21",
+                "G0 X0 Y0 Z5 A0",
+                "G0 Y50",
+                "G0 Y0",
+                "G1 X10 A90 F200",
+            ],
+        )
+        assert cnc.has_4axis
+        assert cnc.feed_move_count >= 1
+        assert cnc.off_axis_y_count == 0
+
+    def test_index_xy_after_a_counts_off_axis(self):
+        cnc = CNC()
+        _parse_lines(
+            cnc,
+            [
+                "G90 G21",
+                "G0 X0 Y0 Z5 A0",
+                "G1 A90 F200",
+                "G1 X10 Y20",
+                "G1 X0 Y0",
+            ],
+        )
+        assert cnc.has_4axis
+        assert cnc.feed_move_count >= 2
+        assert cnc.off_axis_y_count >= 1
+        assert cnc.has_off_axis_y
+
+    def test_three_axis_y_does_not_count(self):
+        cnc = CNC()
+        _parse_lines(
+            cnc,
+            [
+                "G90 G21",
+                "G0 X0 Y0 Z5",
+                "G1 X10 Y20 F200",
+            ],
+        )
+        assert not cnc.has_4axis
+        assert cnc.feed_move_count == 0
+        assert cnc.off_axis_y_count == 0
+        assert not cnc.has_off_axis_y
+
+
+def test_has_off_axis_y_ignores_outliers():
+    cnc = CNC()
+    cnc.feed_move_count = 100
+    cnc.off_axis_y_count = 0
+    assert not cnc.has_off_axis_y
+    cnc.off_axis_y_count = 5
+    assert not cnc.has_off_axis_y
+    cnc.off_axis_y_count = 6
+    assert cnc.has_off_axis_y
+    cnc.feed_move_count = 95
+    cnc.off_axis_y_count = 4
+    assert not cnc.has_off_axis_y
+    cnc.feed_move_count = 50
+    cnc.off_axis_y_count = 25
+    assert cnc.has_off_axis_y

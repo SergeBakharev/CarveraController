@@ -2413,6 +2413,7 @@ class GCodeViewer(Widget):
         # tool_unit_scale only (not move_scale_by_positon): carving is mm WCS.
         app = App.get_running_app()
         has_4axis = bool(app is not None and getattr(app, "has_4axis", False))
+        has_off_axis_y = bool(app is not None and getattr(app, "has_off_axis_y", False))
         self._stock_simulator.set_toolpath(
             self.raw_positions,
             self.vertex_types,
@@ -2421,6 +2422,7 @@ class GCodeViewer(Widget):
             tool_scale=float(self.tool_unit_scale or 1.0),
             angles=self.angles_of_vertices,
             has_4axis=has_4axis,
+            has_off_axis_y=has_off_axis_y,
             speeds=self.raw_spindle_speeds,
         )
 

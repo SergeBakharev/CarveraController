@@ -174,6 +174,15 @@ def test_carver_spinner_filters_incompatible_modes():
     assert MODE_CYLINDRICAL in {val for lab, val in popup._carver_mode_pairs if lab in labels}
     assert MODE_VOXEL in {val for lab, val in popup._carver_mode_pairs if lab in labels}
 
+    popup.has_off_axis_y = True
+    spinner.text = ""
+    popup._refresh_carver_spinner_options()
+    labels = list(spinner.values)
+    assert "Auto (voxels)" in labels
+    assert spinner.text == "Auto (voxels)"
+    assert any("Cylindrical" in lab for lab in labels)
+    assert not any("Heightmap" in lab for lab in labels)
+
 
 def test_reset_for_loaded_file_preserves_cylindrical_shape():
     popup = StockSettingsPopup.__new__(StockSettingsPopup)

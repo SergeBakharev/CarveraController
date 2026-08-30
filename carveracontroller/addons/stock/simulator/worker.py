@@ -453,6 +453,7 @@ class StockSimulator:
         self._tool_table: dict | None = None
         self._tool_scale: float = 1.0
         self._has_4axis: bool = False
+        self._has_off_axis_y: bool = False
         # When False, carve/checkpoint continue but mesh callbacks are skipped.
         self._mesh_updates_enabled = True
         # Viewer enables this only while paused so bake can fill checkpoints.
@@ -544,6 +545,7 @@ class StockSimulator:
         rec = recommend_carver(
             mode=self._carver_mode,
             has_4axis=self._has_4axis,
+            has_off_axis_y=self._has_off_axis_y,
             tool_table=self._tool_table,
             tool_unit_scale=self._tool_scale,
         )
@@ -720,6 +722,7 @@ class StockSimulator:
         tool_scale: float = 1.0,
         angles: list[float] | None = None,
         has_4axis: bool = False,
+        has_off_axis_y: bool = False,
         speeds: list[float] | None = None,
     ) -> None:
         """Publish the active toolpath (UI thread). Buffers must stay read-only.
@@ -727,6 +730,7 @@ class StockSimulator:
         ``tool_scale`` is document-unit → mm (e.g. 25.4); applied after building
         the file-unit cutting profile, not passed into :func:`tool_profile`.
         ``has_4axis`` is the file-level A-axis flag (same as ``app.has_4axis``).
+        ``has_off_axis_y`` is True when 4-axis feed moves leave Y=0 (index vs wrapping).
         """
         reinited = False
         with self._lock:
@@ -738,6 +742,7 @@ class StockSimulator:
             self._tool_table = tool_table
             self._tool_scale = float(tool_scale) if tool_scale else 1.0
             self._has_4axis = bool(has_4axis)
+            self._has_off_axis_y = bool(has_off_axis_y)
             n = 0 if positions is None else len(positions) // 3
             if self._checkpoints is not None:
                 self._checkpoints.set_path_vertex_count(n)
