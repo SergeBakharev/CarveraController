@@ -1473,7 +1473,14 @@ class Controller:
             CNC.vars["halt_reason"] = int(d["H"][0])
 
         if "PWM" in d:
-            CNC.vars["spindle_pwm_request"] = int(d["PWM"][0])
+            # Firmware reports duty as a 0–1 fraction (e.g. PWM:0.547).
+            # Values already on a 0–100 scale are left as-is.
+            pwm = float(d["PWM"][0])
+            if 0.0 <= pwm <= 1.0:
+                pwm *= 100.0
+            CNC.vars["spindle_pwm_request"] = pwm
+        else:
+            CNC.vars["spindle_pwm_request"] = 0.0
 
         self.posUpdate = True
 

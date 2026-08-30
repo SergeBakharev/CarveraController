@@ -317,7 +317,7 @@ class CNC:
         "st_cover": 0,
         "st_tool_sensor": 0,
         "st_e_stop": 0,
-        "spindle_pwm_request": 0,
+        "spindle_pwm_request": 0.0,
         # Machine model/feature flags updated from status or model command
         "MachineModel": 1,
         "FuncSetting": 0,
