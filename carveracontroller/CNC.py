@@ -137,6 +137,11 @@ XY = 0
 XZ = 1
 YZ = 2
 
+# Detect off-axis Y (feed moves with max |Y| above the tolerancy threshold).
+# This is used by the stock simulator to determine the default carver mode of 4 axis jobs.
+OFF_AXIS_Y_TOL_MM = 1.0
+OFF_AXIS_Y_OUTLIER_FRAC = 0.05
+
 LASER_TOOL_NUMBER = 8888
 ZPROBE_TOOL_NUMBER = 0
 PROBE_TOOLS_RANGE_START = 999990
@@ -367,6 +372,8 @@ class CNC:
         self.coordinates = []
         self.last_xyz = (-10000, -10000, -10000)
         self.has_motion = False
+        self.feed_move_count = 0
+        self.off_axis_y_count = 0
 
     # ----------------------------------------------------------------------
     def _safe_z_wcs(self):
@@ -439,6 +446,7 @@ class CNC:
                             line_no,
                             self.tool,
                             self.feed,
+                            self.speed,
                         ]
                     )
                     # self.coordinates.append('X: {} Y: {} Z: {} A: {} Color: {} Line: {} Tool: {}'.format(
@@ -452,6 +460,7 @@ class CNC:
 
             if self.gcode != 0:
                 self.pathMargins(xyzs)
+            self._count_feed_y_axis(xyzs)
 
         # end motion
         self.motionEnd()
@@ -573,6 +582,7 @@ class CNC:
                 self.mval = int(value)
                 if self.mval == 321:
                     self.tool = LASER_TOOL_NUMBER
+                    self.speed = 0  # Laser S is different from mill RPM
 
             elif c == "N":
                 pass
@@ -845,6 +855,31 @@ class CNC:
             self.dx = 0
             self.dy = 0
             self.dz = drill - retract
+
+    # ----------------------------------------------------------------------
+    def _count_feed_y_axis(self, xyzs):
+        """Count 4-axis feed moves that leave Y=0 (index jobs vs wrapping)."""
+        if not self.has_4axis or self.gcode in (None, 0) or not xyzs:
+            return
+        self.feed_move_count += 1
+        if self.gcode in (2, 3):
+            max_abs_y = abs(self.y)
+            for xyz in xyzs:
+                ay = abs(xyz[1])
+                if ay > max_abs_y:
+                    max_abs_y = ay
+        else:
+            max_abs_y = max(abs(self.y), abs(self.yval))
+        if max_abs_y > OFF_AXIS_Y_TOL_MM:
+            self.off_axis_y_count += 1
+
+    @property
+    def has_off_axis_y(self):
+        """True when more than 5% of 4-axis feed moves left Y=0 (index vs wrapping)."""
+        n_feed = self.feed_move_count
+        if n_feed <= 0:
+            return False
+        return self.off_axis_y_count > OFF_AXIS_Y_OUTLIER_FRAC * n_feed
 
     # ----------------------------------------------------------------------
     def pathMargins(self, xyzs):

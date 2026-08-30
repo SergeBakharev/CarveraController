@@ -7,6 +7,7 @@
 - Enhancement: Add Auto Blow, Auto Bed Clean, and Ionizer toggles to the Config and Run screen on Z1
 - Enhancement: Add Z1 bed background
 - Enhancement: Machine bed background images in the config-n-run preview screen now filtered to show images that match the machine model connected
+- Enhancement: Add stock settings and simulation to the G-Code viewer
 - Change: Hide Auto Vacuum on the Config and Run screen when the machine is not a C1
 - Change: Config and Run preview now uses now uses the configured worksize_x/y for the bed size
 - Fixed: Harden the gcode parser against "zero length" movement, and prevent division by zero in play slider
