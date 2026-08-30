@@ -112,10 +112,10 @@ This product includes the following third-party icons:
    - URL: https://pictogrammers.com/library/mdi/icon/cube/
    - Used in: carveracontroller/data/GcodeViewer/stock.png
 
-7. picture-in-picture-bottom-right.png
-   - Author: Google
+7. card.png
+   - Author: Rynco Li
    - License: Apache 2.0 License
-   - URL: https://pictogrammers.com/library/mdi/icon/picture-in-picture-bottom-right/
+   - URL: https://pictogrammers.com/library/mdi/icon/card/
    - Used in: carveracontroller/data/GcodeViewer/bed.png
 
 ===============================================================================
