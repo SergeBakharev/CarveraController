@@ -1,5 +1,8 @@
 [unreleased]
 - Enhancement: Monitoring live graph now in the G-code viewer screen. showing up to two metrics: Spindle power, rpm, feed, temperature
+- Enhancement: Tool-change flags have tooltip showing time until the change
+- Enhancement: Remaining time text alternates with time until the next tool change and playback completion
+- Enhancement: Selected files show estimated run time on the playback bar before the job starts
 - Enhancement: Intellisense-like popups explaining commands in lines selected in the gcode viewer and MDI terminal
 - Enhancement: Support for connect to the Makera Z1 over USB
 - Enhancement: Add Auto Blow, Auto Bed Clean, and Ionizer toggles to the Config and Run screen on Z1
