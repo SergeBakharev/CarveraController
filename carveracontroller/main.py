@@ -5217,6 +5217,10 @@ class Makera(RelativeLayout):
                     # Applying settings failed; retrying the download cannot fix panel/schema mismatches.
                     self._config_apply_failed = True
                 self.config_popup.btn_apply.disabled = len(self.setting_change_list) == 0
+                if getattr(self.gcode_viewer, "high_precision_time_estimate", False) and (
+                    self.gcode_viewer.raw_linenumbers and self.gcode_viewer.raw_feed_rates
+                ):
+                    self.gcode_viewer._compute_line_times_async(show_progress=False)
             except Exception as e:
                 logger.exception("Failed to load machine config")
                 self.config_loaded = False
@@ -6249,14 +6253,20 @@ class Makera(RelativeLayout):
 
     # --------------------------------------------------------------`---------
     def _on_time_estimate_progress(self, state, percent):
-        """Callback for GcodeViewer time estimate computation: show progress popup while parsing feed speeds."""
+        """Callback for GcodeViewer time estimate computation.
+
+        'start'/'progress'/'done' drive the progress popup. 'updated' means a
+        silent refresh applied new times (no popup).
+        """
         if state == "start":
-            self.progressStart(tr._("Calculating run time time estimate..."), None)
+            self.progressStart(tr._("Calculating run time estimate..."), None)
         elif state == "progress":
             self.progressUpdate(percent, "", True)
         elif state == "done":
             self.progressFinish()
-            # Legend row durations become available once line_times are applied.
+            self.refresh_gcode_color_legend()
+            self._refresh_idle_progress_info()
+        elif state == "updated":
             self.refresh_gcode_color_legend()
             self._refresh_idle_progress_info()
 
@@ -7810,7 +7820,9 @@ class Makera(RelativeLayout):
                 self.gcode_viewer.line_times = []
                 self.gcode_viewer.total_time = 0.0
                 self.gcode_viewer._invalidate_legend_durations()
+                self.gcode_viewer._begin_line_times_job(show_progress=False)
                 self.refresh_gcode_color_legend()
+                self._refresh_idle_progress_info()
 
         gcode_hl_changed = False
         if "gcode_highlight_enabled" in self.controller_setting_change_list:
@@ -8176,7 +8188,7 @@ class Makera(RelativeLayout):
         self.cmd_manager.current = "gcode_cmd_page"
         self.gcode_rv.data = []
         self.init_path_visibility()
-        self.gcode_viewer.clearDisplay()
+        self.gcode_viewer.clearDisplay(close_progress=False)
         self.gcode_viewer.begin_new_file_load()
         self.gcode_viewer.set_display_offset(self.content.x, self.content.y)
         self.gcode_viewer.set_move_speed(GCODE_VIEW_SPEED)
@@ -8232,10 +8244,15 @@ class Makera(RelativeLayout):
         if parsed_list or is_end:
             self.gcode_viewer.load_array(parsed_list, is_end)
 
-        self.progress_popup.cancel = self.cancel_load_gcodes
-        self.progress_popup.btn_cancel.disabled = False
-
-        self.progress_popup.progress_value = line_no * 100.0 / self.selected_file_line_count
+        if is_end and getattr(self.gcode_viewer, "line_times_job_show_progress", False):
+            # load_array started the estimate; keep this popup until that job sends 'done'.
+            self.progress_popup.btn_cancel.disabled = True
+            self.progress_popup.progress_text = tr._("Calculating run time estimate...")
+            self.progress_popup.progress_value = 0
+        else:
+            self.progress_popup.cancel = self.cancel_load_gcodes
+            self.progress_popup.btn_cancel.disabled = False
+            self.progress_popup.progress_value = line_no * 100.0 / self.selected_file_line_count
 
         self.load_event.set()
 
@@ -8317,7 +8334,8 @@ class Makera(RelativeLayout):
         self.coord_popup.load_config()
 
         self.file_popup.dismiss()
-        self.progress_popup.dismiss()
+        if not getattr(self.gcode_viewer, "line_times_job_show_progress", False):
+            self.progress_popup.dismiss()
 
         self.heartbeat_time = time.time()
         self.file_just_loaded = True

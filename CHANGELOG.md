@@ -8,9 +8,11 @@
 - Enhancement: Add Z1 bed background
 - Enhancement: Machine bed background images in the config-n-run preview screen now filtered to show images that match the machine model connected
 - Enhancement: Add stock settings and simulation to the G-Code viewer
+- Enhancement: Use machine limits when available to calculate time estimates
 - Change: Hide Auto Vacuum on the Config and Run screen when the machine is not a C1
 - Change: Config and Run preview now uses now uses the configured worksize_x/y for the bed size
 - Fixed: Harden the gcode parser against "zero length" movement, and prevent division by zero in play slider
+- Fixed: Time estimates ignoring speed for some 4th-axis moves
 
 [2.2.0-RC3]
 - Enhancement: The step size is now synchronized between the main screen and the Probing screen

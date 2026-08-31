@@ -245,6 +245,16 @@ TOOL_PALETTE = (
 )
 
 DEFAULT_FEED_MM_MIN = 3000.0
+DEFAULT_AXIS_LIMITS = {
+    "x": 3000.0,
+    "y": 3000.0,
+    "z": 2000.0,
+    "a": 1800.0,
+    "seek": DEFAULT_FEED_MM_MIN,
+}
+MIN_FEED_MM_MIN = 0.001
+MOVE_EPS_MM = 1e-5
+ROTARY_RADIUS_EPS_MM = 0.1
 VERTEX_FLOAT_NUM = 11
 
 # Marks a touch this widget took on touch_down, so drags belonging to the
@@ -646,6 +656,8 @@ class GCodeViewer(Widget):
     stock_visible = BooleanProperty(False)
 
     line_times = []
+    line_times_job_id = 0
+    line_times_job_show_progress = False
     total_time = 0.0
     legend_durations_cache = None
     lengths = []
@@ -654,6 +666,7 @@ class GCodeViewer(Widget):
     raw_feed_rates = []
     raw_spindle_speeds = []
     raw_tools = []
+    angles_of_vertices = []
     frame_callback = None
 
     # Tool number -> ToolDefinition extracted from the loaded file's CAM comments.
@@ -1024,7 +1037,7 @@ class GCodeViewer(Widget):
         self.gridmesh["color_axis_x"] = AXIS_COLOR_X
         self.gridmesh["color_axis_y"] = AXIS_COLOR_Y
 
-    def clearDisplay(self):
+    def clearDisplay(self, close_progress=True):
         self.lengths = []
         self._cannot_visualise = False
         self.vertex_types = []
@@ -1032,6 +1045,7 @@ class GCodeViewer(Widget):
         self.line_times = []
         self.total_time = 0.0
         self._invalidate_legend_durations()
+        self._begin_line_times_job(show_progress=False, close_progress=close_progress)
         self.raw_feed_rates = []
         self.raw_spindle_speeds = []
         self.raw_tools = []
@@ -1186,8 +1200,7 @@ class GCodeViewer(Widget):
 
         if is_end:
             self.clear_before_new_load = True
-            self.clearDisplay()
-
+            self.clearDisplay(close_progress=False)
             self._add_canvas_children()
 
         self.meshmanager.add_data_arrs(dataarrs, is_end)
@@ -1211,7 +1224,7 @@ class GCodeViewer(Widget):
 
             self.is_4_axis = self.meshmanager.is_4_axis
 
-            # Compute per-segment durations from travel distance and feed rate (for time estimate)
+            # Compute per-segment durations from feed, XYZ travel, and A surface speed
             if self.high_precision_time_estimate and len(self.raw_feed_rates) >= len(self.raw_linenumbers or []):
                 self._compute_line_times_async()
 
@@ -1428,63 +1441,90 @@ class GCodeViewer(Widget):
         if self.time_estimate_progress_callback is not None:
             self.time_estimate_progress_callback(state, percent)
 
-    def _apply_line_times_result(self, line_times):
-        """Apply worker result on main thread."""
+    def _begin_line_times_job(self, show_progress, close_progress=True):
+        """Bump the job id so in-flight workers become stale.
+
+        When a silent job supersedes one that opened the progress popup, send 'done'
+        so the popup closes. `close_progress` False only invalidates (e.g. a new file
+        load already owns the same progress popup).
+        """
+        prev_show = self.line_times_job_show_progress
+        self.line_times_job_id += 1
+        self.line_times_job_show_progress = bool(show_progress)
+        if close_progress and prev_show and not show_progress:
+            self._report_time_estimate_progress("done", 100)
+        return self.line_times_job_id
+
+    def _line_times_job_is_current(self, job_id):
+        return job_id is None or job_id == self.line_times_job_id
+
+    def _apply_line_times_result(self, line_times, show_progress=True, job_id=None):
+        """Apply worker result on main thread.
+
+        `show_progress` True sends 'done' (caller closes the progress popup).
+        False sends 'updated' so listeners can refresh without popup lifecycle.
+        Stale `job_id` values are ignored so an older worker cannot overwrite a newer run.
+        """
+        if not self._line_times_job_is_current(job_id):
+            return
         self.line_times = line_times if line_times else []
         self.total_time = self.line_times[-1] if self.line_times else 0.0
         self._invalidate_legend_durations()
-        self._report_time_estimate_progress("done", 100)
+        self.line_times_job_show_progress = False
+        self._report_time_estimate_progress("done" if show_progress else "updated", 100)
 
-    def _compute_line_times_async(self):
+    def _compute_line_times_async(self, show_progress=True):
         """
         Compute cumulative time (seconds) in a background thread so the UI stays responsive.
-        Uses raw_feed_rates from the CNC parser (no file I/O). Shows progress via
-        time_estimate_progress_callback if set ('start', 'progress', 'done').
+        Uses raw_feed_rates from the CNC parser (no file I/O). When *show_progress* is True,
+        reports via time_estimate_progress_callback ('start', 'progress', 'done') and clears
+        current times until the worker finishes. When False, keeps existing times on screen
+        and reports 'updated' on apply (no popup).
         """
-        self.line_times = []
-        self.total_time = 0.0
-        self._invalidate_legend_durations()
         n = len(self.raw_linenumbers) if self.raw_linenumbers else 0
         if n < 2 or not self.raw_positions or len(self.raw_positions) < n * 3:
             return
         if not self.raw_feed_rates or len(self.raw_feed_rates) < n:
             return
+        job_id = self._begin_line_times_job(show_progress)
+        if show_progress:
+            self.line_times = []
+            self.total_time = 0.0
+            self._invalidate_legend_durations()
         raw_positions = list(self.raw_positions)
         raw_linenumbers = list(self.raw_linenumbers)
         raw_feed_rates = list(self.raw_feed_rates)
+        angles = list(self.angles_of_vertices)
+        limits = _axis_limits_from_app() or dict(DEFAULT_AXIS_LIMITS)
         viewer = self
-        PROGRESS_INTERVAL = 100
+        PROGRESS_INTERVAL = 100 if show_progress else 0
 
         def report(state, percent):
-            Clock.schedule_once(lambda dt: viewer._report_time_estimate_progress(state, percent), 0)
+            def _on_main(dt):
+                if not viewer._line_times_job_is_current(job_id):
+                    return
+                viewer._report_time_estimate_progress(state, percent)
+
+            Clock.schedule_once(_on_main, 0)
 
         def worker():
             line_times = _compute_line_times_worker(
-                raw_positions, raw_linenumbers, raw_feed_rates, lambda pct: report("progress", pct), PROGRESS_INTERVAL
+                raw_positions,
+                raw_linenumbers,
+                raw_feed_rates,
+                (lambda pct: report("progress", pct)) if show_progress else None,
+                PROGRESS_INTERVAL,
+                angles,
+                limits,
             )
-            Clock.schedule_once(lambda dt: viewer._apply_line_times_result(line_times), 0)
+            Clock.schedule_once(
+                lambda dt: viewer._apply_line_times_result(line_times, show_progress=show_progress, job_id=job_id),
+                0,
+            )
 
-        report("start", 0)
+        if show_progress:
+            report("start", 0)
         threading.Thread(target=worker, daemon=True).start()
-
-    def _compute_line_times(self):
-        """
-        Compute cumulative time (seconds) at each vertex from segment distance and
-        feed rate from CNC parser (raw_feed_rates). Sets self.line_times and self.total_time.
-        (Synchronous fallback; normal path uses _compute_line_times_async.)
-        """
-        self.line_times = []
-        self.total_time = 0.0
-        self._invalidate_legend_durations()
-        n = len(self.raw_linenumbers) if self.raw_linenumbers else 0
-        if n < 2 or not self.raw_positions or len(self.raw_positions) < n * 3:
-            return
-        if not self.raw_feed_rates or len(self.raw_feed_rates) < n:
-            return
-        result = _compute_line_times_worker(self.raw_positions, self.raw_linenumbers, self.raw_feed_rates, None, 0)
-        self.line_times = result
-        self.total_time = self.line_times[-1] if self.line_times else 0.0
-        self._invalidate_legend_durations()
 
     def get_elapsed_time_by_distance(self, distance):
         """
@@ -2747,17 +2787,116 @@ def _z_bucket_index(z_mm, z_min_mm, z_max_mm):
     return min(max(bucket, 0), VISIBILITY_BUCKET_COUNT - 1)
 
 
-def _compute_line_times_worker(raw_positions, raw_linenumbers, raw_feed_rates, progress_callback, progress_interval):
+def _axis_limits_from_settings(setting_list):
+    """Return {x,y,z,a,seek} in mm/min (A in deg/min), or None if config is incomplete."""
+    if not setting_list:
+        return None
+    try:
+        x = float(setting_list["alpha_max_rate"])
+        y = float(setting_list["beta_max_rate"])
+        z = float(setting_list["gamma_max_rate"])
+        a = float(setting_list["delta_max_rate"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    seek = DEFAULT_FEED_MM_MIN
+    raw_seek = setting_list.get("default_seek_rate")
+    if raw_seek is not None:
+        try:
+            seek = float(raw_seek)
+        except (TypeError, ValueError):
+            pass
+    if min(x, y, z, a, seek) <= 0.0:
+        return None
+    return {"x": x, "y": y, "z": z, "a": a, "seek": seek}
+
+
+def _axis_limits_from_app():
+    """Machine max rates from config, or C1 defaults when config is missing."""
+    app = App.get_running_app()
+    setting_list = None
+    if app is not None:
+        setting_list = getattr(app, "setting_list", None)
+        if not setting_list:
+            root = getattr(app, "root", None)
+            setting_list = getattr(root, "setting_list", None)
+    return _axis_limits_from_settings(setting_list) or dict(DEFAULT_AXIS_LIMITS)
+
+
+def _a_surface_arc_mm(target_pos, da_deg):
+    """Arc length at the target WCS Y/Z radius. Firmware uses 2π when r <= 0.1 mm."""
+    radius = math.hypot(float(target_pos[1]), float(target_pos[2]))
+    perimeter = 2.0 * math.pi if radius <= ROTARY_RADIUS_EPS_MM else 2.0 * math.pi * radius
+    return perimeter * abs(float(da_deg)) / 360.0
+
+
+def _segment_duration_sec(pos1, pos2, a1, a2, feed, limits=None):
+    """Segment time (seconds) matching Carvera feed planning outcomes.
+
+    G1 with A uses surface speed max(xyz, arc)/F. G0 skips that and uses XYZ
+    length, or |dA| as millimetres when XYZ is parked. Axis max rates lengthen
+    the move when *limits* is provided (callers always pass machine config
+    or C1 defaults; None skips clamping for isolated formula tests).
+    """
+    dx = float(pos2[0]) - float(pos1[0])
+    dy = float(pos2[1]) - float(pos1[1])
+    dz = float(pos2[2]) - float(pos1[2])
+    da = abs(float(a2) - float(a1))
+    xyz = math.hypot(dx, dy, dz)
+
+    seek = DEFAULT_FEED_MM_MIN
+    if limits is not None:
+        try:
+            seek = float(limits["seek"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        if seek <= 0.0:
+            seek = DEFAULT_FEED_MM_MIN
+
+    is_rapid = True
+    try:
+        feed_val = float(feed)
+        is_rapid = feed_val < MIN_FEED_MM_MIN
+    except (TypeError, ValueError):
+        feed_val = 0.0
+
+    if is_rapid:
+        programmed = seek
+        path = xyz if xyz > MOVE_EPS_MM else da
+        duration_min = path / programmed if programmed > 0.0 else 0.0
+    else:
+        programmed = feed_val
+        if da > MOVE_EPS_MM:
+            arc = _a_surface_arc_mm(pos2, da)
+            duration_min = max(xyz, arc) / programmed
+        else:
+            duration_min = xyz / programmed
+
+    if limits is not None:
+        for delta, key in ((abs(dx), "x"), (abs(dy), "y"), (abs(dz), "z"), (da, "a")):
+            try:
+                axis_max = float(limits[key])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if axis_max > 0.0 and delta > 0.0:
+                duration_min = max(duration_min, delta / axis_max)
+
+    return duration_min * 60.0
+
+
+def _compute_line_times_worker(
+    raw_positions, raw_linenumbers, raw_feed_rates, progress_callback, progress_interval, angles=None, limits=None
+):
     """
     Core logic for line time computation. Can run in a thread.
     Uses feed rates from raw_feed_rates (from CNC parser); no file I/O.
+    `angles` is optional per-vertex A (degrees), same length as raw_linenumbers.
+    `limits` is optional {x,y,z,a,seek} max rates (mm/min; A in deg/min).
     progress_callback(percent) is called every progress_interval segments; use 0 to disable.
     Returns list of cumulative times (line_times).
     """
     n = len(raw_linenumbers)
-    DEFAULT_FEED_MM_MIN = 3000.0
-    MIN_FEED_MM_MIN = 0.001
     line_times = [0.0]
+    use_angles = angles is not None and len(angles) >= n
     for i in range(1, n):
         pos1 = [
             raw_positions[3 * (i - 1)],
@@ -2769,16 +2908,15 @@ def _compute_line_times_worker(raw_positions, raw_linenumbers, raw_feed_rates, p
             raw_positions[3 * i + 1],
             raw_positions[3 * i + 2],
         ]
-        segment_length_mm = len_3d(pos1, pos2)
-        feed = DEFAULT_FEED_MM_MIN
+        a1 = angles[i - 1] if use_angles else 0.0
+        a2 = angles[i] if use_angles else 0.0
+        feed = 0.0
         if raw_feed_rates and i < len(raw_feed_rates):
             try:
-                f = float(raw_feed_rates[i])
-                if f >= MIN_FEED_MM_MIN:
-                    feed = f
+                feed = float(raw_feed_rates[i])
             except (ValueError, TypeError):
-                pass
-        duration_sec = (segment_length_mm * 60.0) / feed
+                feed = 0.0
+        duration_sec = _segment_duration_sec(pos1, pos2, a1, a2, feed, limits)
         line_times.append(line_times[-1] + duration_sec)
         if progress_callback and progress_interval > 0 and i % progress_interval == 0:
             progress_callback(100.0 * i / n)
