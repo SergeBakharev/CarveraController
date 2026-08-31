@@ -9,9 +9,13 @@
 - Enhancement: Machine bed background images in the config-n-run preview screen now filtered to show images that match the machine model connected
 - Enhancement: Add stock settings and simulation to the G-Code viewer
 - Enhancement: Alarm popup now notes an engaged e-stop when the halt reason is not the e-stop code
+- Enhancement: Use machine limits when available to calculate time estimates
+- Enhancement: Add bed settings and visualization to the G-Code viewer
 - Change: Hide Auto Vacuum on the Config and Run screen when the machine is not a C1
 - Change: Config and Run preview now uses now uses the configured worksize_x/y for the bed size
 - Fixed: Harden the gcode parser against "zero length" movement, and prevent division by zero in play slider
+- Fixed: Time estimates ignoring speed for some 4th-axis moves
+- Fixed: Allow to select the bottom element of the MDI, Gcode and probing confirmation lists
 
 [2.2.0-RC3]
 - Enhancement: The step size is now synchronized between the main screen and the Probing screen
