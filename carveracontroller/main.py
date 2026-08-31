@@ -304,6 +304,8 @@ from .ui.popups.set_position import (
     SetZPopup,
 )
 
+HALT_REASON_ESTOP = 13
+
 
 def load_halt_translations(tr: translation.Lang):
     """Loads the appropriate language translation"""
@@ -4623,6 +4625,7 @@ class Makera(RelativeLayout):
             # update diagnose if needed
             if self.controller.diagnoseUpdate:
                 Clock.schedule_once(self.updateDiagnose, 0)
+                Clock.schedule_once(self._apply_estop_note_to_halt_popup, 0)
                 self.controller.diagnoseUpdate = False
 
             if self.controller.loadNUM == LOAD_DIR:
@@ -4782,6 +4785,7 @@ class Makera(RelativeLayout):
             self.unlock_popup.unlock_stay = partial(self.unlockMachine)
             self.unlock_popup.unlock_safe_z = partial(self.unlockMachineAndMoveToSafeZ)
             self.unlock_popup.open(self)
+            self._request_halt_estop_note()
             return
 
         # Use ConfirmPopup for halt_reason >= 20 (machine requires reset)
@@ -4812,6 +4816,50 @@ class Makera(RelativeLayout):
             self.confirm_popup.lb_content.text = action_text
 
         self.confirm_popup.open(self)
+        self._request_halt_estop_note()
+
+    # -----------------------------------------------------------------------
+    def _request_halt_estop_note(self):
+        # Wait for diagnoseUpdate to apply
+        self.controller.viewDiagnoseReport(True)
+
+    # -----------------------------------------------------------------------
+    def _apply_estop_note_to_halt_popup(self, *args):
+        app = App.get_running_app()
+        if app is None or app.state != "Alarm":
+            return
+
+        # Check if one of the two popups is opened
+        if getattr(self.unlock_popup, "_is_open", False) or getattr(self.unlock_popup, "showing", False):
+            popup = self.unlock_popup
+        elif getattr(self.confirm_popup, "_is_open", False) or getattr(self.confirm_popup, "showing", False):
+            popup = self.confirm_popup
+        else:
+            return
+
+        title = popup.lb_title.text
+        if not title or not (
+            title.startswith(tr._("Machine Is Halted: ")) or title.startswith(tr._("Machine Is Halted!"))
+        ):
+            return
+
+        note = tr._(
+            "The emergency stop is engaged and may be the cause of this alarm. "
+            "Disengage it before clearing the alarm or resetting the machine."
+        )
+        body = popup.lb_content.text or ""
+        if body == note:
+            base = ""
+        elif body.startswith(note + "\n\n"):
+            base = body[len(note) + 2 :]
+        else:
+            base = body
+
+        show_note = CNC.vars.get("st_e_stop", 0) and CNC.vars["halt_reason"] != HALT_REASON_ESTOP
+        if show_note:
+            popup.lb_content.text = note if not base else note + "\n\n" + base
+        else:
+            popup.lb_content.text = base
 
     # -----------------------------------------------------------------------
     def open_sleep_confirm_popup(self):
