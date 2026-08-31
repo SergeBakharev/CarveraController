@@ -5,6 +5,7 @@ import os
 import sys
 import threading
 from math import *
+from typing import Any
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -51,6 +52,9 @@ from kivy.input.motionevent import MotionEvent
 # input
 from kivy.input.provider import MotionEventProvider
 
+from .addons.beds.materials import normalize_bed_material, style_for_bed_material
+from .addons.beds.mesh_loader import BED_VERTEX_FORMAT, BedMeshData, load_bed_mesh, pack_bed_mesh_chunks
+from .addons.beds.placement import model_offset_viewer, wcs_rotation_4x4
 from .addons.stock.simulator import (
     DEFAULT_MESH_THROTTLE_S,
     PLAY_MESH_THROTTLE_S,
@@ -644,6 +648,7 @@ class GCodeViewer(Widget):
     sim_checkpoints = ListProperty([])
     sim_hud_text = StringProperty("")
     stock_visible = BooleanProperty(False)
+    bed_visible = BooleanProperty(False)
 
     line_times = []
     total_time = 0.0
@@ -726,6 +731,19 @@ class GCodeViewer(Widget):
 
         self.stockmesh = RenderContext()
         self.stockmesh.shader.source = os.path.join(shader_dir, "stock.glsl")
+
+        self.bedmesh = RenderContext()
+        self.bedmesh.shader.source = os.path.join(shader_dir, "bed.glsl")
+        self.bedmesh["metallic"] = 0.0
+        self.bedmesh["roughness"] = 0.85
+        self.bedmesh["model_offset"] = (0.0, 0.0, 0.0)
+        self.bed_visible = False
+        self._bed_mesh_path: str | None = None
+        self._bed_mcs_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self._bed_material = "mdf"
+        self._bed_loaded: BedMeshData | None = None
+        self._bed_thickness_mm = 0.0
+        self._bed_wcs_applied: tuple[float, float, float, float] | None = None
 
         self.carvedmesh = RenderContext()
         self.carvedmesh.shader.source = os.path.join(shader_dir, "carved_stock.glsl")
@@ -991,6 +1009,8 @@ class GCodeViewer(Widget):
 
     def _add_canvas_children(self):
         self.canvas.add(self.gridmesh)
+        if self.bed_visible:
+            self.canvas.add(self.bedmesh)
         if self.stock_visible or self.simulate_cut:
             self.canvas.add(self.stockmesh)
             self.canvas.add(self.carvedmesh)
@@ -1002,6 +1022,7 @@ class GCodeViewer(Widget):
         self._raise_view_cube_to_top()
         self._update_view_cube_uniforms()
         self._viewer_meshes_active = True
+        self._update_bed_uniforms()
         self._update_stock_uniforms()
         self._update_carved_uniforms()
 
@@ -1042,6 +1063,8 @@ class GCodeViewer(Widget):
         self.linemesh.clear()
         self.canvas.remove(self.linemesh)
         self.canvas.remove(self.gridmesh)
+        if self.bedmesh in self.canvas.children:
+            self.canvas.remove(self.bedmesh)
         if self.stockmesh in self.canvas.children:
             self.canvas.remove(self.stockmesh)
         if self.carvedmesh in self.canvas.children:
@@ -1063,6 +1086,7 @@ class GCodeViewer(Widget):
         self.sim_checkpoints = []
         self.sim_hud_text = ""
         self.stock_visible = False
+        self.bed_visible = False
         self.simulate_cut = False
         self._defer_carved_stock = False
         self._viewer_meshes_active = False
@@ -1307,6 +1331,8 @@ class GCodeViewer(Widget):
             self.pointermesh["offset"] = (-self.lines_center[0], -self.lines_center[1], -self.lines_center[2])
 
             # Stock mesh uses the newly computed scale/center; restart simulation if enabled.
+            self._rebuild_bed_mesh()
+            self._ensure_bed_on_canvas()
             self._rebuild_stock_mesh()
             self._ensure_stock_on_canvas()
             self._restart_stock_simulation()
@@ -1338,7 +1364,9 @@ class GCodeViewer(Widget):
         self.gridmesh["proj_mat"] = proj
         self.stockmesh["proj_mat"] = proj
         self.carvedmesh["proj_mat"] = proj
+        self.bedmesh["proj_mat"] = proj
         self._update_grid_uniforms()
+        self._update_bed_uniforms()
         self._update_stock_uniforms()
         self._update_carved_uniforms()
         self.pointermesh["projection_mat"] = proj
@@ -1368,6 +1396,7 @@ class GCodeViewer(Widget):
             eye[0], eye[1], eye[2], center[0], center[1], center[2], up[0], up[1], up[2]
         )
         self._update_grid_uniforms()
+        self._update_bed_uniforms()
         self._update_stock_uniforms()
         self._update_carved_uniforms()
         self._update_view_cube_uniforms()
@@ -1381,8 +1410,10 @@ class GCodeViewer(Widget):
         # restore writes after stock (translucent fill may have disabled them).
         glDepthMask(GL_TRUE)
         glDisable(GL_DEPTH_TEST)
+        glDisable(GL_CULL_FACE)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glViewport(0, 0, Window.size[0], Window.size[1])
-        pass
 
     # get total segment count
     def get_total_seg_count(self):
@@ -2010,7 +2041,10 @@ class GCodeViewer(Widget):
             self._clear_carved_meshes()
             return
         try:
-            idx = self.canvas.children.index(self.gridmesh) + 1
+            if getattr(self, "bedmesh", None) is not None and self.bedmesh in self.canvas.children:
+                idx = self.canvas.children.index(self.bedmesh) + 1
+            else:
+                idx = self.canvas.children.index(self.gridmesh) + 1
             self.canvas.insert(idx, self.stockmesh)
             if show_voxels:
                 self.canvas.insert(idx + 1, self.carvedmesh)
@@ -2019,6 +2053,148 @@ class GCodeViewer(Widget):
             if show_voxels:
                 self.canvas.add(self.carvedmesh)
         self._raise_view_cube_to_top()
+
+    def set_bed(
+        self,
+        mesh_path: str | None,
+        mcs_xyz: tuple[float, float, float] | None = None,
+        material: str = "mdf",
+        visible: bool = True,
+    ) -> bool:
+        """Show or hide the bed mesh in WCS.
+
+        Vertices stay in model-local millimetres; MCS→WCS is applied via
+        ``model_offset`` and WCS ``rotation_mat`` so a WCS change does not remesh.
+        """
+        if not visible or not mesh_path:
+            self.bed_visible = False
+            self._bed_mesh_path = None
+            self._bed_loaded = None
+            self._bed_wcs_applied = None
+            self.bedmesh.clear()
+            self._ensure_bed_on_canvas()
+            self._scene_dirty = True
+            return True
+        try:
+            loaded = load_bed_mesh(mesh_path)
+        except (OSError, ValueError) as exc:
+            logger.warning("failed to load bed mesh %s: %s", mesh_path, exc)
+            self.bed_visible = False
+            self._bed_mesh_path = None
+            self._bed_loaded = None
+            self._bed_wcs_applied = None
+            self.bedmesh.clear()
+            self._ensure_bed_on_canvas()
+            self._scene_dirty = True
+            return False
+        self._bed_mesh_path = mesh_path
+        self._bed_loaded = loaded
+        self._bed_thickness_mm = float(loaded.thickness_mm)
+        if mcs_xyz is not None:
+            self._bed_mcs_xyz = (float(mcs_xyz[0]), float(mcs_xyz[1]), float(mcs_xyz[2]))
+        self._bed_material = normalize_bed_material(material)
+        self.bed_visible = True
+        self._rebuild_bed_mesh()
+        self._ensure_bed_on_canvas()
+        self._scene_dirty = True
+        return True
+
+    def update_bed_wcs(self) -> None:
+        """Refresh bed placement uniforms from live WCS (no remesh).
+
+        Status packets call this often; skip the viewer dirty flag unless the
+        origin actually moved so an idle scene is not redrawn every tick.
+        """
+        if not self.bed_visible:
+            return
+        wcs = self._read_wcs_origin()
+        if self._bed_wcs_matches(wcs):
+            return
+        self._update_bed_uniforms()
+        self._scene_dirty = True
+
+    def _ensure_bed_on_canvas(self) -> None:
+        if not self._viewer_meshes_active:
+            return
+        if self.bedmesh in self.canvas.children:
+            self.canvas.remove(self.bedmesh)
+        if not self.bed_visible:
+            return
+        try:
+            idx = self.canvas.children.index(self.gridmesh) + 1
+            self.canvas.insert(idx, self.bedmesh)
+        except ValueError:
+            self.canvas.add(self.bedmesh)
+        self._raise_view_cube_to_top()
+
+    def _rebuild_bed_mesh(self) -> None:
+        self.bedmesh.clear()
+        if not self.bed_visible or self._bed_loaded is None:
+            return
+        style = style_for_bed_material(self._bed_material)
+        chunks = pack_bed_mesh_chunks(self._bed_loaded, self._stock_scale(), style.albedo_rgb)
+        with self.bedmesh:
+            Callback(self.setup_gl_context)
+            Callback(self._setup_bed_gl)
+            for vertices, indices in chunks:
+                Mesh(fmt=BED_VERTEX_FORMAT, vertices=vertices, indices=indices, mode="triangles")
+            Callback(self._reset_bed_gl)
+            Callback(self.reset_gl_context)
+        self._update_bed_uniforms()
+
+    def _setup_bed_gl(self, *_args):
+        glEnable(GL_DEPTH_TEST)
+        glDepthMask(GL_TRUE)
+        # Custom OBJs often have inverted or mixed winding. The shader already
+        # two-sided-lights by flipping back-facing normals, so do not cull.
+        glDisable(GL_CULL_FACE)
+        glDisable(GL_BLEND)
+
+    def _reset_bed_gl(self, *_args):
+        glDisable(GL_CULL_FACE)
+        glDepthMask(GL_TRUE)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+    def _wcs_rotation_matrix(self, rotation_angle_deg: float):
+        angle = float(rotation_angle_deg or 0.0)
+        if abs(angle) < 1e-6:
+            return self._identity_mat
+        mat = Matrix()
+        mat.set(flat=list(wcs_rotation_4x4(angle)))
+        return mat
+
+    def _read_wcs_origin(self) -> tuple[float, float, float, float]:
+        from .CNC import CNC
+
+        vars_map: Any = CNC.vars
+        return (
+            float(vars_map.get("wcox") or 0.0),
+            float(vars_map.get("wcoy") or 0.0),
+            float(vars_map.get("wcoz") or 0.0),
+            float(vars_map.get("rotation_angle") or 0.0),
+        )
+
+    def _bed_wcs_matches(self, wcs: tuple[float, float, float, float]) -> bool:
+        prev = getattr(self, "_bed_wcs_applied", None)
+        if prev is None:
+            return False
+        return all(abs(a - b) <= 1e-6 for a, b in zip(wcs, prev))
+
+    def _update_bed_uniforms(self) -> None:
+        if getattr(self, "bedmesh", None) is None:
+            return
+        center = getattr(self, "lines_center", [0.0, 0.0, 0.0])
+        wcox, wcoy, wcoz, angle = self._read_wcs_origin()
+        style = style_for_bed_material(self._bed_material)
+        self.bedmesh["center_offset"] = Matrix().translate(-center[0], -center[1], -center[2])
+        self.bedmesh["view_mat"] = self.m_viewMatrix
+        self.bedmesh["proj_mat"] = self._proj_matrix
+        self.bedmesh["rotation_mat"] = self._wcs_rotation_matrix(angle)
+        self.bedmesh["model_offset"] = model_offset_viewer(self._bed_mcs_xyz, (wcox, wcoy, wcoz), self._stock_scale())
+        self.bedmesh["metallic"] = float(style.metallic)
+        self.bedmesh["roughness"] = float(style.roughness)
+        self._bed_wcs_applied = (wcox, wcoy, wcoz, angle)
 
     def _stock_scale(self) -> float:
         return float(self.move_scale_by_positon or 1.0)
@@ -2493,6 +2669,7 @@ class GCodeViewer(Widget):
 
         self.linemesh["view_mat"] = self.m_viewMatrix
         self._update_grid_uniforms()
+        self._update_bed_uniforms()
         self._update_stock_uniforms()
         self._update_carved_uniforms()
 

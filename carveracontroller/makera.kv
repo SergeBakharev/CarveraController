@@ -24,6 +24,7 @@
 #:include addons/cmm_workbench/ui/CMMWorkbenchPopup.kv
 #:include addons/facing/FacingWizardPopup.kv
 #:include addons/stock/ui/StockSettingsPopup.kv
+#:include addons/beds/ui/BedSettingsPopup.kv
 #:include addons/camera/CameraControls.kv
 
 <Label>:
@@ -141,6 +142,40 @@
 <GcodeViewerToolBarButton@TransparentButton>:
     height: dp(48) if app.show_gcode_ctl_bar else 0
     size_hint_y: None
+
+<GcodeViewerDisplayMenuButton>:
+    icon: ''
+    text: ''
+    active: False
+    orientation: 'horizontal'
+    size_hint_y: None
+    height: '44dp'
+    padding: [dp(10), 0]
+    spacing: dp(8)
+    canvas.before:
+        Color:
+            rgba: (50/255, 164/255, 206/255, 0.45) if self.state == 'down' else (80/255, 80/255, 80/255, 1)
+        Rectangle:
+            pos: self.pos
+            size: self.size
+    Widget:
+        size_hint_x: None
+        width: dp(28)
+        canvas:
+            Color:
+                rgba: tuple(app.active_color) if (root.active and not root.disabled) else ((110/255, 110/255, 110/255, 1) if root.disabled else (250/255, 250/255, 250/255, 1))
+            Rectangle:
+                source: root.icon
+                pos: self.center_x - dp(12), self.center_y - dp(12)
+                size: dp(24) if root.icon else 0, dp(24) if root.icon else 0
+    Label:
+        text: root.text
+        halign: 'left'
+        valign: 'middle'
+        text_size: self.size
+        font_size: '14sp'
+        color: tuple(app.active_color) if (root.active and not root.disabled) else ((110/255, 110/255, 110/255, 1) if root.disabled else (250/255, 250/255, 250/255, 1))
+
 
 <WiFiButton>:
     orientation: 'horizontal'
@@ -1243,6 +1278,48 @@
             root.select('')
 
 <ComPortsDropDown>:
+
+<GcodeViewerDisplayDropDown>:
+    auto_width: False
+    width: dp(220)
+    canvas.before:
+        Color:
+            rgba: 60/255, 60/255, 60/255, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+    GcodeViewerDisplayMenuButton:
+        icon: 'data/GcodeViewer/grid.png'
+        text: tr._('Grid')
+        active: root.show_grid
+        disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+        on_release:
+            root.show_grid = not root.show_grid
+            app.root.gcode_viewer.set_grid_visible(root.show_grid)
+    GcodeViewerDisplayMenuButton:
+        icon: 'data/GcodeViewer/ortho.png'
+        text: tr._('Ortho')
+        active: root.ortho_projection
+        disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+        on_release:
+            root.ortho_projection = not root.ortho_projection
+            app.root.gcode_viewer.set_ortho_projection(root.ortho_projection)
+    GcodeViewerDisplayMenuButton:
+        icon: 'data/GcodeViewer/stock.png'
+        text: tr._('Stock...')
+        active: root.show_stock
+        disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
+        on_release:
+            root.dismiss()
+            app.root.open_stock_settings_popup()
+    GcodeViewerDisplayMenuButton:
+        icon: 'data/GcodeViewer/bed.png'
+        text: tr._('Bed...')
+        active: root.show_bed
+        disabled: (app.selected_remote_filename == '' and app.selected_local_filename == '') or app.state == 'N/A' or app.model not in ['C1', 'CA1', 'Z1']
+        on_release:
+            root.dismiss()
+            app.root.open_bed_settings_popup()
 
 <OperationDropDown>:
     Button:
@@ -4420,9 +4497,6 @@
                             BoxLayout:
                                 id: tool_bar
                                 orbit: True
-                                show_grid: True
-                                ortho_projection: False
-                                show_stock: False
                                 size_hint: None, None
                                 width: self.minimum_width
                                 height: dp(48) if app.show_gcode_ctl_bar else 0
@@ -4470,29 +4544,17 @@
                                     on_release:
                                         root.gcode_viewer.restore_default_view()
                                 GcodeViewerToolBarButton:
-                                    width: '50dp'
-                                    active: tool_bar.show_grid
-                                    icon: 'data/GcodeViewer/grid.png'
+                                    width: '56dp'
+                                    padding: [0, 0, dp(12), 0]
+                                    icon: 'data/GcodeViewer/display-settings.png'
+                                    tooltip_txt: tr._('Display settings')
                                     disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
-                                    on_release:
-                                        tool_bar.show_grid = not tool_bar.show_grid
-                                        root.gcode_viewer.set_grid_visible(tool_bar.show_grid)
-                                GcodeViewerToolBarButton:
-                                    width: '44dp'
-                                    valign: 'middle'
-                                    text: 'Ortho'
-                                    active: tool_bar.ortho_projection
-                                    disabled: app.selected_remote_filename == '' and app.selected_local_filename == ''
-                                    on_release:
-                                        tool_bar.ortho_projection = not tool_bar.ortho_projection
-                                        root.gcode_viewer.set_ortho_projection(tool_bar.ortho_projection)
-                                GcodeViewerToolBarButton:
-                                    width: '50dp'
-                                    icon: 'data/GcodeViewer/stock.png'
-                                    tooltip_txt: tr._('Stock')
-                                    active: tool_bar.show_stock
-                                    disabled: (app.selected_remote_filename == '' and app.selected_local_filename == '')
-                                    on_release: root.open_stock_settings_popup()
+                                    on_release: root.gcode_viewer_display_drop_down.open(self)
+                                    canvas.after:
+                                        Color:
+                                            rgba: tuple(app.active_color) if (self.active and not self.disabled) else ((110/255, 110/255, 110/255, 1) if self.disabled else (219/255, 219/255, 219/255, 1))
+                                        Triangle:
+                                            points: [self.right - dp(13), self.center_y + dp(3), self.right - dp(5), self.center_y + dp(3), self.right - dp(9), self.center_y - dp(3)]
 
                             BoxLayout:
                                 id: gcode_ctl_bar
