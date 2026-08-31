@@ -11,6 +11,7 @@
 - Change: Hide Auto Vacuum on the Config and Run screen when the machine is not a C1
 - Change: Config and Run preview now uses now uses the configured worksize_x/y for the bed size
 - Fixed: Harden the gcode parser against "zero length" movement, and prevent division by zero in play slider
+- Fixed: Allow to select the bottom element of the MDI, Gcode and probing confirmation lists
 
 [2.2.0-RC3]
 - Enhancement: The step size is now synchronized between the main screen and the Probing screen
