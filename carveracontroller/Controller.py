@@ -1796,8 +1796,8 @@ class Controller:
         if self.loadNUM == 0 and self.sendNUM == 0:
             if self.stream is None or not self.protocol_ready:
                 return
-            self.executeCommand("diagnose\n")
             self.sio_diagnose = sio_diagnose
+            self.executeCommand("diagnose\n")
 
     # ----------------------------------------------------------------------
     def hardReset(self):
