@@ -6576,6 +6576,7 @@ class Makera(RelativeLayout):
                     if self.gcode_viewer is not None:
                         self.gcode_viewer.set_bed(None, visible=False)
                     self.controller.is_community_firmware = False
+                    self.controller._session_lights_applied = False
                     self.machine_metadata_query_time = 0
 
                     # Clean up light toggle binding when disconnected
@@ -6636,6 +6637,10 @@ class Makera(RelativeLayout):
                     self.status_drop_down.btn_unlock.text = "Reset"
                 else:
                     self.status_drop_down.btn_unlock.text = "Unlock"
+
+            # Turn session lights on once firmware is known
+            if app.state != NOT_CONNECTED and self.fw_version and not self.controller._session_lights_applied:
+                self.controller.apply_session_lights(True)
 
             # load config, only one time per connection
             if (
@@ -9091,6 +9096,8 @@ def set_config_defaults(default_lang):
         Config.set("carvera", "instantFSoverride", "1")
     if not Config.has_option("carvera", "show_playbar_tool_change_markers"):
         Config.set("carvera", "show_playbar_tool_change_markers", "1")
+    if not Config.has_option("carvera", "auto_lights_on_connect"):
+        Config.set("carvera", "auto_lights_on_connect", "1")
 
     # G-code viewer defaults
     if not Config.has_option("carvera", "gcode_auto_show_stock"):

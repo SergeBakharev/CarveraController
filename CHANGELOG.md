@@ -1,4 +1,5 @@
 [unreleased]
+- Enhancement: Auto enclosure/LED lights on connect and off on disconnect or app close. Controller setting is available to enable/disable this feature, default is enabled.
 - Enhancement: Tool-change flags have tooltip showing time until the change
 - Enhancement: Remaining time text alternates with time until the next tool change and playback completion
 - Enhancement: Selected files show estimated run time on the playback bar before the job starts
