@@ -15,6 +15,7 @@
 - Enhancement: Use machine limits when available to calculate time estimates
 - Enhancement: Add bed settings and visualization to the G-Code viewer
 - Enhancement: Add keyboard shortcuts settings
+- Change: Update screen is now accessible when not connected to a machine
 - Change: Facing wizard now supports center WCS origin
 - Change: Hide Auto Vacuum on the Config and Run screen when the machine is not a C1
 - Change: Config and Run preview now uses now uses the configured worksize_x/y for the bed size
