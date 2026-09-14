@@ -1111,8 +1111,7 @@
         small_icon: True
         size_hint_y: None
         tooltip_txt: tr._('Update Firmware/Controller')
-        notify: (app.fw_has_update or app.ctl_has_update) and app.state != 'N/A'
-        disabled: app.state != 'Idle'
+        notify: app.fw_has_update or app.ctl_has_update
         height: '50dp'
         on_release:
             root.select('')
@@ -3204,7 +3203,7 @@
             IconButton:
                 icon: 'data/list.png'
                 icon_size: 24
-                notify: (app.fw_has_update or app.ctl_has_update) and app.state != 'N/A'
+                notify: app.fw_has_update or app.ctl_has_update
                 on_release:
                     if root.func_drop_down.parent: root.func_drop_down.parent.remove_widget(root.func_drop_down)
                     root.func_drop_down.open(self)
