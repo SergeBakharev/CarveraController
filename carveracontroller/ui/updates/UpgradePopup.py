@@ -251,7 +251,7 @@ class UpgradePopup(ModalView):
         snapshot = self._snapshot
         if snapshot is not None:
             self.controller_notify = snapshot.controller.update_available
-            self.firmware_notify = snapshot.firmware.update_available
+            self.firmware_notify = snapshot.firmware.update_available and self._machine_connected()
             self.controller_tab_path = _current_version_text(snapshot.controller.current, missing=tr._("This app"))
             self.firmware_tab_path = _current_version_text(snapshot.firmware.current, missing=tr._("Not connected"))
         status = self._active_status()
@@ -309,6 +309,9 @@ class UpgradePopup(ModalView):
         elif status.latest is None:
             self.status_title = tr._("No releases found")
             self.status_detail = ""
+        elif self.active_tab == TAB_FIRMWARE and not self._machine_connected():
+            self.status_title = tr._("Connect to a machine to check firmware")
+            self.status_detail = _join_detail(tr._("Latest published release is %s.") % status.latest_label, published)
         elif status.update_available:
             self.status_title = tr._("New version available")
             self.status_detail = _join_detail(tr._("%s is ready to install.") % status.latest_label, published)
@@ -355,12 +358,16 @@ class UpgradePopup(ModalView):
         platform_key = snapshot.platform_key if snapshot is not None else ""
         return controller_actions(release, platform_key=platform_key)
 
+    def _machine_connected(self) -> bool:
+        app = App.get_running_app()
+        return app is not None and app.state != "N/A"
+
     def _firmware_actions(self):
         snapshot = self._snapshot
         release = snapshot.firmware.latest if snapshot is not None else None
         app = App.get_running_app()
         makera = _makera()
-        connected = app is not None and app.state != "N/A"
+        connected = self._machine_connected()
         idle = app is not None and app.state == "Idle"
         transferring = bool(
             makera is not None and (getattr(makera, "uploading", False) or getattr(makera, "downloading", False))
