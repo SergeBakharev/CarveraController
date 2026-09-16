@@ -213,17 +213,23 @@ def test_firmware_asset_requires_unique_bin_and_digest():
         "2.1.0c",
         assets=[
             _asset("firmware-2.1.0c.bin", size=128, digest="sha256:" + "ab" * 32),
-            _asset("firmware-z1-1.0.0.bin", size=96, digest="sha256:" + "cd" * 32),
+            _asset("firmware-z1-2.1.0c.bin", size=96, digest="sha256:" + "cd" * 32),
             _asset("Z1-firmware.bin", size=80),
         ],
     )
     assert select_firmware_asset(ready).name == "firmware-2.1.0c.bin"
     assert firmware_one_click_ready(ready)
     assert select_firmware_asset(with_z1).name == "firmware-2.1.0c.bin"
+    assert select_firmware_asset(with_z1, machine_model="C1").name == "firmware-2.1.0c.bin"
+    assert select_firmware_asset(with_z1, machine_model="CA1").name == "firmware-2.1.0c.bin"
+    assert select_firmware_asset(with_z1, machine_model="Z1").name == "firmware-z1-2.1.0c.bin"
     assert firmware_one_click_ready(with_z1)
+    assert firmware_one_click_ready(with_z1, "Z1")
     assert select_firmware_asset(skipped) is None
     assert not firmware_one_click_ready(skipped)
     assert not firmware_one_click_ready(_release("2.1.0c", assets=[_asset("firmware-2.1.0c.bin", size=128)]))
+    assert select_firmware_asset(ready, machine_model="Z1") is None
+    assert not firmware_one_click_ready(ready, "Z1")
 
 
 def test_controller_and_firmware_action_rules():
@@ -275,10 +281,17 @@ def test_controller_and_firmware_action_rules():
     assert missing.reason == REASON_NO_CHECKSUM
 
 
-def test_firmware_one_click_is_limited_to_c1_and_ca1():
+def test_firmware_one_click_is_limited_to_supported_models():
     firmware = _release(
         "2.1.0c",
         assets=[_asset("firmware-2.1.0c.bin", size=128, digest="sha256:" + "ab" * 32)],
+    )
+    mixed = _release(
+        "2.1.0c",
+        assets=[
+            _asset("firmware-2.1.0c.bin", size=128, digest="sha256:" + "ab" * 32),
+            _asset("firmware-z1-2.1.0c.bin", size=96, digest="sha256:" + "cd" * 32),
+        ],
     )
     kwargs = {"connected": True, "idle": True, "transferring": False, "backup_supported": True}
     for model in ("C1", "CA1"):
@@ -286,18 +299,24 @@ def test_firmware_one_click_is_limited_to_c1_and_ca1():
         assert actions.one_click_supported
         assert actions.can_one_click
         assert actions.can_install_from_file
-    z1 = firmware_actions(firmware, machine_model="Z1", **kwargs)
-    assert not z1.one_click_supported
-    assert not z1.can_one_click
+        mixed_actions = firmware_actions(mixed, machine_model=model, **kwargs)
+        assert mixed_actions.can_one_click
+    z1_missing = firmware_actions(firmware, machine_model="Z1", **kwargs)
+    assert z1_missing.one_click_supported
+    assert not z1_missing.can_one_click
+    assert z1_missing.can_install_from_file
+    assert z1_missing.can_backup
+    assert z1_missing.reason == REASON_NO_CHECKSUM
+    z1 = firmware_actions(mixed, machine_model="Z1", **kwargs)
+    assert z1.one_click_supported
+    assert z1.can_one_click
     assert z1.can_install_from_file
-    assert z1.can_backup
-    assert z1.reason == REASON_UNSUPPORTED_MODEL
     unknown = firmware_actions(firmware, machine_model="", **kwargs)
     assert not unknown.can_one_click
     assert unknown.reason == REASON_UNSUPPORTED_MODEL
     assert firmware_one_click_supported("C1")
     assert firmware_one_click_supported("CA1")
-    assert not firmware_one_click_supported("Z1")
+    assert firmware_one_click_supported("Z1")
     assert not firmware_one_click_supported("")
     assert not firmware_one_click_supported(None)
 

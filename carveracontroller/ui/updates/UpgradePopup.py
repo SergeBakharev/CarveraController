@@ -540,11 +540,11 @@ def _firmware_reason_text(reason: str) -> str:
         return tr._("The machine must be idle to install firmware.")
     if reason == REASON_NO_CHECKSUM:
         return tr._(
-            "This release cannot be installed in one click because it is missing a unique firmware file or checksum."
+            "This release cannot be installed in one click because it is missing the required firmware file or checksum for this machine model."
         )
     if reason == REASON_UNSUPPORTED_MODEL:
         return tr._(
-            "One-click firmware install is only supported on C1 and CA1. Use Install from file for other machines."
+            "One-click firmware install is only supported on C1, CA1, and Z1. Use Install from file for other machines."
         )
     return ""
 

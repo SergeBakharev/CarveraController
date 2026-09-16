@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import Release, ReleaseAsset
+from .models import Release
 from .platform import firmware_one_click_ready, select_controller_asset
 
 REASON_IOS = "ios"
@@ -14,8 +14,6 @@ REASON_TRANSFERRING = "transferring"
 REASON_NOT_IDLE = "not_idle"
 REASON_NO_CHECKSUM = "no_checksum"
 REASON_UNSUPPORTED_MODEL = "unsupported_model"
-
-ONE_CLICK_FIRMWARE_MODELS = frozenset({"C1", "CA1"})
 
 
 @dataclass(frozen=True)
@@ -48,7 +46,7 @@ def controller_actions(release: Release | None, *, platform_key: str) -> Control
 
 
 def firmware_one_click_supported(machine_model: str | None) -> bool:
-    return (machine_model or "").strip() in ONE_CLICK_FIRMWARE_MODELS
+    return (machine_model or "") in {"C1", "CA1"} or (machine_model or "").startswith("Z1")
 
 
 def firmware_actions(
@@ -61,7 +59,7 @@ def firmware_actions(
     machine_model: str = "",
 ) -> FirmwareActions:
     release_url = release.html_url if release is not None else ""
-    one_click = firmware_one_click_ready(release)
+    one_click = firmware_one_click_ready(release, machine_model)
     model_supported = firmware_one_click_supported(machine_model)
     machine_reason = _machine_block_reason(connected=connected, idle=idle, transferring=transferring)
     reason = machine_reason
@@ -87,7 +85,3 @@ def _machine_block_reason(*, connected: bool, idle: bool, transferring: bool) ->
     if not idle:
         return REASON_NOT_IDLE
     return ""
-
-
-def controller_asset_for(release: Release | None, platform_key: str) -> ReleaseAsset | None:
-    return select_controller_asset(release, platform_key)

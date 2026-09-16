@@ -172,6 +172,53 @@ def test_check_then_verified_firmware_handoff(tmp_path: Path):
     )
     assert path.name == "firmware-2.1.0c.bin"
     assert path.read_bytes() == payload
-    # Upload handoff: the controller copies this verified file to /sd/firmware.bin.
+    # Upload handoff: C1/CA1 copy this verified file to /sd/firmware.bin.
     assert snapshot.firmware.latest is not None
     assert path.exists()
+
+
+def test_fetch_firmware_bin_selects_z1_asset(tmp_path: Path):
+    payload = b"z1-firmware-bytes"
+    digest = "sha256:" + _sha(payload)
+    release = parse_release(
+        {
+            "tag_name": "2.1.0c",
+            "name": "2.1.0c",
+            "html_url": "https://github.com/Carvera-Community/Carvera_Community_Firmware/releases/tag/2.1.0c",
+            "body": "",
+            "published_at": "2024-05-01T00:00:00Z",
+            "prerelease": False,
+            "draft": False,
+            "assets": [
+                {
+                    "name": "firmware-2.1.0c.bin",
+                    "size": 18,
+                    "browser_download_url": "https://github.com/downloads/firmware-2.1.0c.bin",
+                    "digest": "sha256:" + _sha(b"carvera-firmware"),
+                    "content_type": "application/octet-stream",
+                },
+                {
+                    "name": "firmware-z1-2.1.0c.bin",
+                    "size": len(payload),
+                    "browser_download_url": "https://github.com/downloads/firmware-z1-2.1.0c.bin",
+                    "digest": digest,
+                    "content_type": "application/octet-stream",
+                },
+            ],
+        }
+    )
+    assert release is not None
+    path = fetch_firmware_bin(
+        release,
+        tmp_path / "fw",
+        machine_model="Z1",
+        download_fn=lambda url, dest, **kwargs: download_file(
+            url,
+            dest,
+            expected_size=kwargs["expected_size"],
+            expected_sha256=kwargs["expected_sha256"],
+            open_url=lambda _url, _headers, _timeout: _FakeBody(payload),
+        ),
+    )
+    assert path.name == "firmware-z1-2.1.0c.bin"
+    assert path.read_bytes() == payload
