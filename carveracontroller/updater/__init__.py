@@ -9,11 +9,17 @@ from .actions import (
 )
 from .backup import matching_backup_paths
 from .download import DownloadCancelled, DownloadError, download_file
+from .esp_ota import EspOtaCancelled, EspOtaError, upload_esp_ota
 from .github import FetchResult, GitHubReleasesClient, filter_releases, parse_release, pick_latest
 from .install import fetch_firmware_bin
 from .models import Release, ReleaseAsset
 from .notes import NoteRow, format_release_notes
-from .platform import detect_platform, firmware_one_click_ready, select_controller_asset, select_firmware_asset
+from .platform import (
+    detect_platform,
+    firmware_one_click_ready,
+    select_controller_asset,
+    select_firmware_asset,
+)
 from .service import (
     ChannelStatus,
     UpdateSnapshot,
@@ -24,12 +30,15 @@ from .service import (
     snapshot_with_prereleases,
 )
 from .version import Version, parse_version
+from .z1_firmware import firmware_install_plan
 
 __all__ = [
     "ChannelStatus",
     "ControllerActions",
     "DownloadCancelled",
     "DownloadError",
+    "EspOtaCancelled",
+    "EspOtaError",
     "FetchResult",
     "FirmwareActions",
     "GitHubReleasesClient",
@@ -47,6 +56,7 @@ __all__ = [
     "fetch_firmware_bin",
     "filter_releases",
     "firmware_actions",
+    "firmware_install_plan",
     "firmware_one_click_ready",
     "firmware_one_click_supported",
     "format_release_notes",
@@ -58,4 +68,5 @@ __all__ = [
     "select_firmware_asset",
     "snapshot_from_fetches",
     "snapshot_with_prereleases",
+    "upload_esp_ota",
 ]

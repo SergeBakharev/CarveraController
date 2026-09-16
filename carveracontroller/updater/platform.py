@@ -69,15 +69,19 @@ def select_controller_asset(release: Release | None, platform_key: str) -> Relea
     return None
 
 
-def select_firmware_asset(release: Release | None) -> ReleaseAsset | None:
-    """Return the unique firmware .bin, ignoring debug-symbol archives and Z1 firmware."""
+Z1_FIRMWARE_PREFIX = "firmware-z1-"
+
+
+def select_firmware_asset(release: Release | None, machine_model: str | None = "") -> ReleaseAsset | None:
+    """Return the unique firmware .bin for *machine_model*.
+
+    C1/CA1 (and unknown) use ``firmware-{version}.bin``. Z1 uses
+    ``firmware-z1-{version}.bin``. Debug-symbol archives are ignored.
+    """
     if release is None:
         return None
-    bins = [
-        asset
-        for asset in release.assets
-        if asset.name.lower().endswith(".bin") and "debug" not in asset.name.lower() and "z1" not in asset.name.lower()
-    ]
+    want_z1 = (machine_model or "").startswith("Z1")
+    bins = [asset for asset in release.assets if _is_model_firmware_bin(asset.name, want_z1=want_z1)]
     if len(bins) == 1:
         return bins[0]
     firmware_named = [asset for asset in bins if asset.name.lower().startswith("firmware-")]
@@ -86,9 +90,22 @@ def select_firmware_asset(release: Release | None) -> ReleaseAsset | None:
     return None
 
 
-def firmware_one_click_ready(release: Release | None) -> bool:
-    asset = select_firmware_asset(release)
+def firmware_one_click_ready(release: Release | None, machine_model: str | None = "") -> bool:
+    asset = select_firmware_asset(release, machine_model)
     return bool(asset and asset.sha256 and asset.size > 0 and asset.browser_download_url)
+
+
+def _is_firmware_bin_name(name: str) -> bool:
+    lowered = name.lower()
+    return lowered.endswith(".bin") and "debug" not in lowered
+
+
+def _is_model_firmware_bin(name: str, *, want_z1: bool) -> bool:
+    lowered = name.lower()
+    if not _is_firmware_bin_name(name):
+        return False
+    is_z1_asset = lowered.startswith(Z1_FIRMWARE_PREFIX)
+    return is_z1_asset if want_z1 else not is_z1_asset and "z1" not in lowered
 
 
 def _name_matches(name: str, suffixes: tuple[str, ...]) -> bool:

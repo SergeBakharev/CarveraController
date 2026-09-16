@@ -177,10 +177,14 @@ from carveracontroller.ui.file_browser.thumbnail import (
 )
 from carveracontroller.ui.updates import UpgradePopup
 from carveracontroller.updater import (
+    EspOtaCancelled,
+    EspOtaError,
     check_updates,
     fetch_firmware_bin,
+    firmware_install_plan,
     firmware_one_click_supported,
     snapshot_with_prereleases,
+    upload_esp_ota,
 )
 from carveracontroller.updater.backup import matching_backup_paths
 from carveracontroller.updater.config import CACHE_SUBDIR, CONFIG_INCLUDE_PRERELEASES
@@ -2923,6 +2927,8 @@ class Makera(RelativeLayout):
         self._uploading_firmware = False
         self._firmware_delete_after = None
         self._firmware_download_cancel = None
+        self._esp_ota_cancel = None
+        self._esp_ota_conn = None
 
         self.cnc = CNC()
         self.wcs_names = self.cnc.getWCSNames()
@@ -4778,11 +4784,22 @@ class Makera(RelativeLayout):
         filename = os.path.basename(os.path.normpath(filepath))
         firmware = bool(self.file_popup.firmware_mode)
         if firmware:
+            plan = self._firmware_plan(filepath)
             self.confirm_popup.lb_title.text = tr._("Install firmware")
-            self.confirm_popup.lb_content.text = tr._(
-                "This will upload the selected firmware file to the machine as /sd/firmware.bin. "
-                "A machine reset is required to apply it. Back up the machine configuration first if you have not already."
-            )
+            if plan.use_ota:
+                self.confirm_popup.lb_content.text = tr._(
+                    "This will send the ESP (mainboard) firmware to the machine over WiFi. "
+                    "The machine will reboot to apply it. A WiFi connection is required. "
+                    "Back up the machine configuration first if you have not already."
+                )
+            else:
+                self.confirm_popup.lb_content.text = (
+                    tr._(
+                        "This will upload the selected firmware file to the machine as %s. "
+                        "A machine reset is required to apply it. Back up the machine configuration first if you have not already."
+                    )
+                    % plan.remote_path
+                )
             self.confirm_popup.cancel = None
             self.confirm_popup.confirm = partial(self._confirmed_firmware_upload, filepath)
             self.confirm_popup.open(self)
@@ -6115,26 +6132,25 @@ class Makera(RelativeLayout):
         if app is None or app.state != "Idle" or self.uploading or self.downloading:
             self.show_message_popup(tr._("The machine must be idle to install firmware."), False)
             return
-        if not firmware_one_click_supported(getattr(app, "model", "")):
+        machine_model = getattr(app, "model", "")
+        if not firmware_one_click_supported(machine_model):
             self.show_message_popup(
-                tr._("One-click firmware install is only supported on C1 and CA1."),
+                tr._("One-click firmware install is only supported on C1, CA1, and Z1."),
                 False,
             )
             return
         version = release.display_name if release is not None else ""
+        dest = self._firmware_plan().remote_path
         self.confirm_popup.lb_title.text = tr._("Install firmware")
-        self.confirm_popup.lb_content.text = (
-            tr._(
-                "This will download firmware %s, verify its checksum, upload it to the machine as /sd/firmware.bin, "
-                "and then ask you to reset the machine. Back up the machine configuration first if you have not already."
-            )
-            % version
-        )
+        self.confirm_popup.lb_content.text = tr._(
+            "This will download firmware %s, verify its checksum, upload it to the machine as %s, "
+            "and then ask you to reset the machine. Back up the machine configuration first if you have not already."
+        ) % (version, dest)
         self.confirm_popup.cancel = None
-        self.confirm_popup.confirm = partial(self._download_and_install_firmware, release)
+        self.confirm_popup.confirm = partial(self._download_and_install_firmware, release, machine_model)
         self.confirm_popup.open(self)
 
-    def _download_and_install_firmware(self, release):
+    def _download_and_install_firmware(self, release, machine_model=""):
         cancel_event = threading.Event()
         self._firmware_download_cancel = cancel_event
         Clock.schedule_once(
@@ -6146,9 +6162,10 @@ class Makera(RelativeLayout):
             0,
         )
         dest_dir = os.path.join(self.temp_dir, "firmware")
+        self._log_firmware("downloading %s" % release.display_name)
         threading.Thread(
             target=self._download_firmware_worker,
-            args=(release, dest_dir, cancel_event),
+            args=(release, dest_dir, cancel_event, machine_model),
             daemon=True,
         ).start()
 
@@ -6156,19 +6173,27 @@ class Makera(RelativeLayout):
         if self._firmware_download_cancel is not None:
             self._firmware_download_cancel.set()
 
-    def _download_firmware_worker(self, release, dest_dir, cancel_event):
+    def _download_firmware_worker(self, release, dest_dir, cancel_event, machine_model=""):
         def progress(received, total):
             percent = (received * 100.0 / total) if total else 0
             Clock.schedule_once(partial(self.progressUpdate, percent, "", False), 0)
 
         try:
-            path = fetch_firmware_bin(release, dest_dir, cancel_event=cancel_event, progress=progress)
+            path = fetch_firmware_bin(
+                release,
+                dest_dir,
+                machine_model=machine_model,
+                cancel_event=cancel_event,
+                progress=progress,
+            )
         except DownloadCancelled:
             Clock.schedule_once(self.progressFinish, 0)
+            self._log_firmware("download cancelled")
             return
         except DownloadError as exc:
             Clock.schedule_once(self.progressFinish, 0)
             Clock.schedule_once(partial(self.show_message_popup, str(exc), False), 0.1)
+            self._log_firmware("download failed: %s" % exc, error=True)
             return
         except Exception:
             logger.exception("Firmware download failed")
@@ -6176,7 +6201,9 @@ class Makera(RelativeLayout):
             Clock.schedule_once(
                 partial(self.show_message_popup, tr._("Couldn't download the firmware file."), False), 0.1
             )
+            self._log_firmware("download failed", error=True)
             return
+        self._log_firmware("downloaded %s" % path.name)
         Clock.schedule_once(self.progressFinish, 0)
         Clock.schedule_once(partial(self._start_firmware_install_from_download, str(path)), 0.1)
 
@@ -6202,8 +6229,128 @@ class Makera(RelativeLayout):
         if not filepath or not os.path.isfile(filepath):
             self.show_message_popup(tr._("Couldn't find the firmware file."), False)
             return
+        plan = self._firmware_plan(filepath)
+        try:
+            size = os.path.getsize(filepath)
+        except OSError:
+            size = 0
+        self._log_firmware("detected %s in %s (%s bytes)" % (plan.kind_label, os.path.basename(filepath), size))
+        self._log_firmware("sending via %s" % plan.method_description)
+        if plan.use_ota:
+            self._start_esp_ota(filepath, host=plan.ota_host, delete_after=delete_after)
+            return
         self._firmware_delete_after = filepath if delete_after else None
         self.uploadLocalFile(filepath, firmware=True)
+
+    def _firmware_plan(self, filepath=None):
+        app = App.get_running_app()
+        return firmware_install_plan(
+            getattr(app, "model", "") if app is not None else "",
+            filepath,
+            wifi_address=getattr(self.controller, "connection_address", ""),
+        )
+
+    def _log_firmware(self, message, *, error=False):
+        text = "Firmware: %s" % message
+        if error:
+            logger.error("%s", text)
+            self.controller.log.put((Controller.MSG_ERROR, text))
+        else:
+            logger.info("%s", text)
+            self.controller.log.put((Controller.MSG_NORMAL, text))
+
+    def _start_esp_ota(self, filepath, *, host="", delete_after=False):
+        if self.controller.connection_type != CONN_WIFI or not host:
+            self._log_firmware("ESP OTA requires WiFi; not sending", error=True)
+            self.show_message_popup(tr._("ESP firmware updates must be sent over WiFi."), False)
+            if delete_after:
+                self._remove_path_quietly(filepath)
+            return
+        self._firmware_delete_after = filepath if delete_after else None
+        cancel_event = threading.Event()
+        self._esp_ota_cancel = cancel_event
+        self._esp_ota_conn = None
+        self.uploading = True
+        Clock.schedule_once(
+            partial(
+                self.progressStart,
+                tr._("Uploading ESP firmware") + "\n%s" % os.path.basename(filepath),
+                self._cancel_esp_ota,
+            ),
+            0,
+        )
+        threading.Thread(
+            target=self._esp_ota_worker,
+            args=(filepath, host, cancel_event),
+            daemon=True,
+        ).start()
+
+    def _cancel_esp_ota(self):
+        if self._esp_ota_cancel is not None:
+            self._esp_ota_cancel.set()
+        conn = self._esp_ota_conn
+        self._esp_ota_conn = None
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _esp_ota_worker(self, filepath, host, cancel_event):
+        def progress(sent, total):
+            percent = (sent * 100.0 / total) if total else 0
+            Clock.schedule_once(partial(self.progressUpdate, percent, "", False), 0)
+
+        def on_connection(conn):
+            self._esp_ota_conn = conn
+
+        try:
+            self.controller.pauseStream(1)
+            upload_esp_ota(
+                host,
+                filepath,
+                progress=progress,
+                cancel_event=cancel_event,
+                on_connection=on_connection,
+            )
+        except EspOtaCancelled:
+            Clock.schedule_once(self.progressFinish, 0)
+            self._log_firmware("ESP OTA transfer cancelled")
+            self._cleanup_firmware_temp(success=False)
+            return
+        except EspOtaError as exc:
+            Clock.schedule_once(self.progressFinish, 0)
+            Clock.schedule_once(partial(self.show_message_popup, str(exc), False), 0.1)
+            self._log_firmware("ESP OTA transfer failed: %s" % exc, error=True)
+            self._cleanup_firmware_temp(success=False)
+            return
+        except Exception:
+            logger.exception("ESP firmware update failed")
+            Clock.schedule_once(self.progressFinish, 0)
+            Clock.schedule_once(partial(self.show_message_popup, tr._("Couldn't send the ESP firmware."), False), 0.1)
+            self._log_firmware("ESP OTA transfer failed", error=True)
+            self._cleanup_firmware_temp(success=False)
+            return
+        finally:
+            self.uploading = False
+            self._esp_ota_conn = None
+            self._esp_ota_cancel = None
+            try:
+                self.controller.resumeStream()
+            except Exception:
+                logger.debug("Could not resume stream after ESP OTA", exc_info=True)
+
+        Clock.schedule_once(self.progressFinish, 0)
+        self._log_firmware("ESP OTA transfer succeeded")
+        Clock.schedule_once(
+            partial(
+                self.show_message_popup,
+                tr._("ESP firmware was sent. The machine is rebooting; reconnect when it comes back online."),
+                False,
+            ),
+            0.1,
+        )
+        self._cleanup_firmware_temp(success=True)
 
     def _remove_path_quietly(self, filepath):
         try:
@@ -6244,12 +6391,14 @@ class Makera(RelativeLayout):
             logger.exception("Upload failed")
             self.controller.log.put((Controller.MSG_ERROR, str(exc)))
             Clock.schedule_once(partial(self.show_message_popup, tr._("Upload file error!"), False), 0)
+            if firmware:
+                self._log_firmware("SD transfer failed: %s" % exc, error=True)
             self._cleanup_firmware_temp(success=False)
             self._uploading_firmware = False
             return
         remotename = os.path.join(self.file_popup.machine_dir, os.path.basename(os.path.normpath(self.uploading_file)))
         if firmware:
-            remotename = "/sd/firmware.bin"
+            remotename = self._firmware_plan(self.uploading_file).remote_path
         displayname = self.uploading_file
         if displayname.endswith(".lz"):
             # 删除 ".lz" 后缀
@@ -6270,6 +6419,7 @@ class Makera(RelativeLayout):
             self.controller.log.put((Controller.MSG_ERROR, str(exc)))
             self.controller.resumeStream()
             self.uploading = False
+            upload_result = False
 
         self.controller.resumeStream()
         self.uploading = False
@@ -6280,10 +6430,14 @@ class Makera(RelativeLayout):
 
         if upload_result is None:
             self.controller.log.put((Controller.MSG_NORMAL, tr._("Uploading is canceled manually.")))
+            if firmware:
+                self._log_firmware("SD transfer cancelled")
             # 如果为压缩后的'.lz'文件则删除该文件
             if self.uploading_file.endswith(".lz"):
                 os.remove(self.uploading_file)
         elif not upload_result:
+            if firmware:
+                self._log_firmware("SD transfer failed", error=True)
             # 如果为压缩后的'.lz'文件则删除该文件
             if self.uploading_file.endswith(".lz"):
                 os.remove(self.uploading_file)
@@ -6320,6 +6474,7 @@ class Makera(RelativeLayout):
                         os.makedirs(os.path.dirname(local_path))
                     shutil.copyfile(self.uploading_file, local_path)
             if firmware:
+                self._log_firmware("SD transfer succeeded")
                 Clock.schedule_once(self.confirm_reset, 0)
             # update recent folder
             if not firmware:

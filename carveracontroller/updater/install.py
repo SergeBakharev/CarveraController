@@ -17,12 +17,13 @@ def fetch_firmware_bin(
     release: Release,
     dest_dir: str | Path,
     *,
+    machine_model: str = "",
     cancel_event: threading.Event | None = None,
     progress: ProgressFn | None = None,
     download_fn=download_file,
 ) -> Path:
     """Download and verify the firmware .bin for *release* into *dest_dir*."""
-    asset = select_firmware_asset(release)
+    asset = select_firmware_asset(release, machine_model)
     if asset is None:
         raise DownloadError("This release does not contain a unique firmware file.")
     if not asset.sha256:
