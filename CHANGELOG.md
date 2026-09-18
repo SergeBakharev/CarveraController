@@ -31,6 +31,7 @@
 - Fixed: Machine config backup no longer applies settings or opens files in the G-code viewer
 - Fixed: Fixed rotary previews so toolpaths, pointers, and stock rotate around the WCS origin without unwanted orbiting.
 - Fixed: Keep thin tool icon fills visible by drawing the outline outside the silhouette.
+- Fixed: Upload-and-select on the Z1 would not select the file after uploading. The select callback ran on the wrong thread because Z1 does not use .lz compression.
 
 [2.2.0-RC3]
 - Enhancement: The step size is now synchronized between the main screen and the Probing screen
