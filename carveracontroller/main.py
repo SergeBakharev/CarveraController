@@ -6366,7 +6366,6 @@ class Makera(RelativeLayout):
         if path:
             self._remove_path_quietly(path)
 
-    # -----------------------------------------------------------------------
     def uploadLocalFile(self, filepath, callback=None, firmware=None):
         if firmware is None:
             firmware = bool(self.file_popup.firmware_mode)
@@ -6409,11 +6408,14 @@ class Makera(RelativeLayout):
         self.uploading = True
         self.controller.pauseStream(1)
         upload_result = None
+        last_file_error = None
         try:
             # md5 = Utils.md5(self.uploading_file)
             md5 = Utils.md5(displayname)
             self.controller.uploadCommand(os.path.normpath(remotename))
             upload_result = self.controller.stream.upload(self.uploading_file, md5, self.uploadCallback)
+            modem = getattr(self.controller.stream, "modem", None)
+            last_file_error = getattr(modem, "last_file_error", None) if modem else None
         except Exception as exc:
             logger.exception("Upload failed")
             self.controller.log.put((Controller.MSG_ERROR, str(exc)))
@@ -6428,6 +6430,10 @@ class Makera(RelativeLayout):
 
         self.heartbeat_time = time.time()
 
+        # FILE_CAN with a payload is a failed open, not a user cancel.
+        if upload_result is None and last_file_error:
+            upload_result = False
+
         if upload_result is None:
             self.controller.log.put((Controller.MSG_NORMAL, tr._("Uploading is canceled manually.")))
             if firmware:
@@ -6441,7 +6447,8 @@ class Makera(RelativeLayout):
             # 如果为压缩后的'.lz'文件则删除该文件
             if self.uploading_file.endswith(".lz"):
                 os.remove(self.uploading_file)
-            # show message popup
+            if last_file_error:
+                self.controller.log.put((Controller.MSG_ERROR, last_file_error))
             Clock.schedule_once(partial(self.show_message_popup, tr._("Upload file error!"), False), 0)
         else:
             # copy file to application directory if needed
@@ -6499,7 +6506,7 @@ class Makera(RelativeLayout):
                 # The callback will be triggered in updateCompressProgress when decompression finishes
                 self.pending_decompress_callback = partial(callback, remotename[:-3], origin_path)
             else:
-                callback(remotename, local_path)
+                Clock.schedule_once(lambda dt: callback(remotename, local_path), 0)
         # For iOS we display the file list remotely only so we need to refresh it but on main thread
         if upload_result and not firmware and not self.uploading_file.endswith(".lz"):
             Clock.schedule_once(self.file_popup.refresh_machine, 0)
