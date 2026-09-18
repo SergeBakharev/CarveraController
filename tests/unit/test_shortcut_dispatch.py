@@ -659,3 +659,64 @@ def test_toggle_jog_mode_is_a_no_op_when_unavailable():
     assert Makera.toggle_jog_mode(root) is False
     root.update_ui_for_jog_mode_cont.assert_not_called()
     root.update_ui_for_jog_mode_step.assert_not_called()
+
+
+def test_jog_mode_disables_cmm_step_widgets_when_overlay_exists():
+    step_xy = SimpleNamespace(disabled=False)
+    step_a = SimpleNamespace(disabled=False)
+    step_z = SimpleNamespace(disabled=False)
+    probing_step_xy = SimpleNamespace(disabled=False)
+    probing_step_a = SimpleNamespace(disabled=False)
+    probing_step_z = SimpleNamespace(disabled=False)
+    jog = SimpleNamespace(set_step_widgets_disabled=Mock())
+    root = SimpleNamespace(
+        ids={"step_xy": step_xy, "step_a": step_a, "step_z": step_z},
+        probing_popup=SimpleNamespace(
+            ids={"step_xy": probing_step_xy, "step_a": probing_step_a, "step_z": probing_step_z}
+        ),
+        cmm_workbench_popup=SimpleNamespace(_jog_popup=jog),
+    )
+
+    Makera._set_jog_step_inputs_disabled(root, True)
+
+    assert step_xy.disabled is True
+    assert step_a.disabled is True
+    assert step_z.disabled is True
+    assert probing_step_xy.disabled is True
+    assert probing_step_a.disabled is True
+    assert probing_step_z.disabled is True
+    jog.set_step_widgets_disabled.assert_called_once_with(True)
+
+
+def test_jog_mode_skips_cmm_step_widgets_when_overlay_is_absent():
+    root = SimpleNamespace(
+        ids={"step_xy": SimpleNamespace(disabled=False)},
+        probing_popup=SimpleNamespace(ids={}),
+        cmm_workbench_popup=None,
+    )
+
+    Makera._set_jog_step_inputs_disabled(root, True)
+
+
+def test_cmm_jog_overlay_disables_step_widgets():
+    overlay = SimpleNamespace(
+        step_xy=SimpleNamespace(disabled=False),
+        step_a=SimpleNamespace(disabled=False),
+        step_z=SimpleNamespace(disabled=False),
+    )
+
+    JogCMMWorkbenchPopup.set_step_widgets_disabled(overlay, True)
+
+    assert overlay.step_xy.disabled is True
+    assert overlay.step_a.disabled is True
+    assert overlay.step_z.disabled is True
+
+
+def test_cmm_jog_overlay_syncs_step_widgets_from_controller_jog_mode():
+    overlay = SimpleNamespace(set_step_widgets_disabled=Mock())
+    app = SimpleNamespace(root=SimpleNamespace(controller=SimpleNamespace(jog_mode=Controller.JOG_MODE_CONTINUOUS)))
+
+    with patch("carveracontroller.addons.cmm_workbench.ui.CMMWorkbenchPopup.App.get_running_app", return_value=app):
+        JogCMMWorkbenchPopup._sync_step_widgets_disabled(overlay)
+
+    overlay.set_step_widgets_disabled.assert_called_once_with(True)
