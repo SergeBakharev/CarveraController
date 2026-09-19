@@ -5125,7 +5125,8 @@ class Makera(RelativeLayout):
         # Preserve selected file only when reconnecting to the same machine.
         # finishLoadConfig() can be called on reconnect; resume-at-line depends on
         # loaded self.lines matching selection (_last_loaded_file_key). If the user
-        # connects to a different machine (different IP/COM port), clear machine selection.
+        # connects to a different machine (different IP/COM port), clear the job
+        # including the file view, tool-change flags, and 3D simulation.
         app = App.get_running_app()
         current_key = self._get_current_machine_connection_key()
         if self._selected_file_machine_key is None:
@@ -5135,6 +5136,7 @@ class Makera(RelativeLayout):
             app.selected_remote_filename = ""
             self._last_loaded_file_key = None
             self._selected_file_machine_key = current_key
+            self.clear_selection()
             self.apply_bed_settings()
         self.updateStatus()
 
@@ -8487,12 +8489,18 @@ class Makera(RelativeLayout):
         self.gcode_rv.data = []
         self.gcode_rv.data_length = 0
         self.gcode_viewer.clearDisplay()
+        self.gcode_viewer.begin_new_file_load()
+        self.gcode_playing = False
+        self.gcode_cannot_visualise = False
         self.wpb_play.value = 0
         self.used_tools = []
         self.upcoming_tool = 0
         self.tool_table = {}
         self.cam_metadata = CamMetadata.empty()
         self.document_unit = "mm"
+        self.file_has_ocodes = False
+        self.lines = []
+        self.selected_file_line_count = 0
         self.gcode_viewer.tool_table = {}
         self.gcode_viewer.tool_unit_scale = 1.0
         self.init_path_visibility()
