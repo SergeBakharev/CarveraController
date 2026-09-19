@@ -80,14 +80,6 @@ LOAD_CONN_WIFI = 8
 SEND_FILE = 1
 
 
-def session_light_commands(turn_on, is_community_firmware):
-    """G-code to apply for a connect (on) or disconnect (off) light change."""
-    commands = ["M821" if turn_on else "M822"]
-    if is_community_firmware:
-        commands.append("M337 B104" if turn_on else "M337 B0 U0 R0")
-    return commands
-
-
 CONN_USB = 0
 CONN_WIFI = 1
 
@@ -541,12 +533,12 @@ class Controller:
         try:
             from kivy.config import Config
 
-            return Config.getboolean("carvera", "auto_lights_on_connect", fallback=True)
+            return Config.getboolean("carvera", "auto_lights_on_connect", fallback=False)
         except Exception:
             return False
 
     def apply_session_lights(self, turn_on, *, enabled=None):
-        """Turn enclosure/LED lights on at connect or off before disconnect."""
+        """Turn enclosure light on at connect or off before disconnect."""
         if turn_on and self._session_lights_applied:
             return
         if enabled is None:
@@ -558,8 +550,7 @@ class Controller:
             return
         if self.stream is None:
             return
-        for command in session_light_commands(turn_on, self.is_community_firmware):
-            self.executeCommand(command + "\n")
+        self.setLightSwitch(turn_on)
         self._session_lights_applied = turn_on
 
     def setExternalControl(self, pwm=100):

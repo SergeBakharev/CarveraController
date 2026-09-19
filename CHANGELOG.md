@@ -2,7 +2,7 @@
 - Enhancement: Firmware updater now support Makera Z1. Detects if fw is bundled LPC+ESP, LPC-only, or ESP-only and updates using the correct method
 - Enhancement: Improve update popup UI and retrieve version data from the GitHub API
 - Enhancement: Replace the nested Remote/Local file popup with a single file browser
-- Enhancement: Auto enclosure/LED lights on connect and off on disconnect or app close. Controller setting is available to enable/disable this feature, default is enabled.
+- Enhancement: Auto enclosure light on connect and off on disconnect or app close. Controller setting is available to enable/disable this feature, default is disabled.
 - Enhancement: Tool-change flags have tooltip showing time until the change
 - Enhancement: Remaining time text alternates with time until the next tool change and playback completion
 - Enhancement: Selected files show estimated run time on the playback bar before the job starts
