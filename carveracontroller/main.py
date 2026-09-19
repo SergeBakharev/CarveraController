@@ -9301,7 +9301,7 @@ def set_config_defaults(default_lang):
     if not Config.has_option("carvera", "show_playbar_tool_change_markers"):
         Config.set("carvera", "show_playbar_tool_change_markers", "1")
     if not Config.has_option("carvera", "auto_lights_on_connect"):
-        Config.set("carvera", "auto_lights_on_connect", "1")
+        Config.set("carvera", "auto_lights_on_connect", "0")
 
     # G-code viewer defaults
     if not Config.has_option("carvera", "gcode_auto_show_stock"):
