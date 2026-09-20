@@ -306,6 +306,44 @@ def feed_mm_min_for_move(is_rapid, feed_value=None):
     return DEFAULT_FEED_MM_MIN
 
 
+def _linedata_tool(line):
+    """Return the integer tool id from a parsed coordinate row, or None."""
+    if line is None or len(line) <= 6:
+        return None
+    try:
+        return int(line[6])
+    except (TypeError, ValueError):
+        return None
+
+
+def bridge_toolpath_vertices(lines, prev_line=None):
+    """Insert extra vertices so discrete line-strip attributes do not interpolate."""
+    dataarrs = []
+    last_line = prev_line
+    last_color = prev_line[4] if prev_line is not None else -1
+    for line in lines:
+        color = line[4]
+        tool = _linedata_tool(line)
+        last_tool = _linedata_tool(last_line)
+
+        if last_line is not None and tool is not None and last_tool is not None and tool != last_tool:
+            snap = last_line.copy()
+            snap[6] = tool
+            dataarrs.append(snap)
+
+        if last_color >= 0 and color >= 0 and color != last_color:
+            copyline = line.copy()
+            copyline[4] = last_color
+            dataarrs.append(copyline)
+            dataarrs.append(line)
+        else:
+            dataarrs.append(line)
+
+        last_line = line
+        last_color = color
+    return dataarrs
+
+
 def _percentile_from_sorted(sorted_vals, percentile):
     """Linear-interpolation percentile; percentile in 0..100."""
     n = len(sorted_vals)
@@ -841,6 +879,7 @@ class GCodeViewer(Widget):
         self.z_bucket_bits = VISIBILITY_ALL_BUCKET_BITS
         self._tool_filter_ids = []
         self._tool_filter_bits = 0
+        self._path_bridge_prev = None
 
         self._apply_color_scheme_uniform()
         self._update_feed_range_uniforms()
@@ -1131,6 +1170,7 @@ class GCodeViewer(Widget):
         """Drop leftover path vertices so a new file cannot inherit the previous load."""
         self.clear_before_new_load = False
         self.meshmanager.clear()
+        self._path_bridge_prev = None
         self.total_distance = 0.0
         self.total_line_count = 0
 
@@ -1139,6 +1179,7 @@ class GCodeViewer(Widget):
             self.clear_before_new_load = False
 
             self.meshmanager.clear()
+            self._path_bridge_prev = None
 
     def _tool_number_at_index(self, vertex_idx):
         """Return the active tool number (int) at a given vertex index, or None."""
@@ -1202,31 +1243,11 @@ class GCodeViewer(Widget):
     def load_array(self, tmpdataarrs, is_end=True):
         self.clear_loaded_memery()
 
-        dataarrs = []
-        # Insert bridging segments when feed/rapid colors change
-        last_color = -1
-        last_line = -1
-        for line in tmpdataarrs:
-            color = line[4]
-
-            need_regenerate = False
-            if color >= 0 and last_color >= 0:
-                if color != last_color:
-                    need_regenerate = True
-
-            if need_regenerate:
-                replace_str = last_color
-                copyline = line.copy()
-                copyline[4] = last_color
-
-                dataarrs.append(copyline)
-                dataarrs.append(line)
-
-            else:
-                dataarrs.append(line)
-
-            last_line = line
-            last_color = color
+        dataarrs = bridge_toolpath_vertices(tmpdataarrs, prev_line=getattr(self, "_path_bridge_prev", None))
+        if tmpdataarrs:
+            self._path_bridge_prev = tmpdataarrs[-1].copy()
+        if is_end:
+            self._path_bridge_prev = None
 
         if is_end:
             self.clear_before_new_load = True
