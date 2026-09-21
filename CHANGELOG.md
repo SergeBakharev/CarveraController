@@ -36,6 +36,7 @@
 - Fixed: Keyboard jogging in the CMM Workbench now uses the workbench step size, synchronized with the main screen
 - Fixed: Y+/Y- jogging buttons on the CMM Workbench respect the configured Y axis inversion setting
 - Fixed: Connecting to a different machine now clears the previous job's file view, tool-change flags, and 3D simulation
+- Fixed: Hiding tools in the G-code viewer now always hides the moves between tool changes
 
 [2.2.0-RC3]
 - Enhancement: The step size is now synchronized between the main screen and the Probing screen
