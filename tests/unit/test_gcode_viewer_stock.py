@@ -211,6 +211,18 @@ def test_pcb_surface_eps_thinner_than_isolation_and_cell():
     assert eps < 0.05
 
 
+def test_chamfer_shadow_lift_skips_rotary_shells():
+    """Mid-range normal Z is the cylinder shoulder; only rectangular chamfers get the lift."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "carveracontroller" / "shaders" / "carved_stock.glsl").read_text()
+    start = src.index("A steep chamfer")
+    block = src[start : src.index("float is_surface")]
+    assert "cylindrical_skin < 0.5" in block
+    assert "1.0 - smoothstep(0.60, 0.85, up)" in block
+    assert "smoothstep(0.85" not in block
+
+
 def test_two_tone_skin_uses_stock_local_space_not_rotated_z():
     """Foil/skin must follow the stock face under A rotation; rotary caps stay core."""
     from pathlib import Path

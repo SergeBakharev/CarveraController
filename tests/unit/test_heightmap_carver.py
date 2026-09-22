@@ -121,6 +121,99 @@ def test_heightmap_varied_field_one_top_per_cell():
     assert n_top == 8 * 8 * 4
 
 
+def _mesh_verts(hm: HeightmapBackend) -> np.ndarray:
+    chunks = []
+    for packed in hm.mesh_tiles(hm.initial_surface_keys()).values():
+        if not packed:
+            continue
+        chunks.append(np.asarray(packed[0], dtype=np.float32).reshape(-1, 12))
+    assert chunks
+    return np.concatenate(chunks, axis=0)
+
+
+def _top_normal_at(verts: np.ndarray, x: float, z: float) -> np.ndarray:
+    pos = verts[:, 0:3]
+    nrm = verts[:, 3:6]
+    hit = (np.abs(pos[:, 0] - x) < 1e-4) & (np.abs(pos[:, 2] - z) < 1e-3) & (nrm[:, 2] > 0.4)
+    assert hit.any()
+    got = nrm[hit]
+    assert np.allclose(got, got[0], atol=1e-5)
+    return got[0]
+
+
+def test_heightmap_flat_top_normal_is_vertical():
+    bounds = StockBounds(0, 0, 0, 8, 8, 4)
+    hm = HeightmapBackend(bounds, 1.0, RectangularStock(8, 8, 4))
+    verts = _mesh_verts(hm)
+    top = verts[verts[:, 5] > 0.5]
+    assert top.size
+    assert np.allclose(top[:, 3:6], (0.0, 0.0, 1.0))
+
+
+def test_heightmap_ramp_tops_tilt_downhill():
+    bounds = StockBounds(0, 0, 0, 8, 8, 4)
+    hm = HeightmapBackend(bounds, 1.0, RectangularStock(8, 8, 4), tile_size=8)
+    slope = np.float32(0.25)
+    hm.heights[:, :] = np.float32(1.0) + np.arange(8, dtype=np.float32)[:, None] * slope
+    verts = _mesh_verts(hm)
+    # Interior column, both X neighbors on the ramp. Height grows toward +X,
+    # so the shading normal leans toward -X. Y is constant, so ny stays ~0.
+    nrm = _top_normal_at(verts, x=3.0, z=float(hm.heights[3, 0]))
+    assert nrm[0] < -0.4
+    assert abs(float(nrm[1])) < 0.05
+    assert nrm[2] > 0.7
+    assert abs(float(np.linalg.norm(nrm)) - 1.0) < 1e-4
+
+
+def test_heightmap_steep_ramp_normal_stays_upward():
+    bounds = StockBounds(0, 0, 0, 8, 8, 4)
+    hm = HeightmapBackend(bounds, 1.0, RectangularStock(8, 8, 4), tile_size=8)
+    hm.heights[:, :] = np.float32(0.5) + np.arange(8, dtype=np.float32)[:, None] * np.float32(2.0)
+    verts = _mesh_verts(hm)
+    nrm = _top_normal_at(verts, x=3.0, z=float(hm.heights[3, 0]))
+    assert nrm[0] < 0.0
+    assert abs(float(nrm[2]) - 0.5) < 0.02
+    assert abs(float(np.linalg.norm(nrm)) - 1.0) < 1e-4
+
+
+def test_heightmap_wall_does_not_tilt_adjacent_tread():
+    bounds = StockBounds(0, 0, 0, 8, 8, 4)
+    hm = HeightmapBackend(bounds, 1.0, RectangularStock(8, 8, 4), tile_size=8)
+    slope = np.float32(0.25)
+    hm.heights[:, :] = np.float32(5.0) + np.arange(8, dtype=np.float32)[:, None] * slope
+    hm.heights[5, :] = np.float32(0.2)
+    verts = _mesh_verts(hm)
+    interior = _top_normal_at(verts, x=2.0, z=float(hm.heights[2, 0]))
+    lip = _top_normal_at(verts, x=4.0, z=float(hm.heights[4, 0]))
+    assert lip[2] > 0.7
+    assert abs(float(lip[0] - interior[0])) < 0.05
+    floor = _top_normal_at(verts, x=5.0, z=0.2)
+    assert abs(float(floor[0])) < 0.05
+    assert abs(float(floor[2]) - 1.0) < 0.05
+
+
+def test_heightmap_small_dip_in_flat_tile_is_shaded():
+    """A chamfer in a mostly flat tile must not inherit the plateau's +Z normal."""
+    bounds = StockBounds(0, 0, 0, 8, 8, 4)
+    hm = HeightmapBackend(bounds, 1.0, RectangularStock(8, 8, 4), tile_size=8)
+    hm.heights[:, :] = np.float32(4.0)
+    hm.heights[3:6, 3:6] = np.array(
+        [
+            [3.4, 3.2, 3.4],
+            [3.2, 3.0, 3.2],
+            [3.4, 3.2, 3.4],
+        ],
+        dtype=np.float32,
+    )
+    verts = _mesh_verts(hm)
+    flat = _top_normal_at(verts, x=0.0, z=4.0)
+    rim = _top_normal_at(verts, x=3.0, z=3.2)
+    assert abs(float(flat[0])) < 0.05
+    assert abs(float(flat[2]) - 1.0) < 0.05
+    assert rim[0] > 0.2
+    assert rim[2] > 0.5
+
+
 def test_heightmap_checkpoint_roundtrip():
     bounds = StockBounds(-10, -10, 0, 10, 10, 5)
     hm = HeightmapBackend(bounds, 0.5, RectangularStock(20, 20, 5))

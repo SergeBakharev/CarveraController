@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from carveracontroller.addons.stock.simulator.carvers.array_mesh import pack_quad_meshes
@@ -12,6 +14,13 @@ _OUTSIDE = np.float32(-1e30)
 _MERGE_Z = 1e-4
 # Flat pockets/walls merge well; mixed ball-nose tiles do not (use vectorized quads).
 _GREEDY_MIN_MERGE_FRAC = 0.6
+# Exaggerate gentle slopes.
+_SLOPE_EXAGGERATION = np.float32(3.0)
+# Stay above the up-face cutoff (0.35).
+_MIN_UP_COMPONENT = np.float32(0.5)
+_MAX_SLOPE_XY = np.float32(math.sqrt((1.0 / float(_MIN_UP_COMPONENT)) ** 2 - 1.0))
+# Steeper than this is a wall.
+_CLIFF_SLOPE = np.float32(4.0)
 
 
 def _as_xyz(x, y, z) -> np.ndarray:
@@ -34,6 +43,90 @@ def _axis_normals(count: int, axis: int, sign: float) -> np.ndarray:
     if count:
         nrm[:, axis] = sign
     return nrm
+
+
+def _height_slope(center: np.ndarray, neg: np.ndarray, pos: np.ndarray, vs: float) -> np.ndarray:
+    """∂z/∂axis. Empty cells and near-vertical steps are left out."""
+    vs32 = np.float32(vs)
+    limit = _CLIFF_SLOPE * vs32
+    use_neg = (neg > _OUTSIDE * 0.5) & (np.abs(neg - center) <= limit)
+    use_pos = (pos > _OUTSIDE * 0.5) & (np.abs(pos - center) <= limit)
+    dz = np.zeros(center.shape, dtype=np.float32)
+    both = use_neg & use_pos
+    if np.any(both):
+        dz[both] = (pos[both] - neg[both]) * (np.float32(0.5) / vs32)
+    only_pos = use_pos & ~use_neg
+    if np.any(only_pos):
+        dz[only_pos] = (pos[only_pos] - center[only_pos]) / vs32
+    only_neg = use_neg & ~use_pos
+    if np.any(only_neg):
+        dz[only_neg] = (center[only_neg] - neg[only_neg]) / vs32
+    return dz
+
+
+def _slope_normal_grid(
+    core: np.ndarray,
+    n_left: np.ndarray,
+    n_right: np.ndarray,
+    n_down: np.ndarray,
+    n_up: np.ndarray,
+    vs: float,
+) -> np.ndarray:
+    """Shading normal at every cell. Flat cells stay +Z."""
+    dzdx = _height_slope(core, n_left, n_right, vs)
+    dzdy = _height_slope(core, n_down, n_up, vs)
+    gx = _SLOPE_EXAGGERATION * dzdx
+    gy = _SLOPE_EXAGGERATION * dzdy
+    slope = np.sqrt(gx * gx + gy * gy)
+    scale = np.ones(core.shape, dtype=np.float32)
+    over = slope > _MAX_SLOPE_XY
+    scale[over] = _MAX_SLOPE_XY / np.maximum(slope[over], np.float32(1e-12))
+    nx = -gx * scale
+    ny = -gy * scale
+    nz = np.ones(core.shape, dtype=np.float32)
+    length = np.sqrt(nx * nx + ny * ny + nz * nz)
+    return np.stack((nx / length, ny / length, nz / length), axis=-1).astype(np.float32)
+
+
+def _top_quad_normals(
+    corners: np.ndarray,
+    core: np.ndarray,
+    n_left: np.ndarray,
+    n_right: np.ndarray,
+    n_down: np.ndarray,
+    n_up: np.ndarray,
+    ox: float,
+    oy: float,
+    x0: int,
+    y0: int,
+    vs: float,
+) -> np.ndarray:
+    """+Z on plateaus. Quads one cell wide take the height-field normal.
+
+    Greedy merge keeps flat floors as big quads, but a small chamfer in that
+    same tile is a strip of single cells. Those still need a slope normal.
+    """
+    count = int(corners.shape[0]) if corners.size else 0
+    normals = _axis_normals(count, 2, 1.0)
+    if count == 0:
+        return normals
+    vs32 = np.float32(vs)
+    x_min = np.minimum(corners[:, 0, 0], corners[:, 2, 0])
+    x_max = np.maximum(corners[:, 0, 0], corners[:, 2, 0])
+    y_min = np.minimum(corners[:, 0, 1], corners[:, 2, 1])
+    y_max = np.maximum(corners[:, 0, 1], corners[:, 2, 1])
+    span_i = np.rint((x_max - x_min) / vs32).astype(np.int32)
+    span_j = np.rint((y_max - y_min) / vs32).astype(np.int32)
+    sloped = (span_i <= 1) | (span_j <= 1)
+    if not np.any(sloped):
+        return normals
+    grid = _slope_normal_grid(core, n_left, n_right, n_down, n_up, vs)
+    i0 = np.rint((x_min - np.float32(ox)) / vs32 - np.float32(x0)).astype(np.int32)
+    j0 = np.rint((y_min - np.float32(oy)) / vs32 - np.float32(y0)).astype(np.int32)
+    ic = np.clip(i0 + np.maximum(span_i // 2, 0), 0, core.shape[0] - 1)
+    jc = np.clip(j0 + np.maximum(span_j // 2, 0), 0, core.shape[1] - 1)
+    normals[sloped] = grid[ic[sloped], jc[sloped]]
+    return normals
 
 
 def _empty_quads() -> np.ndarray:
@@ -359,7 +452,8 @@ def mesh_heightmap_region(backend, x0: int, y0: int, x1: int, y1: int):
         tops = _greedy_flat_quads(valid, core, ox, oy, x0, y0, vs)
     else:
         tops = _top_quads(valid, core, ox, oy, x0, y0, vs)
-    _add(tops, _axis_normals(tops.shape[0], 2, 1.0))
+    top_normals = _top_quad_normals(tops, core, n_left, n_right, n_down, n_up, ox, oy, x0, y0, vs)
+    _add(tops, top_normals)
     _add_skirts(merge=merge)
     thick = valid & (core > bottom + _MERGE_Z)
     if thick.all():
