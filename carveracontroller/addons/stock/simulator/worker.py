@@ -53,6 +53,52 @@ _MERGE_TOL_VOXEL_FRAC = 0.25
 _MERGE_MAX_MM_FLOOR = 8.0
 _MERGE_MAX_MM_VOXEL_MULT = 16.0
 _MERGE_MAX_SPAN = 64
+# Playhead fraction within this of an integer commits that vertex (no partial).
+_PARTIAL_EPS = 1e-4
+# Cap one in-progress carve so a long move can remesh before the segment ends.
+_OPEN_SEGMENT_STEP_MM = 8.0
+
+
+def _playhead_parts(vertex: float) -> tuple[int, float]:
+    """Split a playhead into a committed vertex and the open-segment fraction.
+
+    ``10.4`` has committed every cut ending at vertex 10, and is 40% of the way
+    along the segment from 10 to 11. Values within ``_PARTIAL_EPS`` of an
+    integer commit that vertex so a tool sitting on a point does not recut.
+    """
+    v = max(0.0, float(vertex))
+    nearest = int(round(v))
+    if abs(v - float(nearest)) <= _PARTIAL_EPS:
+        return nearest, 0.0
+    base = int(math.floor(v))
+    return base, v - float(base)
+
+
+def _open_segment_fraction(
+    p0: tuple[float, float, float], p1: tuple[float, float, float], t0: float, t1: float
+) -> float:
+    """Advance ``t0`` toward ``t1``, at most ``_OPEN_SEGMENT_STEP_MM`` of XYZ."""
+    if t1 <= t0:
+        return t0
+    span = _xyz_dist(p0, p1) * (t1 - t0)
+    if span <= _OPEN_SEGMENT_STEP_MM or span < 1e-9:
+        return t1
+    stepped = t0 + (t1 - t0) * (_OPEN_SEGMENT_STEP_MM / span)
+    if stepped <= t0:
+        return t1
+    return min(stepped, t1)
+
+
+def _lerp3(
+    a: tuple[float, float, float],
+    b: tuple[float, float, float],
+    t: float,
+) -> tuple[float, float, float]:
+    return (
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    )
 
 
 def _chebyshev_tile(
@@ -437,7 +483,11 @@ class StockSimulator:
         self._grid_carved_vertex = 0
         self._bake_carved_vertex = 0
         # Latest-wins playhead the worker carves toward (UI-owned writes).
-        self._display_vertex = 0
+        # Fractional values carve the open segment past the committed vertex.
+        self._display_vertex = 0.0
+        # Open segment already removed on the live grid: anchor vertex + fraction.
+        self._partial_anchor = -1
+        self._partial_fraction = 0.0
         self._display_poke_pending = False
         self._mesh_flush = False
         # Next mesh emit replaces all GPU chunks (after reset / recarve clear).
@@ -646,7 +696,8 @@ class StockSimulator:
             self._resimulating = False
             self._grid_carved_vertex = 0
             self._bake_carved_vertex = 0
-            self._display_vertex = 0
+            self._display_vertex = 0.0
+            self._clear_open_segment_locked()
             self._display_poke_pending = False
             self._mesh_flush = False
             self._force_mesh_replace = True
@@ -667,7 +718,8 @@ class StockSimulator:
             self._resimulating = False
             self._grid_carved_vertex = 0
             self._bake_carved_vertex = 0
-            self._display_vertex = 0
+            self._display_vertex = 0.0
+            self._clear_open_segment_locked()
             self._display_poke_pending = False
             self._mesh_flush = False
             self._force_mesh_replace = False
@@ -765,6 +817,7 @@ class StockSimulator:
                     self._install_backend_locked(self._bounds, self._shape, size, kind)
                     self._grid_carved_vertex = 0
                     self._bake_carved_vertex = 0
+                    self._clear_open_segment_locked()
                     self._force_mesh_replace = True
                     reinited = True
         self._emit_checkpoints()
@@ -775,18 +828,24 @@ class StockSimulator:
     def clear_toolpath(self) -> None:
         self.set_toolpath(None, None, None, None, tool_scale=1.0)
 
-    def set_display_vertex(self, vertex: int) -> None:
+    def set_display_vertex(self, vertex: float) -> None:
         """Latest-wins playhead: the worker carves or rewinds toward ``vertex``.
 
         Safe to call every frame. Coalesces to at most one queued poke.
         Preempts idle bake; the worker rearms it after catching up when idle
         ahead is allowed (paused).
+
+        A fractional value commits every cut that ends on the integer vertex,
+        then removes material along the remainder of the next segment. Playback
+        passes that fraction so a long straight move appears as the tool travels
+        instead of when the move ends.
         """
         if not self._enabled or self._backend is None:
             return
-        v = max(0, int(vertex))
+        v = max(0.0, float(vertex))
         with self._lock:
-            if v == int(self._display_vertex) and v == int(self._grid_carved_vertex):
+            same = abs(v - float(self._display_vertex)) <= _PARTIAL_EPS
+            if same and self._playhead_caught_up_locked():
                 return
             self._display_vertex = v
             already = self._display_poke_pending
@@ -794,6 +853,23 @@ class StockSimulator:
         self._idle_cancel.set()
         if not already:
             self._queue.put(_DISPLAY_FOLLOW)
+
+    def _clear_open_segment_locked(self) -> None:
+        """Drop open-segment bookkeeping. Caller must hold ``_lock``."""
+        self._partial_anchor = -1
+        self._partial_fraction = 0.0
+
+    def _playhead_caught_up_locked(self) -> bool:
+        """True when live occupancy matches the playhead, including a partial.
+
+        Caller must hold ``_lock``.
+        """
+        target_int, fraction = _playhead_parts(self._display_vertex)
+        if int(self._grid_carved_vertex) != target_int:
+            return False
+        if fraction <= _PARTIAL_EPS:
+            return not (self._partial_anchor == target_int and self._partial_fraction > _PARTIAL_EPS)
+        return self._partial_anchor == target_int and abs(self._partial_fraction - fraction) <= _PARTIAL_EPS
 
     def set_mesh_throttle_s(self, seconds: float) -> None:
         """Change how long the worker batches dirty chunks before remeshing."""
@@ -881,7 +957,8 @@ class StockSimulator:
             if self._backend is not None:
                 self._backend.reset_occupancy()
             self._grid_carved_vertex = 0
-            self._display_vertex = max(0, int(target_vertex))
+            self._clear_open_segment_locked()
+            self._display_vertex = max(0.0, float(target_vertex))
             self._force_mesh_replace = True
         self._drain_queue()
         if self._on_meshes_ready:
@@ -1004,19 +1081,106 @@ class StockSimulator:
             return 0.0
         return float(angs[idx])
 
-    def _mesh_focus_key(self, backend, path: PathSnapshot | None, vertex: int) -> tuple[int, int, int] | None:
+    def _mesh_focus_key(self, backend, path: PathSnapshot | None, vertex: float) -> tuple[int, int, int] | None:
         """Tile under the playhead, used to prefer live-cut remesh over leftover tiles."""
         if backend is None or path is None or not path.positions:
             return None
         n = path.vertex_count()
         if n <= 0:
             return None
-        idx = max(0, min(int(vertex), n - 1))
+        idx, frac = _playhead_parts(vertex)
+        idx = max(0, min(idx, n - 1))
         x, y, z = self._raw_xyz(path, idx)
         ang = self._raw_angle(path, idx)
+        if frac > _PARTIAL_EPS and idx + 1 < n:
+            x2, y2, z2 = self._raw_xyz(path, idx + 1)
+            x = x + (x2 - x) * frac
+            y = y + (y2 - y) * frac
+            z = z + (z2 - z) * frac
+            ang2 = self._raw_angle(path, idx + 1)
+            ang = ang + (ang2 - ang) * frac
         if abs(ang) > 1e-9:
             y, z = rotate_yz(y, z, ang)
         return _world_tile_key(backend, x, y, z)
+
+    def _open_segment_job(self, path: PathSnapshot, anchor: int, t0: float, t1: float) -> CarveJob | None:
+        """Cut from fraction ``t0`` to ``t1`` along the segment ``anchor → anchor+1``."""
+        end = int(anchor) + 1
+        if end >= path.vertex_count() or t1 <= t0 + 1e-8:
+            return None
+        if not self._is_cut_vertex(path, end):
+            return None
+        p_start = self._raw_xyz(path, anchor)
+        p_end = self._raw_xyz(path, end)
+        a_start = self._raw_angle(path, anchor)
+        a_end = self._raw_angle(path, end)
+        p0 = _lerp3(p_start, p_end, t0)
+        p1 = _lerp3(p_start, p_end, t1)
+        a0 = a_start + (a_end - a_start) * t0
+        a1 = a_start + (a_end - a_start) * t1
+        if _xyz_dist(p0, p1) < 1e-9 and abs(a1 - a0) < 1e-6:
+            return None
+        return CarveJob(
+            p0=p0,
+            p1=p1,
+            tool_def=self._tool_def_at_vertex(path, end),
+            is_cut=True,
+            end_vertex=int(anchor),
+            a0=a0,
+            a1=a1,
+            tool_number=self._tool_number_at_vertex(path, end),
+            spindle_s=self._spindle_at_vertex(path, end),
+        )
+
+    def _try_apply_open_segment(
+        self,
+        backend,
+        path: PathSnapshot,
+        gen: int,
+        pending_dirty: set[tuple[int, int, int]],
+        changed_since_cp: set[tuple[int, int, int]],
+    ) -> bool:
+        """Carve one step of the in-progress segment. False if this generation ended."""
+        with self._lock:
+            if self._generation != gen or self._resimulating or backend is not self._backend:
+                return False
+            target_int, fraction = _playhead_parts(self._display_vertex)
+            carved = int(self._grid_carved_vertex)
+            anchor = int(self._partial_anchor)
+            done = float(self._partial_fraction)
+        if carved != target_int or fraction <= _PARTIAL_EPS:
+            return True
+        if anchor == carved and done + _PARTIAL_EPS >= fraction:
+            return True
+        t0 = done if anchor == carved else 0.0
+        end = carved + 1
+        if end >= path.vertex_count() or not self._is_cut_vertex(path, end):
+            with self._lock:
+                if self._generation == gen and int(self._grid_carved_vertex) == carved:
+                    self._partial_anchor = carved
+                    self._partial_fraction = fraction
+            return True
+        p_start = self._raw_xyz(path, carved)
+        p_end = self._raw_xyz(path, end)
+        t1 = _open_segment_fraction(p_start, p_end, t0, fraction)
+        job = self._open_segment_job(path, carved, t0, t1)
+        if job is None:
+            with self._lock:
+                if self._generation == gen and int(self._grid_carved_vertex) == carved:
+                    self._partial_anchor = carved
+                    self._partial_fraction = fraction
+            return True
+        dirty = self._carve_one(backend, job, path.tool_scale)
+        with self._lock:
+            if self._generation != gen or self._resimulating or backend is not self._backend:
+                return False
+            if int(self._grid_carved_vertex) != carved:
+                return True
+            pending_dirty.update(dirty)
+            changed_since_cp.update(dirty)
+            self._partial_anchor = carved
+            self._partial_fraction = t1
+        return True
 
     def _carve_job(
         self,
@@ -1175,6 +1339,7 @@ class StockSimulator:
             old_keys = backend.all_non_full_keys()
             start_vertex, restored_keys = self._restore_checkpoint_at_or_before(backend, vertex)
             self._grid_carved_vertex = start_vertex
+            self._clear_open_segment_locked()
             return start_vertex, old_keys | restored_keys
 
     def _maybe_jump_checkpoint(
@@ -1197,6 +1362,7 @@ class StockSimulator:
             old_keys = backend.all_non_full_keys()
             restored_keys = self._restore_checkpoint_locked(backend, cp)
             self._grid_carved_vertex = cp.vertex
+            self._clear_open_segment_locked()
             return cp.vertex, old_keys | restored_keys
 
     def _carve_segments_to(
@@ -1239,7 +1405,7 @@ class StockSimulator:
                 break
             if follow_display:
                 with self._lock:
-                    live_target = int(self._display_vertex)
+                    live_target, _live_frac = _playhead_parts(self._display_vertex)
                 if live_target < seg.end_vertex:
                     interrupted = True
                     break
@@ -1260,6 +1426,7 @@ class StockSimulator:
                     self._bake_carved_vertex = seg.end_vertex
                 else:
                     self._grid_carved_vertex = seg.end_vertex
+                    self._clear_open_segment_locked()
             last_end_vertex = seg.end_vertex
             if not idle:
                 now_p = time.monotonic()
@@ -1286,6 +1453,7 @@ class StockSimulator:
                         self._bake_carved_vertex = last_end_vertex
                     else:
                         self._grid_carved_vertex = last_end_vertex
+                        self._clear_open_segment_locked()
         return last_end_vertex, interrupted
 
     def _follow_display_vertex(
@@ -1301,6 +1469,10 @@ class StockSimulator:
         While playing, yields after ``_mesh_throttle_s`` so remesh can run even if
         still behind. Pause/scrub (idle-ahead allowed) and mesh-off carve until
         caught up so the displayed stock can remesh in one shot.
+
+        A fractional playhead also carves the open segment (the move the tool is
+        still traveling). That partial is stepped so a long straight cut can
+        remesh before the move ends.
         """
         with self._lock:
             budget = max(float(self._mesh_throttle_s), 0.0)
@@ -1315,26 +1487,47 @@ class StockSimulator:
                     return
                 if grid_or_backend is not self._backend:
                     return
-                target = int(self._display_vertex)
+                target_int, fraction = _playhead_parts(self._display_vertex)
                 carved = int(self._grid_carved_vertex)
-            if target == carved:
-                return
-            start_vertex = carved
-            if target < carved:
-                rewound = self._rewind_grid_to(grid_or_backend, gen, target)
+                partial_anchor = int(self._partial_anchor)
+                partial_fraction = float(self._partial_fraction)
+            partial_ahead = (
+                target_int == carved and partial_anchor == carved and partial_fraction > fraction + _PARTIAL_EPS
+            )
+            if target_int < carved or partial_ahead:
+                rewound = self._rewind_grid_to(grid_or_backend, gen, target_int)
                 if rewound is None:
                     return
                 start_vertex, dirty = rewound
                 pending_dirty.update(dirty)
                 changed_since_cp.clear()
                 self._emit_progress(start_vertex)
-                if target <= start_vertex:
+                if target_int <= start_vertex:
                     with self._lock:
                         if self._generation == gen:
-                            self._grid_carved_vertex = int(target)
-                    self._emit_progress(target)
+                            self._grid_carved_vertex = int(target_int)
+                            self._clear_open_segment_locked()
+                    self._emit_progress(target_int)
+                    continue
+            elif target_int == carved:
+                if not self._try_apply_open_segment(
+                    grid_or_backend,
+                    path,
+                    gen,
+                    pending_dirty,
+                    changed_since_cp,
+                ):
                     return
-            start_vertex, jump_dirty = self._maybe_jump_checkpoint(grid_or_backend, gen, start_vertex, target)
+                with self._lock:
+                    if self._playhead_caught_up_locked():
+                        return
+                if deadline is not None and time.monotonic() >= deadline:
+                    return
+                continue
+            else:
+                start_vertex = carved
+
+            start_vertex, jump_dirty = self._maybe_jump_checkpoint(grid_or_backend, gen, start_vertex, target_int)
             if jump_dirty:
                 pending_dirty.update(jump_dirty)
                 changed_since_cp.clear()
@@ -1344,7 +1537,7 @@ class StockSimulator:
                 path,
                 gen,
                 start_vertex,
-                target,
+                target_int,
                 pending_dirty,
                 changed_since_cp,
                 follow_display=True,
@@ -1353,12 +1546,25 @@ class StockSimulator:
             if self._generation != gen:
                 return
             with self._lock:
-                live_target = int(self._display_vertex)
+                live_int, live_frac = _playhead_parts(self._display_vertex)
                 if not interrupted:
-                    self._grid_carved_vertex = int(target)
+                    self._grid_carved_vertex = int(target_int)
+                    self._clear_open_segment_locked()
             if not interrupted:
-                self._emit_progress(target)
-            if live_target == target and not interrupted:
+                self._emit_progress(target_int)
+            if not interrupted and live_int == target_int and live_frac > _PARTIAL_EPS:
+                if not self._try_apply_open_segment(
+                    grid_or_backend,
+                    path,
+                    gen,
+                    pending_dirty,
+                    changed_since_cp,
+                ):
+                    return
+                with self._lock:
+                    if self._playhead_caught_up_locked():
+                        return
+            elif not interrupted and live_int == target_int:
                 return
             if deadline is not None and time.monotonic() >= deadline:
                 return
@@ -1389,8 +1595,7 @@ class StockSimulator:
                 enabled = self._enabled
                 resimulating = self._resimulating
                 path = self._path_snapshot_locked()
-                display_vertex = int(self._display_vertex)
-                carved_vertex = int(self._grid_carved_vertex)
+                display_behind = not self._playhead_caught_up_locked()
                 do_flush = self._mesh_flush
                 force_replace = self._force_mesh_replace
                 mesh_updates = self._mesh_updates_enabled
@@ -1427,7 +1632,7 @@ class StockSimulator:
             elif item is _MESH_FLUSH:
                 pass
 
-            elif item is None and mesh_updates and display_vertex != carved_vertex:
+            elif item is None and mesh_updates and display_behind:
                 self._follow_display_vertex(live, path, gen, pending_dirty, display_changed_since_cp)
                 did_display_follow = True
 
@@ -1440,6 +1645,7 @@ class StockSimulator:
                     self._resimulating = True
                     start_vertex, restored_keys = self._restore_checkpoint_at_or_before(live, item.target_vertex)
                     self._grid_carved_vertex = start_vertex
+                    self._clear_open_segment_locked()
                 pending_dirty.clear()
                 pending_dirty.update(restored_keys)
                 display_changed_since_cp.clear()
@@ -1459,6 +1665,7 @@ class StockSimulator:
                     self._emit_progress(final_vertex)
                     with self._lock:
                         self._grid_carved_vertex = final_vertex
+                        self._clear_open_segment_locked()
                     # Remesh the stock shell so __replace__ does not leave uncarved voids.
                     pending_dirty.update(self._initial_surface_dirty_keys(live))
                 with self._lock:
@@ -1541,6 +1748,7 @@ class StockSimulator:
                     self._emit_progress(final_vertex)
                     with self._lock:
                         self._grid_carved_vertex = int(final_vertex)
+                        self._clear_open_segment_locked()
 
             now = time.monotonic()
             with self._lock:
@@ -1549,8 +1757,8 @@ class StockSimulator:
                 force_replace = self._force_mesh_replace
                 throttle = self._mesh_throttle_s
                 idle_ahead = bool(self._idle_ahead_allowed)
-                caught_up = int(self._display_vertex) == int(self._grid_carved_vertex)
-                focus_vertex = int(self._display_vertex)
+                caught_up = self._playhead_caught_up_locked()
+                focus_vertex = float(self._display_vertex)
             replace = finished_recarve or force_replace
             laser_pending = bool(getattr(live, "_laser_dirty", False))
             coalesce = str(getattr(live, "kind", "")) == BACKEND_CYLINDRICAL
@@ -1619,7 +1827,7 @@ class StockSimulator:
 
             if did_display_follow:
                 with self._lock:
-                    still_behind = int(self._display_vertex) != int(self._grid_carved_vertex)
+                    still_behind = not self._playhead_caught_up_locked()
                     already = self._display_poke_pending
                     if still_behind and not already:
                         self._display_poke_pending = True

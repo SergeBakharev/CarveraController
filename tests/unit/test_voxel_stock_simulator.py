@@ -2024,6 +2024,115 @@ def test_request_mesh_flush_emits_when_nothing_is_dirty():
         sim.stop()
 
 
+def test_playhead_parts_splits_open_segment():
+    from carveracontroller.addons.stock.simulator.worker import _playhead_parts
+
+    assert _playhead_parts(10) == (10, 0.0)
+    assert _playhead_parts(10.5) == (10, pytest.approx(0.5))
+    assert _playhead_parts(9.99999) == (10, 0.0)
+    assert _playhead_parts(-2) == (0, 0.0)
+
+
+def test_open_segment_job_interpolates_pose():
+    from carveracontroller.addons.stock.simulator.worker import PathSnapshot, StockSimulator
+
+    sim = StockSimulator(mesh_throttle_s=0.01)
+    path = PathSnapshot(
+        positions=[-10.0, 0.0, -1.0, 10.0, 0.0, -1.0],
+        vertex_types=[2.0, 1.0],
+        tools=[1, 1],
+        tool_table=None,
+        angles=[0.0, 90.0],
+    )
+    job = sim._open_segment_job(path, 0, 0.0, 0.25)
+    assert job is not None
+    assert job.p0[0] == pytest.approx(-10.0)
+    assert job.p1[0] == pytest.approx(-5.0)
+    assert job.a0 == pytest.approx(0.0)
+    assert job.a1 == pytest.approx(22.5)
+    delta = sim._open_segment_job(path, 0, 0.25, 0.5)
+    assert delta is not None
+    assert delta.p0[0] == pytest.approx(-5.0)
+    assert delta.p1[0] == pytest.approx(0.0)
+    assert delta.a0 == pytest.approx(22.5)
+    assert delta.a1 == pytest.approx(45.0)
+    path_rapid = PathSnapshot(
+        positions=[-10.0, 0.0, -1.0, 10.0, 0.0, -1.0],
+        vertex_types=[2.0, 2.0],
+        tools=[1, 1],
+        tool_table=None,
+    )
+    assert sim._open_segment_job(path_rapid, 0, 0.0, 0.5) is None
+
+
+def test_fractional_display_vertex_carves_open_segment():
+    """A long move is cut as the playhead travels, and scrubbing back restores it."""
+    from carveracontroller.addons.stock.simulator import StockSimulator
+
+    bounds = StockBounds(min_x=-20, min_y=-5, min_z=-5, max_x=40, max_y=5, max_z=0)
+    tool = _flat_tool()
+    # One 40mm cut. Previously this stayed solid until the tool reached the end.
+    positions = [-10.0, 0.0, -1.0, 30.0, 0.0, -1.0]
+    vertex_types = [2.0, 1.0]
+    tools = [1, 1]
+
+    def solid(x: float) -> bool:
+        return sim.grid.is_solid_at_world(x, 0.0, -0.5)
+
+    sim = StockSimulator(mesh_throttle_s=0.01)
+    try:
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, checkpoint_slots=4, carver_mode="voxel")
+        _wait_until(lambda: not sim.resimulating, timeout=2.0)
+        sim.set_toolpath(positions, vertex_types, tools, {1: tool})
+        sim.set_idle_ahead_allowed(False)
+
+        sim.set_display_vertex(0.25)
+        assert _wait_until(lambda: not solid(-2.0), timeout=5.0)
+        assert solid(8.0)
+        assert sim.carved_vertex == 0
+
+        sim.set_display_vertex(0.75)
+        assert _wait_until(lambda: not solid(16.0), timeout=5.0)
+        assert not solid(-2.0)
+        assert solid(26.0)
+        assert sim.carved_vertex == 0
+
+        sim.set_display_vertex(1.0)
+        assert _wait_until(lambda: not solid(26.0), timeout=5.0)
+        assert sim.carved_vertex == 1
+
+        sim.set_display_vertex(0.25)
+        assert _wait_until(lambda: solid(16.0) and solid(26.0) and not solid(-2.0), timeout=5.0)
+        assert sim.carved_vertex == 0
+    finally:
+        sim.stop()
+
+
+def test_fractional_display_vertex_ignores_rapid_and_commits_earlier_cuts():
+    from carveracontroller.addons.stock.simulator import StockSimulator
+
+    bounds = StockBounds(min_x=-20, min_y=-5, min_z=-5, max_x=40, max_y=5, max_z=0)
+    tool = _flat_tool()
+    positions, vertex_types, tools = _linear_x_toolpath(4, x0=-10.0, dx=10.0)
+    # Vertex 2 → 3 is a rapid, so a fraction into it must not cut.
+    vertex_types[3] = 2.0
+
+    sim = StockSimulator(mesh_throttle_s=0.01)
+    try:
+        sim.reset(bounds, cell_size_mm=0.5, enable=True, carver_mode="voxel")
+        _wait_until(lambda: not sim.resimulating, timeout=2.0)
+        sim.set_toolpath(positions, vertex_types, tools, {1: tool})
+        sim.set_idle_ahead_allowed(False)
+        # Through vertex 2 (x=10), plus halfway toward vertex 3 (x=15) which is a rapid.
+        sim.set_display_vertex(2.5)
+        assert _wait_until(lambda: not sim.grid.is_solid_at_world(9.0, 0.0, -0.5), timeout=5.0)
+        time.sleep(0.3)
+        assert sim.grid.is_solid_at_world(14.0, 0.0, -0.5)
+        assert sim.carved_vertex == 2
+    finally:
+        sim.stop()
+
+
 def test_set_display_vertex_backward_restores_stock_ahead_of_playhead():
     from carveracontroller.addons.stock.simulator import StockSimulator
 

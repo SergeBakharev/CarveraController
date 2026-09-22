@@ -1505,7 +1505,7 @@ class GCodeViewer(Widget):
                     self.lengths[line_index + 1] - self.lengths[line_index]
                 )
             self.cur_line_index = line_index + line_ratio
-            self._sync_stock_simulation(int(self.cur_line_index))
+            self._sync_stock_simulation(self.cur_line_index)
         # Trigger frame callback to update line highlighting
         if self.frame_callback is not None:
             cur_distance, linenumber = self.get_cur_pos_index()
@@ -2584,7 +2584,7 @@ class GCodeViewer(Widget):
         )
         self._sync_play_mesh_policy(rebuild=False)
         if self.lengths and self.raw_positions:
-            target = int(getattr(self, "cur_line_index", 0) or 0)
+            target = float(getattr(self, "cur_line_index", 0) or 0)
             self._stock_simulator.set_display_vertex(target)
             if not self.dynamic_display:
                 self._stock_simulator.submit_idle_precompute(target)
@@ -2633,7 +2633,7 @@ class GCodeViewer(Widget):
             self._defer_carved_stock = True
         self._sync_play_mesh_policy()
         if (not playing) and self.simulate_cut and self.raw_positions:
-            target = int(getattr(self, "cur_line_index", 0) or 0)
+            target = float(getattr(self, "cur_line_index", 0) or 0)
             self._stock_simulator.set_display_vertex(target)
             self._stock_simulator.request_mesh_flush()
             self._stock_simulator.submit_idle_precompute(target)
@@ -2686,10 +2686,11 @@ class GCodeViewer(Widget):
             speeds=self.raw_spindle_speeds,
         )
 
-    def _sync_stock_simulation(self, current_vertex: int) -> None:
+    def _sync_stock_simulation(self, current_vertex: float) -> None:
+        """Carve stock up to the playhead, including the in-progress move."""
         if not self.simulate_cut or not self.raw_positions:
             return
-        self._stock_simulator.set_display_vertex(max(0, int(current_vertex)))
+        self._stock_simulator.set_display_vertex(max(0.0, float(current_vertex)))
 
     # repeat this function every 1/60 s
     def _on_frame_tick(self, _):
@@ -2736,7 +2737,7 @@ class GCodeViewer(Widget):
         line_index_withratio = line_index + line_ratio
 
         self.cur_line_index = line_index_withratio
-        self._sync_stock_simulation(int(line_index_withratio))
+        self._sync_stock_simulation(line_index_withratio)
 
         self._update_pointer_tool_mesh(int(line_index_withratio))
 
