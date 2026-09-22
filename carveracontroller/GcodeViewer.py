@@ -820,7 +820,6 @@ class GCodeViewer(Widget):
         self.carvedmesh["laser_enabled"] = 0.0
         self.carvedmesh["laser_mode"] = 0.0
         self.carvedmesh["use_two_tone"] = 0.0
-        self.carvedmesh["use_height_tint"] = 1.0
         self.carvedmesh["cylindrical_skin"] = 0.0
         self.carvedmesh["metallic"] = 0.0
         self.carvedmesh["interior_metallic"] = 0.0
@@ -2423,7 +2422,6 @@ class GCodeViewer(Widget):
         self.carvedmesh["surface_color"] = list(style.surface_rgb)
         self.carvedmesh["interior_color"] = list(style.resolved_interior_rgb())
         self.carvedmesh["use_two_tone"] = 1.0 if style.two_tone else 0.0
-        self.carvedmesh["use_height_tint"] = 1.0 if style.use_height_tint else 0.0
         self.carvedmesh["metallic"] = float(style.metallic)
         self.carvedmesh["interior_metallic"] = float(style.resolved_interior_metallic())
         self.carvedmesh["roughness"] = float(style.roughness)
@@ -2587,7 +2585,7 @@ class GCodeViewer(Widget):
             target = float(getattr(self, "cur_line_index", 0) or 0)
             self._stock_simulator.set_display_vertex(target)
             if not self.dynamic_display:
-                self._stock_simulator.submit_idle_precompute(target)
+                self._stock_simulator.submit_idle_precompute(int(target))
         self._sim_hud_trigger()
 
     def _on_stock_progress(self, vertex: int) -> None:
@@ -2636,7 +2634,7 @@ class GCodeViewer(Widget):
             target = float(getattr(self, "cur_line_index", 0) or 0)
             self._stock_simulator.set_display_vertex(target)
             self._stock_simulator.request_mesh_flush()
-            self._stock_simulator.submit_idle_precompute(target)
+            self._stock_simulator.submit_idle_precompute(int(target))
         self._scene_dirty = True
 
     def _on_stock_checkpoints(self, vertices: list[int]) -> None:
