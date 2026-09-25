@@ -465,13 +465,18 @@ class MDITextInput(TextInput):
 
         return False
 
+    def record_sent_command(self, command):
+        command = (command or "").strip()
+        if not command:
+            return
+        self.past_mdi_commands.append(command)
+        self.active_past_mdi_index = len(self.past_mdi_commands)
+
     def send_mdi_command(self):
         cmd_to_send = self.text.strip()
         if not cmd_to_send:
             return
         hide_mdi_intellisense()
-        self.past_mdi_commands.append(cmd_to_send)
-        self.active_past_mdi_index = len(self.past_mdi_commands)
         app = App.get_running_app()
         app.root.send_cmd()
 
@@ -9035,6 +9040,7 @@ class Makera(RelativeLayout):
         to_send = self.manual_cmd.text.strip()
         if to_send:
             self.manual_cmd.last_mdi_command = to_send
+            self.manual_cmd.record_sent_command(to_send)
             self.manual_rv.scroll_y = 0
             if to_send.lower() == "clear":
                 self.manual_rv.data = []
