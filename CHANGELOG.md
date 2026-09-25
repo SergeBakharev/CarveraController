@@ -27,6 +27,7 @@
 - Change: The WCS button now shows rotation in the subtext, alternating with the WCS name when a description is set.
 - Change: Add support for iOS 27
 - Change: Stop splitting 3-axis G0/G1 moves every 0.5mm and split A-axis moves using the same tolerance as G2/G3 instead of every 0.5°
+- Change: Missed heartbeats with the machine are treated as comms backpressure, and the machine state is changed to "Waiting on comms". Only if link connection is lost will it be treated as a disconnect
 - Fixed: Harden the gcode parser against "zero length" movement, and prevent division by zero in play slider
 - Fixed: Time estimates ignoring speed for some 4th-axis moves
 - Fixed: Allow to select the bottom element of the MDI, Gcode and probing confirmation lists
@@ -39,6 +40,7 @@
 - Fixed: Connecting to a different machine now clears the previous job's file view, tool-change flags, and 3D simulation
 - Fixed: Hiding tools in the G-code viewer now always hides the moves between tool changes
 - Fixed: Commands sent using the "Send" buttons are now added to the MDI history
+- Fixed: Consolidated the two different re-connection methods into one
 
 [2.2.0-RC3]
 - Enhancement: The step size is now synchronized between the main screen and the Probing screen
