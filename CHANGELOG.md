@@ -40,6 +40,7 @@
 - Fixed: Connecting to a different machine now clears the previous job's file view, tool-change flags, and 3D simulation
 - Fixed: Hiding tools in the G-code viewer now always hides the moves between tool changes
 - Fixed: Commands sent using the "Send" buttons are now added to the MDI history
+- Fixed: The probe button in the main menu is disabled unless community firmware is loaded, matching the Probing button on the control screen
 - Fixed: Consolidated the two different re-connection methods into one
 
 [2.2.0-RC3]
