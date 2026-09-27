@@ -1,4 +1,5 @@
 [unreleased]
+- Enhancement: Upload and download multiple selected files from the file browser, with one progress popup for the batch
 - Enhancement: Add a Ghost display option that draws older toolpath faint and recent moves more solid
 - Enhancement: Firmware updater now support Makera Z1. Detects if fw is bundled LPC+ESP, LPC-only, or ESP-only and updates using the correct method
 - Enhancement: Improve update popup UI and retrieve version data from the GitHub API

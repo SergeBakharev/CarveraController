@@ -859,6 +859,15 @@ class FileBrowserPopup(ModalView):
             return list(self.selected_device_paths)
         return list(self.selected_machine_paths)
 
+    def selected_files(self) -> list[str]:
+        """Checked files, or the single highlighted file. Folders are left out."""
+        if self.multi_select_mode:
+            paths = self._selected_paths()
+        else:
+            highlight = self.selected_device_file if self.location == LOCATION_DEVICE else self.selected_machine_file
+            paths = self._selected_paths() or ([highlight] if highlight else [])
+        return [path for path in paths if path and not self._path_is_dir(path)]
+
     def _apply_selected_paths(self, paths: list) -> None:
         paths = list(paths)
         if self.location == LOCATION_DEVICE:
@@ -906,12 +915,15 @@ class FileBrowserPopup(ModalView):
         idle = app is not None and app.state == "Idle"
         paths = self._selected_paths()
         highlight = self.selected_device_file if self.location == LOCATION_DEVICE else self.selected_machine_file
+        file_count = sum(1 for path in paths if path and not self._path_is_dir(path))
         if self.multi_select_mode:
             selected_is_file = False
             selected_count = len(paths)
         else:
             selected_is_file = bool(highlight) and not self._path_is_dir(highlight)
             selected_count = len(paths) or (1 if highlight else 0)
+            if selected_is_file and file_count == 0:
+                file_count = 1
         return compute_action_state(
             location=self.location,
             firmware_mode=self.firmware_mode,
@@ -921,6 +933,7 @@ class FileBrowserPopup(ModalView):
             selected_is_file=selected_is_file,
             selected_count=selected_count,
             multi_select_mode=self.multi_select_mode,
+            selected_file_count=file_count,
         )
 
     def _sync_chrome(self):

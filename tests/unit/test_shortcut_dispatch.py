@@ -9,7 +9,7 @@ from carveracontroller.addons.cmm_workbench.ui.CMMWorkbenchPopup import JogCMMWo
 from carveracontroller.addons.keyboard_shortcuts.bindings import KeyChord, ShortcutBindings
 from carveracontroller.addons.keyboard_shortcuts.manager import ShortcutManager
 from carveracontroller.Controller import Controller
-from carveracontroller.main import Makera
+from carveracontroller.main import Makera, batch_percents, format_byte_count
 from carveracontroller.Utils import digitize_v
 
 
@@ -389,6 +389,37 @@ def test_open_file_browser_is_blocked_when_the_file_button_would_be_unavailable(
         assert Makera.open_file_browser(root) is False
 
     popup.open_for_jobs.assert_not_called()
+
+
+def test_stale_progress_finish_does_not_close_the_next_file():
+    popup = SimpleNamespace(
+        progress_text="",
+        progress_value=0,
+        btn_cancel=SimpleNamespace(disabled=False),
+        cancel=None,
+        open=Mock(),
+        dismiss=Mock(),
+    )
+    root = SimpleNamespace(progress_popup=popup, _progress_epoch=0)
+
+    Makera.progressStart(root, "Uploading\nfirst.nc", None)
+    first_epoch = root._progress_epoch
+    Makera.progressStart(root, "Uploading\nsecond.nc", None)
+    Makera._finish_progress(root, first_epoch)
+
+    popup.dismiss.assert_not_called()
+    assert popup.progress_text == "Uploading\nsecond.nc"
+    Makera._finish_progress(root, root._progress_epoch)
+    popup.dismiss.assert_called_once()
+
+
+def test_batch_progress_uses_byte_sizes():
+    file_pct, batch_pct = batch_percents(1000, 1000, 50, 4000)
+    assert file_pct == 50
+    assert batch_pct == 37.5
+    assert batch_percents(0, 0, 40, 0) == (40, 0.0)
+    assert format_byte_count(1536) == "1.5 KB"
+    assert format_byte_count(2 * 1024 * 1024) == "2.0 MB"
 
 
 def test_start_job_applicability_and_opening():

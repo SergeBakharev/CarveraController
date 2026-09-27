@@ -669,6 +669,21 @@ def test_action_state_device_folder_and_multi():
     assert multi.show_rename is False
     assert multi.show_new_folder is False
     assert multi.primary == "delete"
+    uploading = compute_action_state(
+        location=LOCATION_DEVICE,
+        firmware_mode=False,
+        ios=False,
+        machine_connected=True,
+        machine_idle=True,
+        selected_is_file=False,
+        selected_count=3,
+        multi_select_mode=True,
+        selected_file_count=2,
+    )
+    assert uploading.show_upload is True
+    assert uploading.show_download is False
+    assert uploading.show_delete is True
+    assert uploading.primary == "delete"
 
 
 def test_action_state_firmware_upload_only():
@@ -766,6 +781,32 @@ def test_action_state_machine_disconnected_and_multi():
     assert multi.show_use_as_job is False
     assert multi.show_download is False
     assert multi.primary == "delete"
+    downloading = compute_action_state(
+        location=LOCATION_MACHINE,
+        firmware_mode=False,
+        ios=False,
+        machine_connected=True,
+        machine_idle=True,
+        selected_is_file=False,
+        selected_count=2,
+        multi_select_mode=True,
+        selected_file_count=2,
+    )
+    assert downloading.show_download is True
+    assert downloading.show_upload is False
+    assert downloading.show_delete is True
+    busy_files = compute_action_state(
+        location=LOCATION_MACHINE,
+        firmware_mode=False,
+        ios=False,
+        machine_connected=True,
+        machine_idle=False,
+        selected_is_file=False,
+        selected_count=2,
+        multi_select_mode=True,
+        selected_file_count=2,
+    )
+    assert busy_files.show_download is False
 
 
 def test_action_state_ios_device_uses_browse():

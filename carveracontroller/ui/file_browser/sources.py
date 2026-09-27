@@ -485,6 +485,7 @@ def compute_action_state(
     selected_is_file: bool,
     selected_count: int,
     multi_select_mode: bool,
+    selected_file_count: int = 0,
 ) -> ActionState:
     """Which chrome/actions to show for the current browser state."""
     if firmware_mode:
@@ -510,6 +511,7 @@ def compute_action_state(
             )
         if multi_select_mode:
             return ActionState(
+                show_upload=machine_idle and selected_file_count > 0,
                 show_delete=selected_count > 0,
                 show_cancel_multi=True,
                 show_places=True,
@@ -536,6 +538,7 @@ def compute_action_state(
 
     if multi_select_mode:
         return ActionState(
+            show_download=machine_idle and selected_file_count > 0,
             show_delete=selected_count > 0,
             show_cancel_multi=True,
             show_places=True,
