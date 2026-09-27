@@ -126,11 +126,10 @@
                 source: root.icon
                 pos: self.center_x - dp(root.icon_size / 2), self.center_y - dp(root.icon_size / 2)
                 size: dp(root.icon_size) if root.icon else 0, dp(root.icon_size) if root.icon else 0
-        canvas.after:
             Color:
-                rgba: 0.86, 0.12, 0.12, 1
+                rgba: (0.86, 0.12, 0.12, 1) if root.recording else (0, 0, 0, 0)
             Ellipse:
-                pos: self.center_x + dp(root.icon_size / 2) - dp(7), self.center_y - dp(root.icon_size / 2)
+                pos: self.x + self.width / 2 + dp(root.icon_size / 2) - dp(7), self.y + self.height / 2 - dp(root.icon_size / 2)
                 size: dp(7) if root.recording else 0, dp(7) if root.recording else 0
 
 <TransparentGrayButton>:
