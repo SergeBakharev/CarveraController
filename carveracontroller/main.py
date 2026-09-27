@@ -5064,12 +5064,12 @@ class Makera(RelativeLayout):
         files = [str(name) for name in filenames if str(name).strip()]
         note = tr._(
             "It has been observed that some machines have been shipped with mismatching "
-            "MD5 checksums from the factory, so this might be normal."
+            "MD5 checksums from the factory, so this might be normal. It's recommended to manually verify the downloaded file."
         )
         if len(files) == 1:
-            detail = tr._("The MD5 checksum for '%s' did not match.") % files[0]
+            detail = tr._("The MD5 checksum for '%s' did not match the MD5 of the downloaded file.") % files[0]
         else:
-            detail = tr._("The MD5 checksum did not match for:\n%s") % "\n".join(files)
+            detail = tr._("The MD5 checksum failed for:\n%s") % "\n".join(files)
         return tr._("Configuration files backed up successfully.") + "\n\n" + detail + "\n\n" + note
 
     # -----------------------------------------------------------------------
