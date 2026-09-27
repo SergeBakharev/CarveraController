@@ -37,6 +37,7 @@ from .sources import (
     LOCATION_MACHINE,
     MACHINE_BASE_DIR,
     MACHINE_BASE_DIR_WIN,
+    MACHINE_VIDEOS_DIR,
     SORT_DATE,
     SORT_NAME,
     SORT_SIZE,
@@ -308,6 +309,20 @@ class FileBrowserPopup(ModalView):
             self.location = LOCATION_MACHINE if app is not None and app.state != "N/A" else LOCATION_DEVICE
         self._restore_device_dir()
         self._restore_machine_dir()
+        self.open()
+        self._apply_location(refresh=True)
+
+    def open_for_videos(self):
+        """Open the browser on the machine tab, listing /sd/videos."""
+        self.firmware_mode = False
+        self.multi_select_mode = False
+        self.search_text = ""
+        self.ios_device_mode = False
+        self.title_text = tr._("File Browser")
+        self.location = LOCATION_MACHINE
+        self.machine_dir = MACHINE_VIDEOS_DIR
+        self._persist_location()
+        self._remember_machine_dir()
         self.open()
         self._apply_location(refresh=True)
 
@@ -921,6 +936,7 @@ class FileBrowserPopup(ModalView):
             selected_is_file=selected_is_file,
             selected_count=selected_count,
             multi_select_mode=self.multi_select_mode,
+            selected_name=os.path.basename(highlight or ""),
         )
 
     def _sync_chrome(self):

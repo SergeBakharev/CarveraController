@@ -26,9 +26,11 @@ from carveracontroller.ui.file_browser.sources import (
     file_type_label,
     group_and_sort_entries,
     is_compact_width,
+    is_job_file,
     is_machine_root,
     is_under_machine_root,
     list_device_directory,
+    listing_has_directory,
     local_child_path,
     local_dir_has_file,
     local_sibling_path,
@@ -36,6 +38,7 @@ from carveracontroller.ui.file_browser.sources import (
     machine_listing_callback_matches,
     machine_listing_has,
     machine_listing_is_current,
+    machine_location_places,
     machine_ls_is_superseded,
     machine_parent_dir,
     machine_path_display,
@@ -210,13 +213,36 @@ def test_machine_listing_has_ignores_directories():
 def test_machine_root_and_parent():
     assert is_machine_root("/sd/gcodes")
     assert is_machine_root("/sd/gcodes/")
+    assert is_machine_root("/sd/videos")
+    assert is_machine_root("/sd/videos/")
     assert machine_parent_dir("/sd/gcodes") is None
+    assert machine_parent_dir("/sd/videos") is None
     assert machine_parent_dir("/sd/gcodes/jobs") == "/sd/gcodes"
+    assert machine_parent_dir("/sd/videos/job") == "/sd/videos"
     assert is_under_machine_root("/sd/gcodes")
     assert is_under_machine_root("/sd/gcodes/jobs/batch")
     assert is_under_machine_root("\\sd\\gcodes\\jobs")
+    assert is_under_machine_root("/sd/videos")
+    assert is_under_machine_root("/sd/videos/clip")
+    assert is_under_machine_root("\\sd\\videos")
     assert is_under_machine_root("/sd") is False
     assert is_under_machine_root("/tmp/gcodes") is False
+
+
+def test_videos_location_is_offered_only_when_the_directory_exists():
+    assert machine_location_places(videos_available=False) == []
+    assert machine_location_places(videos_available=True) == [
+        ("/sd/gcodes", "G-code"),
+        ("/sd/videos", "Videos"),
+    ]
+    entries = [
+        _entry("gcodes", is_dir=True),
+        _entry("videos", is_dir=True),
+        _entry("videos-note.avi"),
+    ]
+    assert listing_has_directory(entries, "videos") is True
+    assert listing_has_directory([_entry("videos")], "videos") is False
+    assert listing_has_directory([], "videos") is False
 
 
 def test_machine_listing_is_current_ignores_slash_style():
@@ -534,6 +560,13 @@ def test_trim_machine_breadcrumbs_drops_sd_and_empty_root():
     )
     assert paths == ["/sd/gcodes", "/sd/gcodes/jobs"]
     assert labels == ["gcodes", "jobs"]
+    video_paths, video_labels = trim_breadcrumb_pairs(
+        ["/", "/sd", "/sd/videos", "/sd/videos/job"],
+        ["", "sd", "videos", "job"],
+        machine=True,
+    )
+    assert video_paths == ["/sd/videos", "/sd/videos/job"]
+    assert video_labels == ["videos", "job"]
 
 
 def test_list_device_directory_skips_dotfiles(tmp_path):
@@ -603,6 +636,7 @@ def test_action_state_device_file_selected():
         selected_is_file=True,
         selected_count=1,
         multi_select_mode=False,
+        selected_name="part.nc",
     )
     assert state.show_preview is True
     assert state.show_upload is True
@@ -625,6 +659,7 @@ def test_action_state_device_requires_idle_for_upload():
         selected_is_file=True,
         selected_count=1,
         multi_select_mode=False,
+        selected_name="part.nc",
     )
     assert state.show_preview is True
     assert state.show_upload is False
@@ -702,6 +737,7 @@ def test_action_state_machine_file_and_folder():
         selected_is_file=True,
         selected_count=1,
         multi_select_mode=False,
+        selected_name="part.nc",
     )
     assert file_state.show_use_as_job is True
     assert file_state.show_download is True
@@ -732,6 +768,7 @@ def test_action_state_machine_file_and_folder():
         selected_is_file=True,
         selected_count=1,
         multi_select_mode=False,
+        selected_name="part.nc",
     )
     assert busy.show_use_as_job is True
     assert busy.show_download is False
@@ -766,6 +803,43 @@ def test_action_state_machine_disconnected_and_multi():
     assert multi.show_use_as_job is False
     assert multi.show_download is False
     assert multi.primary == "delete"
+
+
+def test_video_files_are_not_jobs():
+    assert is_job_file("part.nc") is True
+    assert is_job_file("part.gcode.lz") is True
+    assert is_job_file("clip.avi") is False
+    assert is_job_file("clip.AVI") is False
+    assert is_job_file("clip.mp4") is False
+    video = compute_action_state(
+        location=LOCATION_MACHINE,
+        firmware_mode=False,
+        ios=False,
+        machine_connected=True,
+        machine_idle=True,
+        selected_is_file=True,
+        selected_count=1,
+        multi_select_mode=False,
+        selected_name="job-20260926.avi",
+    )
+    assert video.show_use_as_job is False
+    assert video.primary == ""
+    assert video.show_download is True
+    assert video.show_delete is True
+    local_video = compute_action_state(
+        location=LOCATION_DEVICE,
+        firmware_mode=False,
+        ios=False,
+        machine_connected=True,
+        machine_idle=True,
+        selected_is_file=True,
+        selected_count=1,
+        multi_select_mode=False,
+        selected_name="clip.avi",
+    )
+    assert local_video.show_preview is False
+    assert local_video.show_upload_and_use is False
+    assert local_video.primary == ""
 
 
 def test_action_state_ios_device_uses_browse():

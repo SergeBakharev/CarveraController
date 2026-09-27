@@ -14,6 +14,22 @@ MACHINE_CONFIG_FILES = {
 
 MAX_CONFIG_DOWNLOAD_ATTEMPTS = 3
 
+# Kivy's ConfigParser lowercases keys. The camera interval key is mixed-case on
+# the machine, and config-set matches that text exactly.
+_MACHINE_CONFIG_KEY_ALIASES = {
+    "*mainboard.time_interval_frames": "*mainboard.Time_interval_frames",
+}
+
+
+def remember_machine_config_value(setting_list, key, value):
+    """Store one config.txt entry, keeping mixed-case keys the machine expects."""
+    name = key.strip()
+    value_text = value.strip()
+    setting_list[name] = value_text
+    alias = _MACHINE_CONFIG_KEY_ALIASES.get(name)
+    if alias:
+        setting_list[alias] = value_text
+
 
 def is_android():
     return "ANDROID_ARGUMENT" in os.environ or "ANDROID_PRIVATE" in os.environ or "ANDROID_APP_PATH" in os.environ
@@ -158,14 +174,19 @@ from carveracontroller.addons.stock.stock_defaults import (
 from carveracontroller.addons.stock.stock_estimate import auto_stock_for_loaded_file, header_stock_usable
 from carveracontroller.addons.stock.ui.StockSettingsPopup import StockSettingsPopup
 from carveracontroller.serial_listeners import dispatch_serial_line
+from carveracontroller.timelapse import format_timelapse_status, timelapse_capture_active
 from carveracontroller.ui.file_browser import FileBrowserPopup
 from carveracontroller.ui.file_browser.sources import (
     LOCATION_DEVICE,
+    is_job_file,
+    listing_has_directory,
     local_child_path,
     local_sibling_path,
     machine_child_entry_path,
     machine_listing_callback_matches,
+    machine_location_places,
     machine_ls_is_superseded,
+    machine_path_key,
     mkdir_local,
     remove_local_path,
     rename_local_path,
@@ -1252,6 +1273,7 @@ class CoordPopup(ModalView):
     autoblowmode = ObjectProperty()
     autobedcleanmode = ObjectProperty()
     ionizermode = ObjectProperty()
+    timelapsemode = ObjectProperty()
     origin_popup = ObjectProperty()
     zprobe_popup = ObjectProperty()
     auto_level_popup = ObjectProperty()
@@ -1419,6 +1441,11 @@ class CoordPopup(ModalView):
             self.ionizermode = True
         else:
             self.ionizermode = False
+
+        if CNC.vars["tl_requested"] == 1:
+            self.timelapsemode = True
+        else:
+            self.timelapsemode = False
 
         # Apply leveling before Z probe so turning both off does not warn.
         self.cbx_margin.active = self.config["margin"]["active"]
@@ -2143,6 +2170,7 @@ class IconButton(BoxLayout, ToolTipButton):
 class TransparentButton(BoxLayout, ToolTipButton):
     icon = StringProperty("fresk.png")
     active = BooleanProperty(False)
+    recording = BooleanProperty(False)
 
 
 class TransparentGrayButton(BoxLayout, ToolTipButton):
@@ -2906,6 +2934,8 @@ class Makera(RelativeLayout):
     common_local_dir_list = []
     recent_local_dir_list = []
     recent_remote_dir_list = []
+    sd_videos_available = False
+    _sd_videos_probe_inflight = False
 
     lines = []
 
@@ -2920,6 +2950,7 @@ class Makera(RelativeLayout):
         "autoblow_mode": [0.0, 0],
         "autobedclean_mode": [0.0, 0],
         "ionizer_mode": [0.0, 0],
+        "timelapse_record": [0.0, 0],
         "laser_mode": [0.0, 0],
         "laser_scale": [0.0, 100],
         "laser_test": [0.0, 0],
@@ -3388,6 +3419,15 @@ class Makera(RelativeLayout):
         if unavailable or self._is_popup_open():
             return False
         self.file_popup.open_for_jobs()
+        return True
+
+    def open_videos_browser(self):
+        """Open the file browser on the machine Videos folder."""
+        app = App.get_running_app()
+        unavailable = app.state not in ("Idle", NOT_CONNECTED) and not app.playing
+        if unavailable or self._is_popup_open():
+            return False
+        self.file_popup.open_for_videos()
         return True
 
     def open_mdi(self):
@@ -4073,6 +4113,19 @@ class Makera(RelativeLayout):
 
         self.remote_dir_drop_down.clear_widgets()
 
+        places = machine_location_places(videos_available=self.sd_videos_available)
+        if places:
+            self.remote_dir_drop_down.add_widget(DropDownSplitter(text="       " + tr._("Locations")))
+            for path, label in places:
+                btn = DirectoryView(
+                    full_path=path,
+                    data_text=tr._(label),
+                    size_hint_y=None,
+                    height="30dp",
+                )
+                btn.bind(on_release=lambda _btn, place=path: self.remote_dir_drop_down.select(place))
+                self.remote_dir_drop_down.add_widget(btn)
+
         splitter = DropDownSplitter(text="       " + tr._("Recent Places"))
         self.remote_dir_drop_down.add_widget(splitter)
 
@@ -4088,6 +4141,34 @@ class Makera(RelativeLayout):
             self.remote_dir_drop_down.add_widget(btn)
 
         self.remote_dir_drop_down.open(button)
+        self.probe_sd_videos_dir()
+
+    def probe_sd_videos_dir(self):
+        """List /sd once it is idle, so Videos can be offered if that folder exists."""
+        app = App.get_running_app()
+        if app is None or app.state != "Idle":
+            return
+        if self.backing_up_config or self.downloading_config:
+            return
+        if machine_path_key(getattr(self.file_popup, "machine_dir", "")) == "/sd":
+            return
+        threading.Thread(target=self._run_sd_videos_probe, daemon=True).start()
+
+    def _run_sd_videos_probe(self):
+        with self._machine_ls_lock:
+            if self.controller.loadNUM == LOAD_DIR or self._sd_videos_probe_inflight:
+                return
+            self._sd_videos_probe_inflight = True
+            self._machine_ls_wanted_path = "/sd"
+            self._start_machine_ls("/sd")
+
+    def _note_sd_videos_listing(self, listed_path, file_list):
+        if machine_path_key(listed_path or "") != "/sd":
+            return
+        self._sd_videos_probe_inflight = False
+        if not file_list:
+            return
+        self.sd_videos_available = listing_has_directory(file_list, "videos")
 
     # -----------------------------------------------------------------------
     def _remember_connection_method(self, method):
@@ -4883,6 +4964,8 @@ class Makera(RelativeLayout):
         if not filepath or os.path.isdir(filepath):
             return
         filename = os.path.basename(os.path.normpath(filepath))
+        if not is_job_file(filename):
+            return
         if self.file_popup.machine_listing_has(filename):
             # show message popup
             self.confirm_popup.lb_title.text = tr._("File Already Exists")
@@ -4897,6 +4980,8 @@ class Makera(RelativeLayout):
     def view_local_file(self):
         filepath = self.file_popup.selected_device_file
         if not filepath or os.path.isdir(filepath):
+            return
+        if not is_job_file(os.path.basename(filepath)):
             return
         app = App.get_running_app()
         app.selected_local_filename = filepath
@@ -4915,7 +5000,7 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def check_and_download(self):
         remote_path = self.file_popup.selected_machine_file
-        if not remote_path:
+        if not remote_path or not is_job_file(os.path.basename(remote_path)):
             return
         remote_size = self.file_popup.selected_machine_filesize
         remote_post_path = remote_path.replace("/sd/", "").replace("\\sd\\", "")
@@ -5109,7 +5194,7 @@ class Makera(RelativeLayout):
                 for section_name in setting_config.sections():
                     for key, value in setting_config.items(section_name):
                         try:
-                            self.setting_list[key.strip()] = value.strip()
+                            remember_machine_config_value(self.setting_list, key, value)
                         except AttributeError:
                             Clock.schedule_once(
                                 partial(
@@ -5171,6 +5256,7 @@ class Makera(RelativeLayout):
             self.clear_selection()
             self.apply_bed_settings()
         self.updateStatus()
+        Clock.schedule_once(lambda _dt: self.probe_sd_videos_dir(), 0.5)
 
     def _get_current_machine_connection_key(self):
         """Return a stable identifier for the current machine connection."""
@@ -6599,6 +6685,7 @@ class Makera(RelativeLayout):
                         }
                     )
 
+        self._note_sd_videos_listing(listed_path, file_list)
         Clock.schedule_once(partial(self.fill_remote_dir, file_list, listed_path), 0)
 
     # -----------------------------------------------------------------------
@@ -6847,6 +6934,11 @@ class Makera(RelativeLayout):
                     app.is_community_firmware = False
                     app.supports_auto_ext_out = False
                     app.supports_camera = False
+                    self.sd_videos_available = False
+                    self._sd_videos_probe_inflight = False
+                    CNC.vars["tl_status"] = 0
+                    CNC.vars["tl_requested"] = 0
+                    CNC.vars["tl_recording"] = 0
                     self.camera_checked = False
                     self.camera_probe += 1  # discard the result of a probe still in flight
                     self.camera_stream.stop()
@@ -7075,6 +7167,7 @@ class Makera(RelativeLayout):
                     "autobedclean_switch_play",
                 ),
                 ("ionizer_mode", self.controller.setIonizerMode, "ionizermode", "ionizer_switch_play"),
+                ("timelapse_record", self.controller.setTimelapseRecord, "tl_requested", "timelapse_switch_play"),
             ):
                 elapsed = now - self.control_list[control_name][0]
                 if elapsed < 2:
@@ -7295,8 +7388,34 @@ class Makera(RelativeLayout):
                 elif self.wpb_leveling.value > 0:
                     self.wpb_leveling.value = 84
 
+            self._refresh_timelapse_indicator(app)
+
         except:
             logger.error(sys.exc_info()[1])
+
+    def _refresh_timelapse_indicator(self, app):
+        """Red recording mark while timelapse is armed and the machine is running."""
+        has_status = bool(CNC.vars.get("tl_status")) and app.state not in (NOT_CONNECTED, "N/A")
+        requested = int(CNC.vars.get("tl_requested") or 0)
+        active = has_status and timelapse_capture_active(requested, app.state)
+        if app.timelapse_recording != active:
+            app.timelapse_recording = active
+        if app.timelapse_status != has_status:
+            app.timelapse_status = has_status
+        if not has_status:
+            if app.timelapse_status_text:
+                app.timelapse_status_text = ""
+            return
+        text = format_timelapse_status(
+            transfer=int(CNC.vars.get("tl_transfer") or 0),
+            requested=requested,
+            recording=int(CNC.vars.get("tl_recording") or 0),
+            sd_used=int(CNC.vars.get("tl_sd_used") or 0),
+            sd_total=int(CNC.vars.get("tl_sd_total") or 0),
+            translate=tr._,
+        )
+        if app.timelapse_status_text != text:
+            app.timelapse_status_text = text
 
     # -----------------------------------------------------------------------
     def updateDiagnose(self, *args):
@@ -9137,6 +9256,9 @@ class MakeraApp(App):
     is_community_firmware = BooleanProperty(False)
     supports_camera = BooleanProperty(False)
     camera_streaming = BooleanProperty(False)
+    timelapse_recording = BooleanProperty(False)
+    timelapse_status = BooleanProperty(False)
+    timelapse_status_text = StringProperty("")
     camera_brightness = NumericProperty(ADJUST_DEFAULT)
     camera_contrast = NumericProperty(ADJUST_DEFAULT)
     camera_gamma = NumericProperty(ADJUST_DEFAULT)

@@ -14,6 +14,10 @@ from carveracontroller import Utils
 
 MACHINE_BASE_DIR = "/sd/gcodes"
 MACHINE_BASE_DIR_WIN = "\\sd\\gcodes"
+MACHINE_SD_ROOT = "/sd"
+MACHINE_VIDEOS_DIR = "/sd/videos"
+MACHINE_VIDEOS_DIR_WIN = "\\sd\\videos"
+_MACHINE_ROOT_NAMES = ("gcodes", "videos")
 LOCATION_DEVICE = "device"
 LOCATION_MACHINE = "machine"
 CONFIG_LAST_LOCATION = "file_browser_location"
@@ -85,16 +89,47 @@ def default_device_dir() -> str:
 
 def is_machine_root(path: str) -> bool:
     norm = os.path.normpath(path or "")
-    return norm in (MACHINE_BASE_DIR, MACHINE_BASE_DIR_WIN, os.path.normpath(MACHINE_BASE_DIR))
+    return norm in (
+        MACHINE_BASE_DIR,
+        MACHINE_BASE_DIR_WIN,
+        os.path.normpath(MACHINE_BASE_DIR),
+        MACHINE_VIDEOS_DIR,
+        MACHINE_VIDEOS_DIR_WIN,
+        os.path.normpath(MACHINE_VIDEOS_DIR),
+    )
 
 
 def is_under_machine_root(path: str) -> bool:
-    """True for /sd/gcodes and folders beneath it."""
+    """True for /sd/gcodes, /sd/videos, and folders beneath either."""
     if is_machine_root(path):
         return True
     raw = (path or "").replace("\\", "/")
     parts = [part for part in raw.split("/") if part and part != "."]
-    return len(parts) >= 2 and parts[0].lower() == "sd" and parts[1].lower() == "gcodes"
+    return len(parts) >= 2 and parts[0].lower() == "sd" and parts[1].lower() in _MACHINE_ROOT_NAMES
+
+
+def listing_has_directory(entries: Iterable, name: str) -> bool:
+    """True when a machine listing contains a directory with this name."""
+    wanted = (name or "").strip("/").lower()
+    if not wanted:
+        return False
+    for entry in entries or []:
+        if not entry.get("is_dir"):
+            continue
+        entry_name = str(entry.get("name") or "").strip("/").lower()
+        if entry_name == wanted:
+            return True
+    return False
+
+
+def machine_location_places(*, videos_available: bool) -> list[tuple[str, str]]:
+    """Extra machine places. Videos is offered only after /sd/videos is seen."""
+    if not videos_available:
+        return []
+    return [
+        (MACHINE_BASE_DIR, "G-code"),
+        (MACHINE_VIDEOS_DIR, "Videos"),
+    ]
 
 
 def machine_path_key(path: str) -> str:
@@ -249,6 +284,11 @@ def file_type_key(name: str) -> str:
     if suffix in COMPRESSED_EXTENSIONS:
         return TYPE_COMPRESSED
     return TYPE_OTHER
+
+
+def is_job_file(name: str) -> bool:
+    """True for G-code and compressed G-code. Videos and other files are not jobs."""
+    return file_type_key(name) in (TYPE_GCODE, TYPE_COMPRESSED)
 
 
 def _translate(translate: Translate | None, text: str) -> str:
@@ -485,6 +525,7 @@ def compute_action_state(
     selected_is_file: bool,
     selected_count: int,
     multi_select_mode: bool,
+    selected_name: str = "",
 ) -> ActionState:
     """Which chrome/actions to show for the current browser state."""
     if firmware_mode:
@@ -518,17 +559,18 @@ def compute_action_state(
             )
         single_file = selected_is_file and selected_count == 1
         single_item = selected_count == 1
+        job_file = single_file and is_job_file(selected_name)
         return ActionState(
-            show_preview=single_file,
+            show_preview=job_file,
             show_upload=single_file and machine_idle,
-            show_upload_and_use=single_file and machine_idle,
+            show_upload_and_use=job_file and machine_idle,
             show_rename=single_item,
             show_delete=selected_count > 0,
             show_new_folder=True,
             show_multi_toggle=True,
             show_places=True,
             search_enabled=True,
-            primary="upload_and_use" if single_file and machine_idle else "",
+            primary="upload_and_use" if job_file and machine_idle else "",
         )
 
     if not machine_connected:
@@ -545,8 +587,9 @@ def compute_action_state(
 
     single_file = selected_is_file and selected_count == 1
     single_item = selected_count == 1
+    job_file = single_file and is_job_file(selected_name)
     return ActionState(
-        show_use_as_job=single_file,
+        show_use_as_job=job_file,
         show_download=single_file and machine_idle,
         show_rename=single_item,
         show_delete=selected_count > 0,
@@ -554,7 +597,7 @@ def compute_action_state(
         show_multi_toggle=True,
         show_places=True,
         search_enabled=machine_idle,
-        primary="use_as_job" if single_file else "",
+        primary="use_as_job" if job_file else "",
     )
 
 
