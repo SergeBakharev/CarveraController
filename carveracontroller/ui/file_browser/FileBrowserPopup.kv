@@ -82,22 +82,6 @@
         keep_ratio: True
         color: (110/255, 110/255, 110/255, 1) if root.disabled else (1, 1, 1, 1)
 
-<FileBrowserActionButton>:
-    text: root.btn_text
-    size_hint_x: None
-    width: self.texture_size[0] + ((dp(50) if self.icon else dp(20)) if self.flat else (dp(44) if self.icon else dp(24)))
-    padding: (0, 0) if self.flat else ((dp(32) if self.icon else dp(12)), 0)
-    halign: 'left'
-    valign: 'middle'
-    text_size: None, self.height
-    canvas.after:
-        Color:
-            rgba: self.color
-        Rectangle:
-            source: root.icon
-            pos: self.x + dp(10), self.center_y - dp(10)
-            size: (dp(20), dp(20)) if root.icon else (0, 0)
-
 <FileBrowserBadge>:
     size_hint: None, None
     width: (self.texture_size[0] + dp(16)) if self.text else 0
@@ -221,6 +205,14 @@
         BoxLayout:
             size_hint_y: None
             height: dp(36)
+            spacing: dp(8)
+            Image:
+                source: 'data/memory.png' if root.firmware_mode else 'data/folder-32.png'
+                size_hint: None, None
+                size: dp(22), dp(22)
+                pos_hint: {'center_y': 0.5}
+                allow_stretch: True
+                keep_ratio: True
             Label:
                 text: root.title_text
                 bold: True
@@ -255,7 +247,7 @@
                 pos_hint: {'center_y': 0.5}
             Widget:
                 size_hint_x: 1
-            FileBrowserActionButton:
+            PopupActionButton:
                 size_hint_x: None
                 size_hint_y: None
                 height: dp(32)
@@ -327,7 +319,7 @@
                 size_hint_y: None
                 height: dp(36)
                 spacing: 0
-                FileBrowserActionButton:
+                PopupActionButton:
                     id: btn_sort
                     size_hint_x: None
                     width: dp(110)
@@ -380,7 +372,7 @@
                     spacing: dp(6) if root.show_multi_button and root.show_new_folder_button else 0
                     padding: (dp(6) if root.show_multi_button or root.show_new_folder_button else 0), 0, 0, 0
                     width: 0 if not (root.show_multi_button or root.show_new_folder_button) else self.minimum_width
-                    FileBrowserActionButton:
+                    PopupActionButton:
                         id: btn_multi
                         size_hint_x: None
                         width: (self.texture_size[0] + dp(44)) if root.show_multi_button else 0
@@ -393,7 +385,7 @@
                             root.cancel_multi_select()
                             else:\
                             root.toggle_multi_select()
-                    FileBrowserActionButton:
+                    PopupActionButton:
                         id: btn_new_folder
                         size_hint_x: None
                         width: (self.texture_size[0] + dp(44)) if root.show_new_folder_button else 0
@@ -466,7 +458,7 @@
             BoxLayout:
                 id: footer_actions
                 spacing: dp(8)
-            FileBrowserActionButton:
+            PopupActionButton:
                 id: btn_close
                 size_hint_x: None
                 icon: 'data/close.png'
