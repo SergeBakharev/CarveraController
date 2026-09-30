@@ -67,6 +67,9 @@ from carveracontroller.addons.stock.stock_origin import (
 from carveracontroller.addons.stock.stock_shape import CylindricalStock, RectangularStock, RotaryCylindricalStock
 from carveracontroller.translation import tr
 
+_CAM_GEOMETRY_HINT = "Cut simulation needs tool geometry from CAM comments in the loaded G-code file."
+_NATIVE_MISSING_HINT = "Cut simulation is unavailable because the native carve module is not built."
+
 
 def _stock_corner_pairs():
     return [
@@ -265,7 +268,7 @@ class StockSettingsPopup(ModalView):
         self.bind(simulation_available=self._schedule_fit_popup_height)
         self.bind(rotary_mode=self._on_rotary_mode)
         self.bind(has_off_axis_y=self._on_off_axis_y)
-        self.simulation_hint = tr._("Cut simulation needs tool geometry from CAM comments in the loaded G-code file.")
+        self.simulation_hint = tr._(_CAM_GEOMETRY_HINT)
         self._ensure_lists()
         self._populate_spinner_choices()
         self._write_settings_to_ui(self._settings_snapshot)
@@ -605,6 +608,13 @@ class StockSettingsPopup(ModalView):
         return settings
 
     def _refresh_simulation_availability(self):
+        from carveracontroller.addons.stock.simulator.native import native_enabled
+
+        if not native_enabled():
+            self.simulation_available = False
+            self.simulation_hint = tr._(_NATIVE_MISSING_HINT)
+            return
+        self.simulation_hint = tr._(_CAM_GEOMETRY_HINT)
         app = App.get_running_app()
         viewer = None
         if app is not None and getattr(app, "root", None) is not None:

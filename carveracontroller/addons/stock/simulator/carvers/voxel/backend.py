@@ -14,12 +14,12 @@ from carveracontroller.addons.stock.simulator.carvers.laser_map import (
     laser_burn_uint8,
     pick_laser_cell_size_mm,
     split_laser_snapshot,
+    stroke_parts,
     stroke_radius_mm,
 )
 from carveracontroller.addons.stock.stock_geometry import StockBounds, stock_theta_deg
 from carveracontroller.addons.stock.stock_shape import RectangularStock, StockShape
 
-from .carve import carve_segment_into_grid
 from .checkpoints import CheckpointStore, restore_voxel_checkpoint
 from .grid import CHUNK_EMPTY, CHUNK_FULL, ChunkCoord, ChunkedVoxelGrid
 from .mesher import mesh_dirty_chunks
@@ -104,43 +104,68 @@ class VoxelBackend(LaserDecalMixin):
         *,
         a0: float = 0.0,
         a1: float = 0.0,
+        profile=None,
     ) -> set[TileKey]:
-        dirty = carve_segment_into_grid(
-            self.grid,
-            p0,
-            p1,
-            tool_def,
-            tool_unit_scale=tool_unit_scale,
-            a0=a0,
-            a1=a1,
-        )
-        if self._laser is not None:
+        if profile is None:
             profile = resolve_cutting_profile(tool_def, tool_unit_scale=tool_unit_scale)
-            max_r = max((r for _z, r in profile), default=0.0) if profile else 0.0
-            if max_r > 0 and self._clear_laser_from_mill(p0, p1, max_r, a0, a1):
+        return self.carve_segments([(p0, p1, a0, a1)], profile, tool_unit_scale=tool_unit_scale, tool_def=tool_def)
+
+    def carve_segments(
+        self,
+        segments,
+        profile,
+        tool_unit_scale: float = 1.0,
+        tool_def=None,
+    ) -> set[TileKey]:
+        del tool_unit_scale, tool_def
+        if not segments or not profile:
+            return set()
+        from carveracontroller.addons.stock.simulator.native import carve_voxels
+
+        dirty = carve_voxels(self.grid, list(segments), profile)
+        if self._laser is not None:
+            max_r = max((r for _z, r in profile), default=0.0)
+            if max_r > 0 and self._clear_laser_batch(segments, max_r):
                 self._laser_dirty = True
         return dirty
 
-    def _clear_laser_from_mill(
-        self,
-        p0: tuple[float, float, float],
-        p1: tuple[float, float, float],
-        radius: float,
-        a0: float,
-        a1: float,
-    ) -> bool:
+    def _clear_laser_batch(self, segments, radius: float) -> bool:
         laser = self._laser
-        if laser is None:
+        if laser is None or not segments:
             return False
-        if laser.mode == "cylindrical":
-            return laser.clear_segment(
-                p0[0],
-                self._stock_theta(p0, a0),
-                p1[0],
-                self._stock_theta(p1, a1),
-                radius,
-            )
-        return laser.clear_segment(p0[0], p0[1], p1[0], p1[1], radius)
+        from carveracontroller.addons.stock.simulator.native import clear_laser_capsules
+
+        u0: list[float] = []
+        v0: list[float] = []
+        u1: list[float] = []
+        v1: list[float] = []
+        cylindrical = laser.mode == "cylindrical"
+        for p0, p1, a0, a1 in segments:
+            if cylindrical:
+                u0.append(float(p0[0]))
+                v0.append(self._stock_theta(p0, a0))
+                u1.append(float(p1[0]))
+                v1.append(self._stock_theta(p1, a1))
+            else:
+                u0.append(float(p0[0]))
+                v0.append(float(p0[1]))
+                u1.append(float(p1[0]))
+                v1.append(float(p1[1]))
+        return clear_laser_capsules(
+            laser.intensity,
+            u0,
+            v0,
+            u1,
+            v1,
+            float(radius),
+            cell_u=laser.cell_u,
+            cell_v=laser.cell_v,
+            origin_u=laser.origin_u,
+            origin_v=laser.origin_v,
+            wrap_v=laser.wrap_v,
+            v_period=laser.v_period,
+            v_scale=laser.v_scale,
+        )
 
     def _axis_yz(self) -> tuple[float, float]:
         return (
@@ -196,6 +221,14 @@ class VoxelBackend(LaserDecalMixin):
             self._laser_dirty = True
         elif self._laser is not None and not np.any(self._laser.intensity):
             self._drop_laser()
+        return changed
+
+    def engrave_segments(self, jobs, tool_unit_scale: float = 1.0) -> bool:
+        changed = False
+        for item in jobs:
+            p0, p1, a0, a1, power = stroke_parts(item)
+            if self.engrave_segment(p0, p1, None, tool_unit_scale, a0=a0, a1=a1, power_s=power):
+                changed = True
         return changed
 
     def _stock_under_laser_xy(self, x: float, y: float, z_laser: float) -> bool:

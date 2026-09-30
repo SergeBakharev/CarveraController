@@ -14,6 +14,20 @@ from carveracontroller.addons.stock.ui.StockSettingsPopup import (
 )
 
 
+def test_refresh_simulation_hint_when_native_carve_missing(monkeypatch):
+    import carveracontroller.addons.stock.simulator.native as native
+
+    monkeypatch.setattr(native, "native_enabled", lambda: False)
+    popup = StockSettingsPopup.__new__(StockSettingsPopup)
+    popup.simulation_available = True
+    popup.simulation_hint = ""
+
+    popup._refresh_simulation_availability()
+
+    assert popup.simulation_available is False
+    assert "native carve module is not built" in popup.simulation_hint
+
+
 def test_reset_for_loaded_file_uses_snapshot_not_ui():
     popup = StockSettingsPopup.__new__(StockSettingsPopup)
     custom = {

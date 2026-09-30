@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from carveracontroller.addons.stock.simulator.carver_select import resolve_cutting_profile
 from carveracontroller.addons.stock.simulator.carvers.array_mesh import (
     tile_keys_from_window_mask,
 )
 from carveracontroller.addons.stock.simulator.carvers.heightmap import HeightmapBackend
-from carveracontroller.addons.stock.simulator.carvers.heightmap.backend import (
-    _sample_profile_z_for_radius,
-)
+from carveracontroller.addons.stock.simulator.native import HAS_NATIVE
 from carveracontroller.addons.stock.stock_geometry import StockBounds
 from carveracontroller.addons.stock.stock_shape import CylindricalStock, RectangularStock
 from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition, ToolType
+
+pytestmark = pytest.mark.skipif(not HAS_NATIVE, reason="native carve extension is not built")
 
 
 def _flat_tool(diameter: float = 4.0) -> ToolDefinition:
@@ -274,43 +274,6 @@ def test_tile_keys_from_window_mask_matches_unique():
     expect = {(int((i + 5) // 16), int((j + 9) // 16), 0) for i, j in zip(ii, jj)}
     assert got == expect
     assert tile_keys_from_window_mask(np.zeros((8, 8), dtype=bool), 0, 0, 16) == set()
-
-
-def test_sample_profile_z_matches_segment_inverse():
-    profile = resolve_cutting_profile(_vbit())
-    zs = np.array([z for z, _r in profile], dtype=np.float64)
-    rs = np.array([r for _z, r in profile], dtype=np.float64)
-    dist = np.linspace(0.0, float(np.max(rs)) + 0.5, 64)
-    got = _sample_profile_z_for_radius(zs, rs, dist)
-
-    # Smallest Z on any segment where r(z) >= dist (same rule as the carver).
-    expect = np.full_like(dist, np.inf)
-    for i in range(len(zs) - 1):
-        z0, z1 = float(zs[i]), float(zs[i + 1])
-        r0, r1 = float(rs[i]), float(rs[i + 1])
-        cand = np.full_like(dist, np.inf)
-        at_start = dist <= r0 + 1e-9
-        cand[at_start] = z0
-        if abs(r1 - r0) >= 1e-12:
-            crosses = (~at_start) & (dist <= r1 + 1e-9)
-            t = np.clip((dist[crosses] - r0) / (r1 - r0), 0.0, 1.0)
-            cand[crosses] = z0 + t * (z1 - z0)
-        expect = np.minimum(expect, cand)
-    for z, r in zip(zs, rs):
-        expect = np.minimum(expect, np.where(dist <= float(r) + 1e-9, float(z), np.inf))
-    finite = np.isfinite(expect)
-    assert np.all(np.isfinite(got) == finite)
-    assert np.allclose(got[finite], expect[finite], atol=1e-9)
-
-
-def test_sample_profile_z_undercut_uses_smallest_z():
-    zs = np.array([0.0, 1.0, 2.0], dtype=np.float64)
-    rs = np.array([2.0, 0.5, 2.0], dtype=np.float64)
-    dist = np.array([1.5, 0.4, 2.5])
-    got = _sample_profile_z_for_radius(zs, rs, dist)
-    assert got[0] == 0.0
-    assert got[1] == 0.0
-    assert np.isinf(got[2])
 
 
 def test_pack_quad_meshes_splits_under_kivy_uint16_limit():

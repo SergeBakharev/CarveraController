@@ -29,6 +29,7 @@ from carveracontroller.addons.stock.simulator.carvers.laser_map import (
     laser_burn_uint8,
     pick_laser_cell_size_mm,
     split_laser_snapshot,
+    stroke_parts,
     stroke_radius_mm,
 )
 from carveracontroller.addons.stock.stock_geometry import StockBounds
@@ -45,99 +46,6 @@ def pick_heightmap_size(bounds: StockBounds, cell_size_mm: float) -> tuple[int, 
     nx = max(1, int(math.ceil(sx / max(cell_size_mm, 1e-9))))
     ny = max(1, int(math.ceil(sy / max(cell_size_mm, 1e-9))))
     return nx, ny
-
-
-def _sample_profile_z_for_radius(
-    profile_zs: np.ndarray,
-    profile_rs: np.ndarray,
-    dist_xy: np.ndarray,
-) -> np.ndarray:
-    """Smallest tool-relative Z where profile radius >= dist_xy (inverse profile)."""
-    out = np.full(dist_xy.shape, np.inf, dtype=np.float64)
-    if profile_zs.size == 0:
-        return out
-    max_r = float(np.max(profile_rs))
-    min_r = float(np.min(profile_rs))
-    if max_r - min_r < 1e-12:
-        np.copyto(out, float(profile_zs[0]), where=dist_xy <= max_r + 1e-9)
-        return out
-
-    flat = dist_xy.ravel()
-    result = np.full(flat.shape, np.inf, dtype=np.float64)
-    inside = flat <= max_r + 1e-9
-    if not inside.any():
-        return out
-
-    # Non-undercut tools (the heightmap's intended case): invert with searchsorted.
-    if bool(np.all(np.diff(profile_rs) >= -1e-12)):
-        d = flat[inside]
-        idx = np.searchsorted(profile_rs, d, side="left")
-        idx = np.minimum(idx, profile_rs.size - 1)
-        z = np.empty_like(d)
-        first = idx == 0
-        z[first] = float(profile_zs[0])
-        later = ~first
-        if later.any():
-            i1 = idx[later]
-            i0 = i1 - 1
-            r0 = profile_rs[i0]
-            r1 = profile_rs[i1]
-            z0 = profile_zs[i0]
-            z1 = profile_zs[i1]
-            denom = r1 - r0
-            t = np.zeros_like(d[later])
-            steep = np.abs(denom) >= 1e-12
-            if steep.any():
-                t[steep] = np.clip((d[later][steep] - r0[steep]) / denom[steep], 0.0, 1.0)
-            z[later] = np.where(steep, z0 + t * (z1 - z0), np.minimum(z0, z1))
-        result[inside] = z
-        return result.reshape(dist_xy.shape)
-
-    # Re-entrant silhouette: smallest Z on any segment where r(z) >= dist.
-    d = flat[inside]
-    z_best = np.full(d.shape, np.inf, dtype=np.float64)
-    for i in range(len(profile_zs) - 1):
-        z0, z1 = float(profile_zs[i]), float(profile_zs[i + 1])
-        r0, r1 = float(profile_rs[i]), float(profile_rs[i + 1])
-        cand = np.full(d.shape, np.inf, dtype=np.float64)
-        at_start = d <= r0 + 1e-9
-        cand[at_start] = z0
-        if abs(r1 - r0) >= 1e-12:
-            crosses = (~at_start) & (d <= r1 + 1e-9)
-            if crosses.any():
-                t = np.clip((d[crosses] - r0) / (r1 - r0), 0.0, 1.0)
-                cand[crosses] = z0 + t * (z1 - z0)
-        z_best = np.minimum(z_best, cand)
-    for z, r in zip(profile_zs, profile_rs):
-        z_best = np.minimum(z_best, np.where(d <= float(r) + 1e-9, float(z), np.inf))
-    result[inside] = z_best
-    return result.reshape(dist_xy.shape)
-
-
-def _cut_z_along_segment(
-    t: np.ndarray,
-    p0: tuple[float, float, float],
-    dx: float,
-    dy: float,
-    dz: float,
-    wx: np.ndarray,
-    wy: np.ndarray,
-    profile_zs: np.ndarray,
-    profile_rs: np.ndarray,
-    *,
-    clamp_r: float | None = None,
-) -> np.ndarray:
-    """Remaining world Z at poses ``p0 + t * Δ`` for each XY sample.
-
-    ``clamp_r`` caps XY distance before the profile lookup. Coverage-interval
-    endpoints are constructed to lie on the max-radius circle; reconstructing
-    that distance with ``hypot`` can land 1 ULP outside and drop the sample.
-    """
-    dist = np.hypot(wx - (p0[0] + t * dx), wy - (p0[1] + t * dy))
-    if clamp_r is not None:
-        dist = np.minimum(dist, float(clamp_r))
-    z_rel = _sample_profile_z_for_radius(profile_zs, profile_rs, dist)
-    return (p0[2] + t * dz) + z_rel
 
 
 class HeightmapBackend(LaserDecalMixin):
@@ -255,122 +163,50 @@ class HeightmapBackend(LaserDecalMixin):
         *,
         a0: float = 0.0,
         a1: float = 0.0,
+        profile=None,
     ) -> set[TileKey]:
-        del a0, a1
-        profile = resolve_cutting_profile(tool_def, tool_unit_scale=tool_unit_scale)
-        if not profile:
-            return set()
-        max_r = max(r for _z, r in profile)
-        if max_r <= 0:
-            return set()
-        profile_zs = np.array([z for z, _r in profile], dtype=np.float64)
-        profile_rs = np.array([r for _z, r in profile], dtype=np.float64)
+        if profile is None:
+            profile = resolve_cutting_profile(tool_def, tool_unit_scale=tool_unit_scale)
+        return self.carve_segments([(p0, p1, a0, a1)], profile, tool_unit_scale=tool_unit_scale)
 
-        pad = max_r + self.cell_size
-        min_x = min(p0[0], p1[0]) - pad
-        max_x = max(p0[0], p1[0]) + pad
-        min_y = min(p0[1], p1[1]) - pad
-        max_y = max(p0[1], p1[1]) + pad
-
-        ix0 = max(0, int(math.floor((min_x - self.bounds.min_x) / self.cell_size)))
-        iy0 = max(0, int(math.floor((min_y - self.bounds.min_y) / self.cell_size)))
-        ix1 = min(self.nx - 1, int(math.floor((max_x - self.bounds.min_x) / self.cell_size)))
-        iy1 = min(self.ny - 1, int(math.floor((max_y - self.bounds.min_y) / self.cell_size)))
-        if ix0 > ix1 or iy0 > iy1:
+    def carve_segments(
+        self,
+        segments,
+        profile,
+        tool_unit_scale: float = 1.0,
+        tool_def=None,
+    ) -> set[TileKey]:
+        del tool_unit_scale, tool_def
+        if not segments or not profile:
             return set()
+        if self.heights.shape != (self.nx, self.ny) or self._ox != 0 or self._oy != 0:
+            raise RuntimeError("heightmap carve requires the full occupancy grid")
+        from carveracontroller.addons.stock.simulator.native import carve_heightmap
 
-        wx = self.bounds.min_x + (np.arange(ix0, ix1 + 1, dtype=np.float64) + 0.5) * self.cell_size
-        wy = self.bounds.min_y + (np.arange(iy0, iy1 + 1, dtype=np.float64) + 0.5) * self.cell_size
-        wx = wx[:, None]
-        wy = wy[None, :]
-        slab = self.heights[ix0 : ix1 + 1, iy0 : iy1 + 1]
-        valid = slab > _OUTSIDE * 0.5
-
-        dx = p1[0] - p0[0]
-        dy = p1[1] - p0[1]
-        dz = p1[2] - p0[2]
-        xy_len_sq = dx * dx + dy * dy
-        if xy_len_sq < 1e-18:
-            dist = np.hypot(wx - p0[0], wy - p0[1])
-            tip_z = min(p0[2], p1[2])
-            z_rel = _sample_profile_z_for_radius(profile_zs, profile_rs, dist)
-            cut_z = tip_z + z_rel
-        else:
-            # Capsule coverage in t: interval around the line projection, clipped
-            # to the segment. Remaining Z is min over covering poses, not the
-            # XY-closest tip (a descending ramp still covers uphill cells later).
-            t_proj = ((wx - p0[0]) * dx + (wy - p0[1]) * dy) / xy_len_sq
-            dist_perp_sq = (wx - (p0[0] + t_proj * dx)) ** 2 + (wy - (p0[1] + t_proj * dy)) ** 2
-            r_cov = max_r + 1e-9
-            delta_t = np.sqrt(np.maximum(r_cov * r_cov - dist_perp_sq, 0.0) / xy_len_sq)
-            t_lo = np.maximum(t_proj - delta_t, 0.0)
-            t_hi = np.minimum(t_proj + delta_t, 1.0)
-            t_mid = np.clip(t_proj, 0.0, 1.0)
-            in_interval = (dist_perp_sq <= r_cov * r_cov) & (t_lo <= t_hi)
-            if float(np.max(profile_rs)) - float(np.min(profile_rs)) < 1e-12:
-                # Cylinder: remaining Z is the lowest covering tip (z_rel constant).
-                t_z = t_lo if dz >= 0.0 else t_hi
-                cut_z = (p0[2] + t_z * dz) + float(profile_zs[0])
-            else:
-                args = (p0, dx, dy, dz, wx, wy, profile_zs, profile_rs)
-                # Clamp hypot reconstruction onto the silhouette so endpoint
-                # samples are not dropped (sawtooth ramps / tabs).
-                cut_z = np.minimum.reduce(
-                    [
-                        _cut_z_along_segment(t_lo, *args, clamp_r=max_r),
-                        _cut_z_along_segment(t_hi, *args, clamp_r=max_r),
-                        _cut_z_along_segment(t_mid, *args, clamp_r=max_r),
-                    ]
-                )
-            cut_z = np.where(in_interval, cut_z, np.inf)
-        cut_z = np.maximum(cut_z, float(self.bounds.min_z))
-        hit = valid & np.isfinite(cut_z) & (cut_z < slab)
-        if not hit.any():
-            return set()
-        slab[hit] = np.minimum(slab[hit], cut_z[hit].astype(np.float32))
-        if self._laser is not None and self._laser.clear_from_coarse_mask(
-            hit,
-            ix0,
-            iy0,
-            self.cell_size,
-            self.cell_size,
-            self.bounds.min_x,
-            self.bounds.min_y,
-        ):
+        laser = self._laser
+        dirty, laser_changed = carve_heightmap(
+            self.heights,
+            min_x=float(self.bounds.min_x),
+            min_y=float(self.bounds.min_y),
+            min_z=float(self.bounds.min_z),
+            cell=float(self.cell_size),
+            tile=int(self.tile_size),
+            segments=list(segments),
+            profile=profile,
+            laser=None if laser is None else laser.intensity,
+            laser_cell_u=0.0 if laser is None else laser.cell_u,
+            laser_cell_v=0.0 if laser is None else laser.cell_v,
+            laser_origin_u=0.0 if laser is None else laser.origin_u,
+            laser_origin_v=0.0 if laser is None else laser.origin_v,
+        )
+        if laser_changed:
             self._laser_dirty = True
-        dirty = tile_keys_from_window_mask(hit, ix0, iy0, self.tile_size)
         self._touched |= dirty
         return dirty
 
     def _make_laser_map(self) -> LaserMap:
         nx, ny = pick_heightmap_size(self.bounds, self._laser_cell_size)
         return LaserMap.planar(self.bounds, nx, ny, self._laser_cell_size)
-
-    def _laser_allow_from_heights(
-        self,
-        laser: LaserMap,
-        p0: tuple[float, float, float],
-        p1: tuple[float, float, float],
-        radius: float,
-        laser_z: float,
-    ) -> tuple[np.ndarray | None, tuple[int, int] | None]:
-        if self.heights.shape != (self.nx, self.ny):
-            return None, None
-        pad = radius + laser.cell_u
-        iu0 = max(0, int(math.floor((min(p0[0], p1[0]) - pad - laser.origin_u) / laser.cell_u)))
-        iv0 = max(0, int(math.floor((min(p0[1], p1[1]) - pad - laser.origin_v) / laser.cell_v)))
-        iu1 = min(laser.nx - 1, int(math.floor((max(p0[0], p1[0]) + pad - laser.origin_u) / laser.cell_u)))
-        iv1 = min(laser.nv - 1, int(math.floor((max(p0[1], p1[1]) + pad - laser.origin_v) / laser.cell_v)))
-        if iu0 > iu1 or iv0 > iv1:
-            return None, None
-        uu = laser.origin_u + (np.arange(iu0, iu1 + 1, dtype=np.float64) + 0.5) * laser.cell_u
-        vv = laser.origin_v + (np.arange(iv0, iv1 + 1, dtype=np.float64) + 0.5) * laser.cell_v
-        ix = np.clip(np.floor((uu - self.bounds.min_x) / self.cell_size).astype(np.int32), 0, self.nx - 1)
-        iy = np.clip(np.floor((vv - self.bounds.min_y) / self.cell_size).astype(np.int32), 0, self.ny - 1)
-        slab = self.heights[ix[:, None], iy[None, :]]
-        eps = max(self.cell_size, 0.2)
-        allow = (slab > _OUTSIDE * 0.5) & (slab >= np.float32(laser_z - eps))
-        return allow, (iu0, iv0)
 
     def engrave_segment(
         self,
@@ -384,22 +220,53 @@ class HeightmapBackend(LaserDecalMixin):
         power_s: float | None = None,
     ) -> bool:
         del tool_def, tool_unit_scale, a0, a1
-        burn = laser_burn_uint8(power_s)
-        if not burn:
+        return self.engrave_segments([(p0, p1, 0.0, 0.0, power_s)])
+
+    def engrave_segments(self, jobs, tool_unit_scale: float = 1.0) -> bool:
+        """Paint laser strokes without merging them. ``jobs`` are ``(p0, p1, a0, a1, power)`` or CarveJobs."""
+        del tool_unit_scale
+        u0: list[float] = []
+        v0: list[float] = []
+        u1: list[float] = []
+        v1: list[float] = []
+        burns: list[int] = []
+        laser_z: list[float] = []
+        for item in jobs:
+            p0, p1, _a0, _a1, power = stroke_parts(item)
+            burn = int(laser_burn_uint8(power))
+            if not burn:
+                continue
+            u0.append(float(p0[0]))
+            v0.append(float(p0[1]))
+            u1.append(float(p1[0]))
+            v1.append(float(p1[1]))
+            burns.append(burn)
+            laser_z.append(min(float(p0[2]), float(p1[2])))
+        if not burns:
             return False
-        radius = stroke_radius_mm(self._laser_cell_size)
-        laser_z = min(float(p0[2]), float(p1[2]))
+        from carveracontroller.addons.stock.simulator.native import paint_laser
+
         laser = self._ensure_laser()
-        allow, origin = self._laser_allow_from_heights(laser, p0, p1, radius, laser_z)
-        changed = laser.paint_segment(
-            p0[0],
-            p0[1],
-            p1[0],
-            p1[1],
-            radius,
-            allow,
-            allow_origin=origin,
-            burn=burn,
+        changed = paint_laser(
+            laser.intensity,
+            u0,
+            v0,
+            u1,
+            v1,
+            burns,
+            stroke_radius_mm(self._laser_cell_size),
+            cell_u=laser.cell_u,
+            cell_v=laser.cell_v,
+            origin_u=laser.origin_u,
+            origin_v=laser.origin_v,
+            wrap_v=False,
+            v_scale=laser.v_scale,
+            occ_kind=1,
+            occ=self.heights,
+            occ_min_x=float(self.bounds.min_x),
+            occ_min_y=float(self.bounds.min_y),
+            occ_cell=float(self.cell_size),
+            z_or_r=laser_z,
         )
         if changed:
             self._laser_dirty = True

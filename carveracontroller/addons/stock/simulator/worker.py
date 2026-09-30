@@ -19,8 +19,9 @@ from carveracontroller.addons.stock.simulator.carver_select import (
     DEFAULT_CARVER_MODE,
     normalize_carver_mode,
     recommend_carver,
+    resolve_cutting_profile,
 )
-from carveracontroller.addons.stock.simulator.carvers.laser_map import pick_laser_cell_size_mm
+from carveracontroller.addons.stock.simulator.carvers.laser_map import laser_burn_uint8, pick_laser_cell_size_mm
 from carveracontroller.addons.stock.simulator.simulation_quality import (
     CHECKPOINT_SLOTS_BY_LEVEL,
     DEFAULT_CHECKPOINT_LEVEL,
@@ -502,6 +503,7 @@ class StockSimulator:
         self._path_speeds: list[float] | None = None
         self._tool_table: dict | None = None
         self._tool_scale: float = 1.0
+        self._profile_cache: dict[tuple, list] = {}
         self._has_4axis: bool = False
         self._has_off_axis_y: bool = False
         # When False, carve/checkpoint continue but mesh callbacks are skipped.
@@ -666,6 +668,7 @@ class StockSimulator:
         )
         with self._lock:
             self._generation += 1
+            self._profile_cache = {}
             self._shape = (
                 shape
                 if shape is not None
@@ -793,6 +796,7 @@ class StockSimulator:
             self._path_speeds = speeds
             self._tool_table = tool_table
             self._tool_scale = float(tool_scale) if tool_scale else 1.0
+            self._profile_cache = {}
             self._has_4axis = bool(has_4axis)
             self._has_off_axis_y = bool(has_off_axis_y)
             n = 0 if positions is None else len(positions) // 3
@@ -1390,6 +1394,71 @@ class StockSimulator:
         store = self._checkpoints
         if store is None:
             return last_end_vertex, True
+        batch: list[CarveJob] = []
+        laser_batch: list[CarveJob] = []
+
+        def _apply_carved(jobs: list[CarveJob], dirty: set) -> bool:
+            nonlocal last_end_vertex, last_progress_t, interrupted
+            if not jobs:
+                return True
+            with self._lock:
+                if self._generation != gen or self._resimulating:
+                    interrupted = True
+                    return False
+                pending_dirty.update(dirty)
+                changed_since_cp.update(dirty)
+                for job in jobs:
+                    if self._maybe_record_checkpoint(job.end_vertex, grid_or_backend, changed_since_cp):
+                        changed_since_cp.clear()
+                    if idle:
+                        self._bake_carved_vertex = job.end_vertex
+                    else:
+                        self._grid_carved_vertex = job.end_vertex
+                        self._clear_open_segment_locked()
+                last_end_vertex = jobs[-1].end_vertex
+            if not idle:
+                now_p = time.monotonic()
+                if now_p - last_progress_t >= 0.05:
+                    self._emit_progress(last_end_vertex)
+                    last_progress_t = now_p
+            return True
+
+        def _flush_batch() -> bool:
+            nonlocal batch
+            if not batch:
+                return True
+            jobs = batch
+            batch = []
+            # Carve outside the lock so HUD/playhead can progress during long wraps.
+            dirty = self._carve_jobs(grid_or_backend, jobs, path.tool_scale)
+            return _apply_carved(jobs, dirty)
+
+        def _flush_laser() -> bool:
+            nonlocal laser_batch
+            if not laser_batch:
+                return True
+            jobs = laser_batch
+            laser_batch = []
+            # Strokes stay separate inside the batch; only the Python call is shared.
+            self._engrave_jobs(grid_or_backend, jobs, path.tool_scale)
+            return _apply_carved(jobs, set())
+
+        def _drop_pending() -> None:
+            """Abandon queued cuts. Idle ahead-carve and in-range flushes do not use this."""
+            nonlocal batch, laser_batch, interrupted
+            batch = []
+            laser_batch = []
+            interrupted = True
+
+        def _flush_through(limit: int) -> None:
+            """Carve queued jobs that still end at or before the live playhead."""
+            nonlocal batch, laser_batch, interrupted
+            interrupted = True
+            laser_batch = [job for job in laser_batch if job.end_vertex <= limit]
+            batch = [job for job in batch if job.end_vertex <= limit]
+            if _flush_laser():
+                _flush_batch()
+
         for seg in self._iter_cut_jobs(
             path,
             start_vertex,
@@ -1398,41 +1467,62 @@ class StockSimulator:
             checkpoints=store,
         ):
             if self._generation != gen or self._resimulating:
-                interrupted = True
+                _drop_pending()
                 break
             if idle and self._idle_cancel.is_set():
-                interrupted = True
+                # Idle flushes every segment, so the queue is empty here. Dropping
+                # matches that and leaves bake progress already committed.
+                _drop_pending()
                 break
             if follow_display:
                 with self._lock:
                     live_target, _live_frac = _playhead_parts(self._display_vertex)
-                if live_target < seg.end_vertex:
-                    interrupted = True
+                past_playhead = live_target < seg.end_vertex
+                timed_out = deadline is not None and time.monotonic() >= deadline
+                if past_playhead or timed_out:
+                    # Display occupancy stops at the playhead. Jobs still inside
+                    # it are carved so the mesh throttle can yield; jobs the
+                    # playhead has moved behind are left for rewind. Idle bake
+                    # does not pass follow_display, so it keeps carving ahead.
+                    _flush_through(live_target)
                     break
-                if deadline is not None and time.monotonic() >= deadline:
-                    interrupted = True
+            if not seg.is_cut:
+                if not _flush_laser() or not _flush_batch():
                     break
-            # Carve outside the lock so HUD/playhead can progress during long wraps.
-            dirty = self._carve_one(grid_or_backend, seg, path.tool_scale)
-            with self._lock:
-                if self._generation != gen or self._resimulating:
-                    interrupted = True
+                dirty = self._carve_one(grid_or_backend, seg, path.tool_scale)
+                if not _apply_carved([seg], dirty):
                     break
-                pending_dirty.update(dirty)
-                changed_since_cp.update(dirty)
-                if self._maybe_record_checkpoint(seg.end_vertex, grid_or_backend, changed_since_cp):
-                    changed_since_cp.clear()
-                if idle:
-                    self._bake_carved_vertex = seg.end_vertex
-                else:
-                    self._grid_carved_vertex = seg.end_vertex
-                    self._clear_open_segment_locked()
-            last_end_vertex = seg.end_vertex
-            if not idle:
-                now_p = time.monotonic()
-                if now_p - last_progress_t >= 0.05:
-                    self._emit_progress(seg.end_vertex)
-                    last_progress_t = now_p
+                continue
+            if seg.tool_number == LASER_TOOL_NUMBER:
+                if not _flush_batch():
+                    break
+                laser_batch.append(seg)
+                target = store.next_unrecorded_target()
+                at_checkpoint = target is not None and int(seg.end_vertex) >= int(target)
+                # Idle stays one stroke at a time. Foreground flushes on a checkpoint
+                # or when the display deadline stops the loop. Strokes are not merged.
+                if idle or at_checkpoint:
+                    if not _flush_laser():
+                        break
+                continue
+            if laser_batch and not _flush_laser():
+                break
+            if batch and (batch[-1].tool_number != seg.tool_number or batch[-1].tool_def is not seg.tool_def):
+                if not _flush_batch():
+                    break
+            batch.append(seg)
+            target = store.next_unrecorded_target()
+            # Idle stays one segment at a time so cancel and checkpoint deltas
+            # observe the same vertex the playhead would. Foreground carving
+            # flushes on a tool change, a checkpoint, or the display deadline.
+            at_checkpoint = target is not None and int(seg.end_vertex) >= int(target)
+            if idle or at_checkpoint:
+                if not _flush_batch():
+                    break
+        if laser_batch and not _flush_laser():
+            interrupted = True
+        if batch and not _flush_batch():
+            interrupted = True
         if not interrupted:
             with self._lock:
                 if self._generation != gen or self._resimulating:
@@ -1930,11 +2020,58 @@ class StockSimulator:
                 logger.exception("stock mesh callback failed")
             return True
 
+    def _cached_cutting_profile(self, tool_def, tool_unit_scale: float):
+        scale = float(tool_unit_scale) if tool_unit_scale else 1.0
+        key = (id(tool_def) if tool_def is not None else None, scale)
+        cached = self._profile_cache.get(key)
+        if cached is None:
+            cached = resolve_cutting_profile(tool_def, tool_unit_scale=scale)
+            self._profile_cache[key] = cached
+        return cached
+
+    @staticmethod
+    def _laser_z_plunge(job: CarveJob) -> bool:
+        dx = float(job.p1[0]) - float(job.p0[0])
+        dy = float(job.p1[1]) - float(job.p0[1])
+        dz = float(job.p1[2]) - float(job.p0[2])
+        da = abs(float(job.a1) - float(job.a0))
+        return (dx * dx + dy * dy) < 1e-8 and abs(dz) > 0.02 and da < 0.5
+
+    def _engrave_jobs(self, backend, jobs: list[CarveJob], tool_unit_scale: float) -> None:
+        strokes = [job for job in jobs if not self._laser_z_plunge(job) and laser_burn_uint8(job.spindle_s)]
+        if not strokes:
+            return
+        many = getattr(backend, "engrave_segments", None)
+        if many is not None:
+            many(strokes, tool_unit_scale=tool_unit_scale)
+            return
+        for job in strokes:
+            self._carve_one(backend, job, tool_unit_scale)
+
+    def _carve_jobs(self, backend, jobs: list[CarveJob], tool_unit_scale: float) -> set[tuple[int, int, int]]:
+        if not jobs:
+            return set()
+        profile = self._cached_cutting_profile(jobs[0].tool_def, tool_unit_scale)
+        segments = [(job.p0, job.p1, job.a0, job.a1) for job in jobs]
+        carve_many = getattr(backend, "carve_segments", None)
+        if carve_many is not None:
+            return carve_many(
+                segments,
+                profile,
+                tool_unit_scale=tool_unit_scale,
+                tool_def=jobs[0].tool_def,
+            )
+        dirty: set[tuple[int, int, int]] = set()
+        for job in jobs:
+            dirty |= self._carve_one(backend, job, tool_unit_scale, profile=profile)
+        return dirty
+
     def _carve_one(
         self,
         backend,
         job: CarveJob,
         tool_unit_scale: float = 1.0,
+        profile=None,
     ) -> set[tuple[int, int, int]]:
         if not job.is_cut:
             return set()
@@ -1943,12 +2080,8 @@ class StockSimulator:
             kwargs["a0"] = job.a0
             kwargs["a1"] = job.a1
         if job.tool_number == LASER_TOOL_NUMBER:
-            dx = float(job.p1[0]) - float(job.p0[0])
-            dy = float(job.p1[1]) - float(job.p0[1])
-            dz = float(job.p1[2]) - float(job.p0[2])
-            da = abs(float(job.a1) - float(job.a0))
             # Skip Z-only plunges; keep XY/A strokes and point stamps.
-            if (dx * dx + dy * dy) < 1e-8 and abs(dz) > 0.02 and da < 0.5:
+            if self._laser_z_plunge(job):
                 return set()
             engrave = getattr(backend, "engrave_segment", None)
             if engrave is not None:
@@ -1961,6 +2094,10 @@ class StockSimulator:
                     **kwargs,
                 )
             return set()
+        if profile is None:
+            profile = self._cached_cutting_profile(job.tool_def, tool_unit_scale)
+        if profile is not None:
+            kwargs["profile"] = profile
         return backend.carve_segment(
             job.p0,
             job.p1,

@@ -326,6 +326,14 @@ def test_simulation_unavailable_empty_path_without_tool_table():
     assert viewer.simulation_available() is False
 
 
+def test_simulation_unavailable_without_native_carve(monkeypatch):
+    import carveracontroller.addons.stock.simulator.native as native
+
+    monkeypatch.setattr(native, "native_enabled", lambda: False)
+    viewer = _viewer(tool_table={1: object()}, raw_tools=[])
+    assert viewer.simulation_available() is False
+
+
 def test_set_stock_material_only_skips_simulation_restart():
     from carveracontroller.addons.stock.stock_geometry import StockBounds
     from carveracontroller.addons.stock.stock_material import DEFAULT_MATERIAL, MATERIAL_PCB

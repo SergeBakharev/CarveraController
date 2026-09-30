@@ -26,11 +26,14 @@ from carveracontroller.addons.stock.simulator.carvers.voxel.checkpoints import (
     CheckpointStore,
     restore_voxel_checkpoint,
 )
+from carveracontroller.addons.stock.simulator.native import HAS_NATIVE
 from carveracontroller.addons.stock.simulator.worker import CarveJob, StockSimulator
 from carveracontroller.addons.stock.stock_geometry import StockBounds, rotate_yz, stock_theta_deg
 from carveracontroller.addons.stock.stock_shape import RectangularStock, RotaryCylindricalStock
 from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition, ToolType
 from carveracontroller.CNC import LASER_TOOL_NUMBER
+
+pytestmark = pytest.mark.skipif(not HAS_NATIVE, reason="native carve extension is not built")
 
 
 def _flat_tool(diameter: float = 4.0) -> ToolDefinition:

@@ -1955,10 +1955,15 @@ class GCodeViewer(Widget):
     def simulation_available(self) -> bool:
         """True when cut simulation can run for the loaded file.
 
-        Mill jobs need CAM tool geometry in ``tool_table``. Laser-only files
-        have no mill headers, so an empty table is still enough when the parsed
-        path uses only the laser (probe tools ignored).
+        The native carve extension must be built. Mill jobs also need CAM tool
+        geometry in ``tool_table``. Laser-only files have no mill headers, so an
+        empty table is still enough when the parsed path uses only the laser
+        (probe tools ignored).
         """
+        from carveracontroller.addons.stock.simulator.native import native_enabled
+
+        if not native_enabled():
+            return False
         if self.tool_table:
             return True
         return self._path_is_laser_only()

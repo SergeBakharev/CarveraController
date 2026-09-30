@@ -68,6 +68,17 @@ def pick_laser_cell_size_mm(
     return float(cell)
 
 
+def stroke_parts(item) -> tuple:
+    """``(p0, p1, a0, a1, power)`` from a tuple or a carve job."""
+    if isinstance(item, tuple):
+        p0, p1 = item[0], item[1]
+        a0 = float(item[2]) if len(item) > 2 else 0.0
+        a1 = float(item[3]) if len(item) > 3 else a0
+        power = item[4] if len(item) > 4 else None
+        return p0, p1, a0, a1, power
+    return item.p0, item.p1, float(item.a0), float(item.a1), item.spindle_s
+
+
 def stroke_radius_mm(cell_size: float) -> float:
     """Beam width in mm. Tied to the decal cell, not occupancy, so rasters do not blob."""
     return max(LASER_BEAM_RADIUS_MIN_MM, min(LASER_BEAM_RADIUS_MAX_MM, 0.9 * float(cell_size)))
@@ -439,77 +450,45 @@ class LaserMap:
         allow: np.ndarray | None,
         allow_origin: tuple[int, int] | None,
     ) -> bool:
-        radius = max(float(radius), 0.71 * float(self.cell_u), 0.0)
-        pad_u = radius + self.cell_u
-        pad_v = radius / max(self.v_scale, 1e-12) + self.cell_v
-        iu0 = int(math.floor((min(u0, u1) - pad_u - self.origin_u) / max(self.cell_u, 1e-12)))
-        iu1 = int(math.floor((max(u0, u1) + pad_u - self.origin_u) / max(self.cell_u, 1e-12)))
-        iu0 = max(0, iu0)
-        iu1 = min(self.nx - 1, iu1)
-        if iu0 > iu1:
-            return False
+        origin = (0, 0) if allow_origin is None else allow_origin
+        if not int(value):
+            from carveracontroller.addons.stock.simulator.native import clear_laser_capsules
 
-        if self.wrap_v:
-            iv_idx = self._wrapped_v_indices(v0, v1, pad_v)
-            if iv_idx.size == 0:
-                return False
-            uu = self.origin_u + (np.arange(iu0, iu1 + 1, dtype=np.float64) + 0.5) * self.cell_u
-            vv = self.origin_v + (iv_idx.astype(np.float64) + 0.5) * self.cell_v
-            v0u, v1u = _unwrap_v_segment(v0, v1, self.v_period)
-            hit = _capsule_hit_wrapped(
-                uu[:, None],
-                vv[None, :],
-                u0,
-                v0u,
-                u1,
-                v1u,
-                radius,
-                self.v_period,
-                self.v_scale,
+            return clear_laser_capsules(
+                self.intensity,
+                [float(u0)],
+                [float(v0)],
+                [float(u1)],
+                [float(v1)],
+                float(radius),
+                cell_u=self.cell_u,
+                cell_v=self.cell_v,
+                origin_u=self.origin_u,
+                origin_v=self.origin_v,
+                wrap_v=self.wrap_v,
+                v_period=self.v_period,
+                v_scale=self.v_scale,
             )
-            if allow is not None:
-                hit = hit & _allow_for_indexed(allow, allow_origin, iu0, iv_idx, hit.shape)
-            if not hit.any():
-                return False
-            rs, cs = np.nonzero(hit)
-            iu = iu0 + rs
-            iv = iv_idx[cs] % self.nv
-            if value:
-                before = self.intensity[iu, iv]
-                painted = np.maximum(before, value)
-                if np.all(painted == before):
-                    return False
-                self.intensity[iu, iv] = painted
-            else:
-                if not np.any(self.intensity[iu, iv]):
-                    return False
-                self.intensity[iu, iv] = 0
-            return True
+        from carveracontroller.addons.stock.simulator.native import paint_laser
 
-        iv0 = int(math.floor((min(v0, v1) - pad_v - self.origin_v) / max(self.cell_v, 1e-12)))
-        iv1 = int(math.floor((max(v0, v1) + pad_v - self.origin_v) / max(self.cell_v, 1e-12)))
-        iv0 = max(0, iv0)
-        iv1 = min(self.nv - 1, iv1)
-        if iv0 > iv1:
-            return False
-        uu = self.origin_u + (np.arange(iu0, iu1 + 1, dtype=np.float64) + 0.5) * self.cell_u
-        vv = self.origin_v + (np.arange(iv0, iv1 + 1, dtype=np.float64) + 0.5) * self.cell_v
-        hit = _capsule_hit(uu[:, None], vv[None, :], u0, v0, u1, v1, radius, self.v_scale)
-        if allow is not None:
-            hit = hit & _allow_for_window(allow, allow_origin, iu0, iv0, hit.shape)
-        if not hit.any():
-            return False
-        slab = self.intensity[iu0 : iu1 + 1, iv0 : iv1 + 1]
-        if value:
-            prev = slab[hit]
-            if np.all(prev >= value):
-                return False
-            slab[hit] = np.maximum(prev, value)
-        else:
-            if not np.any(slab[hit]):
-                return False
-            slab[hit] = 0
-        return True
+        return paint_laser(
+            self.intensity,
+            [float(u0)],
+            [float(v0)],
+            [float(u1)],
+            [float(v1)],
+            [int(value)],
+            float(radius),
+            cell_u=self.cell_u,
+            cell_v=self.cell_v,
+            origin_u=self.origin_u,
+            origin_v=self.origin_v,
+            wrap_v=self.wrap_v,
+            v_period=self.v_period,
+            v_scale=self.v_scale,
+            allow=None if allow is None else np.ascontiguousarray(allow, dtype=np.uint8),
+            allow_origin=origin,
+        )
 
     def _wrapped_v_indices(self, v0: float, v1: float, pad_v: float) -> np.ndarray:
         period = self.v_period if self.v_period else 360.0
@@ -533,99 +512,6 @@ def _unwrap_v_segment(v0: float, v1: float, period: float) -> tuple[float, float
         return v0, v0 + period
     dv = (dv + period * 0.5) % period - period * 0.5
     return v0, v0 + dv
-
-
-def _capsule_hit(
-    uu: np.ndarray,
-    vv: np.ndarray,
-    u0: float,
-    v0: float,
-    u1: float,
-    v1: float,
-    radius: float,
-    v_scale: float = 1.0,
-) -> np.ndarray:
-    scale = float(v_scale) if v_scale else 1.0
-    du = float(u1) - float(u0)
-    dv = (float(v1) - float(v0)) * scale
-    len_sq = du * du + dv * dv
-    r_cov = float(radius) + 1e-9
-    vv_mm = vv * scale
-    v0_mm = float(v0) * scale
-    if len_sq < 1e-18:
-        dist_sq = (uu - u0) ** 2 + (vv_mm - v0_mm) ** 2
-        return dist_sq <= r_cov * r_cov
-    t = ((uu - u0) * du + (vv_mm - v0_mm) * dv) / len_sq
-    t = np.clip(t, 0.0, 1.0)
-    dist_sq = (uu - (u0 + t * du)) ** 2 + (vv_mm - (v0_mm + t * dv)) ** 2
-    return dist_sq <= r_cov * r_cov
-
-
-def _capsule_hit_wrapped(
-    uu: np.ndarray,
-    vv: np.ndarray,
-    u0: float,
-    v0: float,
-    u1: float,
-    v1: float,
-    radius: float,
-    period: float,
-    v_scale: float = 1.0,
-) -> np.ndarray:
-    """Min distance to the capsule over ``vv``, ``vv±period`` (θ wrap)."""
-    period = float(period) if period else 360.0
-    hit = _capsule_hit(uu, vv, u0, v0, u1, v1, radius, v_scale)
-    hit |= _capsule_hit(uu, vv + period, u0, v0, u1, v1, radius, v_scale)
-    hit |= _capsule_hit(uu, vv - period, u0, v0, u1, v1, radius, v_scale)
-    return hit
-
-
-def _allow_for_window(
-    allow: np.ndarray,
-    origin: tuple[int, int] | None,
-    iu0: int,
-    iv0: int,
-    shape: tuple[int, int],
-) -> np.ndarray:
-    if origin is None:
-        if allow.shape == shape:
-            return allow.astype(bool, copy=False)
-        return np.ones(shape, dtype=bool)
-    au0, av0 = origin
-    out = np.zeros(shape, dtype=bool)
-    # Overlap of stamp window (iu0, iv0) with allow origin.
-    rows, cols = allow.shape
-    rs0 = max(0, au0 - iu0)
-    cs0 = max(0, av0 - iv0)
-    rs1 = min(shape[0], au0 + rows - iu0)
-    cs1 = min(shape[1], av0 + cols - iv0)
-    if rs0 >= rs1 or cs0 >= cs1:
-        return out
-    as0 = rs0 + iu0 - au0
-    ac0 = cs0 + iv0 - av0
-    out[rs0:rs1, cs0:cs1] = allow[as0 : as0 + (rs1 - rs0), ac0 : ac0 + (cs1 - cs0)]
-    return out
-
-
-def _allow_for_indexed(
-    allow: np.ndarray,
-    origin: tuple[int, int] | None,
-    iu0: int,
-    iv_idx: np.ndarray,
-    shape: tuple[int, int],
-) -> np.ndarray:
-    rows, cols = shape
-    au0, av0 = (0, 0) if origin is None else origin
-    iu = np.broadcast_to(
-        (int(iu0) - au0) + np.arange(rows, dtype=np.int32)[:, None],
-        shape,
-    )
-    iv = np.broadcast_to(np.asarray(iv_idx, dtype=np.int32)[None, :] - av0, shape)
-    ok = (iu >= 0) & (iu < allow.shape[0]) & (iv >= 0) & (iv < allow.shape[1])
-    out = np.zeros(shape, dtype=bool)
-    if ok.any():
-        out[ok] = allow[iu[ok], iv[ok]]
-    return out
 
 
 class LaserDecalMixin:
