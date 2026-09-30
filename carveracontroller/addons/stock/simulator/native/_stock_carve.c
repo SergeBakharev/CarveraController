@@ -113,8 +113,97 @@ static int sc_bind_decal(
     out->wrap_v = wrap;
     out->v_period = v_period;
     out->v_scale = v_scale != 0.0 ? v_scale : 1.0;
+    out->dirty = NULL;
     *present = 1;
     return 0;
+}
+
+/* Bind optional dirty-index arrays. meta is int32[2]: [n, overflow]. */
+static int sc_bind_dirty(
+    PyObject *iu_obj,
+    PyObject *iv_obj,
+    PyObject *meta_obj,
+    Py_buffer *iu_view,
+    Py_buffer *iv_view,
+    Py_buffer *meta_view,
+    ScLaserDirty *out,
+    int *present) {
+    Py_ssize_t cap;
+    int32_t *meta;
+    *present = 0;
+    memset(iu_view, 0, sizeof(*iu_view));
+    memset(iv_view, 0, sizeof(*iv_view));
+    memset(meta_view, 0, sizeof(*meta_view));
+    memset(out, 0, sizeof(*out));
+    if (iu_obj == NULL || iu_obj == Py_None || iv_obj == NULL || iv_obj == Py_None || meta_obj == NULL ||
+        meta_obj == Py_None) {
+        return 0;
+    }
+    if (sc_get_buffer(iu_obj, iu_view, 1) != 0) {
+        return -1;
+    }
+    if (sc_get_buffer(iv_obj, iv_view, 1) != 0) {
+        PyBuffer_Release(iu_view);
+        memset(iu_view, 0, sizeof(*iu_view));
+        return -1;
+    }
+    if (sc_get_buffer(meta_obj, meta_view, 1) != 0) {
+        PyBuffer_Release(iu_view);
+        PyBuffer_Release(iv_view);
+        memset(iu_view, 0, sizeof(*iu_view));
+        memset(iv_view, 0, sizeof(*iv_view));
+        return -1;
+    }
+    if (iu_view->itemsize != (Py_ssize_t)sizeof(int32_t) || iv_view->itemsize != (Py_ssize_t)sizeof(int32_t) ||
+        meta_view->itemsize != (Py_ssize_t)sizeof(int32_t)) {
+        PyErr_SetString(PyExc_TypeError, "laser dirty buffers must be int32");
+        goto fail;
+    }
+    cap = iu_view->len / (Py_ssize_t)sizeof(int32_t);
+    if (cap <= 0 || iv_view->len / (Py_ssize_t)sizeof(int32_t) < cap) {
+        PyErr_SetString(PyExc_ValueError, "laser dirty index buffers are empty or mismatched");
+        goto fail;
+    }
+    if (meta_view->len / (Py_ssize_t)sizeof(int32_t) < 2) {
+        PyErr_SetString(PyExc_ValueError, "laser dirty meta must hold [n, overflow]");
+        goto fail;
+    }
+    meta = (int32_t *)meta_view->buf;
+    out->iu = (int32_t *)iu_view->buf;
+    out->iv = (int32_t *)iv_view->buf;
+    out->cap = (int)cap;
+    out->n = meta[0] > 0 ? (int)meta[0] : 0;
+    out->overflow = meta[1] ? 1 : 0;
+    if (out->n > out->cap) {
+        out->n = out->cap;
+        out->overflow = 1;
+    }
+    *present = 1;
+    return 0;
+fail:
+    if (iu_view->buf) {
+        PyBuffer_Release(iu_view);
+        memset(iu_view, 0, sizeof(*iu_view));
+    }
+    if (iv_view->buf) {
+        PyBuffer_Release(iv_view);
+        memset(iv_view, 0, sizeof(*iv_view));
+    }
+    if (meta_view->buf) {
+        PyBuffer_Release(meta_view);
+        memset(meta_view, 0, sizeof(*meta_view));
+    }
+    return -1;
+}
+
+static void sc_dirty_writeback(ScLaserDirty *dirty, Py_buffer *meta_view, int present) {
+    int32_t *meta;
+    if (!present || meta_view == NULL || meta_view->buf == NULL || dirty == NULL) {
+        return;
+    }
+    meta = (int32_t *)meta_view->buf;
+    meta[0] = (int32_t)dirty->n;
+    meta[1] = dirty->overflow ? 1 : 0;
 }
 
 static int sc_bind_flag(PyObject *obj, Py_buffer *view, uint8_t **out) {
@@ -138,13 +227,15 @@ static int sc_bind_flag(PyObject *obj, Py_buffer *view, uint8_t **out) {
 
 static PyObject *py_heightmap(PyObject *self, PyObject *args) {
     PyObject *heights_obj, *p0_obj, *p1_obj, *zs_obj, *rs_obj, *hit_obj, *tile_obj;
-    PyObject *laser_obj, *flag_obj;
+    PyObject *laser_obj, *flag_obj, *dirty_iu_obj, *dirty_iv_obj, *dirty_meta_obj;
     int nx, ny, tile, nseg, lnx, lnv, wrap;
     double min_x, min_y, min_z, cell, cell_u, cell_v, origin_u, origin_v, v_period;
     Py_buffer heights, p0, p1, zs, rs, hit, tiles, laser_buf, flag_buf;
+    Py_buffer dirty_iu_buf, dirty_iv_buf, dirty_meta_buf;
     ScProfile profile;
     ScLaserDecal decal;
-    int ntx, nty, rc, have_laser, laser_changed;
+    ScLaserDirty dirty;
+    int ntx, nty, rc, have_laser, have_dirty, laser_changed;
     uint8_t *hit_ptr = NULL;
     uint8_t *tile_ptr = NULL;
     uint8_t *flag_ptr = NULL;
@@ -158,10 +249,14 @@ static PyObject *py_heightmap(PyObject *self, PyObject *args) {
     memset(&tiles, 0, sizeof(tiles));
     memset(&laser_buf, 0, sizeof(laser_buf));
     memset(&flag_buf, 0, sizeof(flag_buf));
+    memset(&dirty_iu_buf, 0, sizeof(dirty_iu_buf));
+    memset(&dirty_iv_buf, 0, sizeof(dirty_iv_buf));
+    memset(&dirty_meta_buf, 0, sizeof(dirty_meta_buf));
     memset(&decal, 0, sizeof(decal));
+    memset(&dirty, 0, sizeof(dirty));
     if (!PyArg_ParseTuple(
             args,
-            "OiiiddddiOOOOiiOOOiiddddidO",
+            "OiiiddddiOOOOiiOOOiiddddidOOOO",
             &heights_obj,
             &nx,
             &ny,
@@ -188,7 +283,10 @@ static PyObject *py_heightmap(PyObject *self, PyObject *args) {
             &origin_v,
             &wrap,
             &v_period,
-            &flag_obj)) {
+            &flag_obj,
+            &dirty_iu_obj,
+            &dirty_iv_obj,
+            &dirty_meta_obj)) {
         return NULL;
     }
     if (sc_get_buffer(heights_obj, &heights, 1) != 0) {
@@ -213,12 +311,20 @@ static PyObject *py_heightmap(PyObject *self, PyObject *args) {
         tile_ptr = (uint8_t *)tiles.buf;
     }
     have_laser = 0;
+    have_dirty = 0;
     laser_changed = 0;
     if (sc_bind_decal(laser_obj, lnx, lnv, cell_u, cell_v, origin_u, origin_v, wrap, v_period, 1.0, &laser_buf, &decal, &have_laser) != 0) {
         goto fail;
     }
     if (sc_bind_flag(flag_obj, &flag_buf, &flag_ptr) != 0) {
         goto fail;
+    }
+    if (sc_bind_dirty(dirty_iu_obj, dirty_iv_obj, dirty_meta_obj, &dirty_iu_buf, &dirty_iv_buf, &dirty_meta_buf, &dirty, &have_dirty) !=
+        0) {
+        goto fail;
+    }
+    if (have_laser && have_dirty) {
+        decal.dirty = &dirty;
     }
     /* Drop the GIL so Python can keep running while we carve. */
     Py_BEGIN_ALLOW_THREADS
@@ -246,11 +352,12 @@ static PyObject *py_heightmap(PyObject *self, PyObject *args) {
         PyErr_SetString(PyExc_MemoryError, "heightmap carve failed");
         goto fail;
     }
+    sc_dirty_writeback(&dirty, &dirty_meta_buf, have_dirty);
     if (flag_ptr != NULL) {
         *flag_ptr = laser_changed ? 1 : 0;
     }
     {
-        PyObject *dirty = sc_tiles_from_mask(tile_ptr, ntx, nty);
+        PyObject *out = sc_tiles_from_mask(tile_ptr, ntx, nty);
         PyBuffer_Release(&heights);
         PyBuffer_Release(&p0);
         PyBuffer_Release(&p1);
@@ -268,7 +375,16 @@ static PyObject *py_heightmap(PyObject *self, PyObject *args) {
         if (flag_buf.buf) {
             PyBuffer_Release(&flag_buf);
         }
-        return dirty;
+        if (dirty_iu_buf.buf) {
+            PyBuffer_Release(&dirty_iu_buf);
+        }
+        if (dirty_iv_buf.buf) {
+            PyBuffer_Release(&dirty_iv_buf);
+        }
+        if (dirty_meta_buf.buf) {
+            PyBuffer_Release(&dirty_meta_buf);
+        }
+        return out;
     }
 fail:
     if (heights.buf) {
@@ -298,19 +414,30 @@ fail:
     if (flag_buf.buf) {
         PyBuffer_Release(&flag_buf);
     }
+    if (dirty_iu_buf.buf) {
+        PyBuffer_Release(&dirty_iu_buf);
+    }
+    if (dirty_iv_buf.buf) {
+        PyBuffer_Release(&dirty_iv_buf);
+    }
+    if (dirty_meta_buf.buf) {
+        PyBuffer_Release(&dirty_meta_buf);
+    }
     return NULL;
 }
 
 static PyObject *py_cylindrical(PyObject *self, PyObject *args) {
     PyObject *radii_obj, *sin_obj, *cos_obj, *p0_obj, *p1_obj, *a0_obj, *a1_obj, *zs_obj, *rs_obj, *chg_obj, *tile_obj;
-    PyObject *laser_obj, *flag_obj;
+    PyObject *laser_obj, *flag_obj, *dirty_iu_obj, *dirty_iv_obj, *dirty_meta_obj;
     int nx, n_theta, tile, nseg, ntx, ntt, lnx, lnv, wrap;
     double min_x, cell, d_theta, axis_y, axis_z, stock_radius;
     double cell_u, cell_v, origin_u, origin_v, v_period;
     Py_buffer radii, sint, cost, p0, p1, a0, a1, zs, rs, chg, tiles, laser_buf, flag_buf;
+    Py_buffer dirty_iu_buf, dirty_iv_buf, dirty_meta_buf;
     ScProfile profile;
     ScLaserDecal decal;
-    int rc, have_laser, laser_changed;
+    ScLaserDirty dirty;
+    int rc, have_laser, have_dirty, laser_changed;
     uint8_t *chg_ptr = NULL;
     uint8_t *tile_ptr = NULL;
     uint8_t *flag_ptr = NULL;
@@ -328,10 +455,14 @@ static PyObject *py_cylindrical(PyObject *self, PyObject *args) {
     memset(&tiles, 0, sizeof(tiles));
     memset(&laser_buf, 0, sizeof(laser_buf));
     memset(&flag_buf, 0, sizeof(flag_buf));
+    memset(&dirty_iu_buf, 0, sizeof(dirty_iu_buf));
+    memset(&dirty_iv_buf, 0, sizeof(dirty_iv_buf));
+    memset(&dirty_meta_buf, 0, sizeof(dirty_meta_buf));
     memset(&decal, 0, sizeof(decal));
+    memset(&dirty, 0, sizeof(dirty));
     if (!PyArg_ParseTuple(
             args,
-            "OiiiddddddOOiOOOOOOiiOOOiiddddidO",
+            "OiiiddddddOOiOOOOOOiiOOOiiddddidOOOO",
             &radii_obj,
             &nx,
             &n_theta,
@@ -364,7 +495,10 @@ static PyObject *py_cylindrical(PyObject *self, PyObject *args) {
             &origin_v,
             &wrap,
             &v_period,
-            &flag_obj)) {
+            &flag_obj,
+            &dirty_iu_obj,
+            &dirty_iv_obj,
+            &dirty_meta_obj)) {
         return NULL;
     }
     if (sc_get_buffer(radii_obj, &radii, 1) != 0) {
@@ -390,6 +524,7 @@ static PyObject *py_cylindrical(PyObject *self, PyObject *args) {
         tile_ptr = (uint8_t *)tiles.buf;
     }
     have_laser = 0;
+    have_dirty = 0;
     laser_changed = 0;
     if (sc_bind_decal(
             laser_obj, lnx, lnv, cell_u, cell_v, origin_u, origin_v, wrap, v_period, 1.0, &laser_buf, &decal, &have_laser) !=
@@ -398,6 +533,13 @@ static PyObject *py_cylindrical(PyObject *self, PyObject *args) {
     }
     if (sc_bind_flag(flag_obj, &flag_buf, &flag_ptr) != 0) {
         goto fail;
+    }
+    if (sc_bind_dirty(dirty_iu_obj, dirty_iv_obj, dirty_meta_obj, &dirty_iu_buf, &dirty_iv_buf, &dirty_meta_buf, &dirty, &have_dirty) !=
+        0) {
+        goto fail;
+    }
+    if (have_laser && have_dirty) {
+        decal.dirty = &dirty;
     }
     Py_BEGIN_ALLOW_THREADS
     rc = sc_cylindrical_carve(
@@ -430,11 +572,12 @@ static PyObject *py_cylindrical(PyObject *self, PyObject *args) {
         PyErr_SetString(PyExc_MemoryError, "cylindrical carve failed");
         goto fail;
     }
+    sc_dirty_writeback(&dirty, &dirty_meta_buf, have_dirty);
     if (flag_ptr != NULL) {
         *flag_ptr = laser_changed ? 1 : 0;
     }
     {
-        PyObject *dirty = sc_tiles_from_mask(tile_ptr, ntx, ntt);
+        PyObject *out = sc_tiles_from_mask(tile_ptr, ntx, ntt);
         PyBuffer_Release(&radii);
         PyBuffer_Release(&sint);
         PyBuffer_Release(&cost);
@@ -456,7 +599,16 @@ static PyObject *py_cylindrical(PyObject *self, PyObject *args) {
         if (flag_buf.buf) {
             PyBuffer_Release(&flag_buf);
         }
-        return dirty;
+        if (dirty_iu_buf.buf) {
+            PyBuffer_Release(&dirty_iu_buf);
+        }
+        if (dirty_iv_buf.buf) {
+            PyBuffer_Release(&dirty_iv_buf);
+        }
+        if (dirty_meta_buf.buf) {
+            PyBuffer_Release(&dirty_meta_buf);
+        }
+        return out;
     }
 fail:
     if (radii.buf) {
@@ -497,6 +649,15 @@ fail:
     }
     if (flag_buf.buf) {
         PyBuffer_Release(&flag_buf);
+    }
+    if (dirty_iu_buf.buf) {
+        PyBuffer_Release(&dirty_iu_buf);
+    }
+    if (dirty_iv_buf.buf) {
+        PyBuffer_Release(&dirty_iv_buf);
+    }
+    if (dirty_meta_buf.buf) {
+        PyBuffer_Release(&dirty_meta_buf);
     }
     return NULL;
 }
@@ -707,14 +868,17 @@ static int sc_bind_f64(PyObject *obj, Py_buffer *view, const double **out, const
 
 static PyObject *py_laser_paint(PyObject *self, PyObject *args) {
     PyObject *img_obj, *u0_obj, *v0_obj, *u1_obj, *v1_obj, *burn_obj, *allow_obj, *occ_obj, *zr_obj;
+    PyObject *dirty_iu_obj, *dirty_iv_obj, *dirty_meta_obj;
     int nx, nv, wrap, nseg, au0, av0, occ_kind, occ_nx, occ_nv;
     double cell_u, cell_v, origin_u, origin_v, v_period, v_scale, radius;
     double occ_min_x, occ_min_y, occ_cell, occ_d_theta, occ_period;
     Py_buffer img, u0, v0, u1, v1, burn, allow, occ, zr;
+    Py_buffer dirty_iu_buf, dirty_iv_buf, dirty_meta_buf;
     const double *u0p, *v0p, *u1p, *v1p, *zrp;
     ScLaserDecal map;
+    ScLaserDirty dirty;
     ScLaserOcc occupancy;
-    int have_allow, have_occ, changed, rc, allow_rows, allow_cols;
+    int have_allow, have_occ, have_dirty, changed, rc, allow_rows, allow_cols;
     (void)self;
     memset(&img, 0, sizeof(img));
     memset(&u0, 0, sizeof(u0));
@@ -725,9 +889,13 @@ static PyObject *py_laser_paint(PyObject *self, PyObject *args) {
     memset(&allow, 0, sizeof(allow));
     memset(&occ, 0, sizeof(occ));
     memset(&zr, 0, sizeof(zr));
+    memset(&dirty_iu_buf, 0, sizeof(dirty_iu_buf));
+    memset(&dirty_iv_buf, 0, sizeof(dirty_iv_buf));
+    memset(&dirty_meta_buf, 0, sizeof(dirty_meta_buf));
+    memset(&dirty, 0, sizeof(dirty));
     if (!PyArg_ParseTuple(
             args,
-            "OiiddddiddiOOOOOdOiiiOiidddddO",
+            "OiiddddiddiOOOOOdOiiiOiidddddOOOO",
             &img_obj,
             &nx,
             &nv,
@@ -757,7 +925,10 @@ static PyObject *py_laser_paint(PyObject *self, PyObject *args) {
             &occ_cell,
             &occ_d_theta,
             &occ_period,
-            &zr_obj)) {
+            &zr_obj,
+            &dirty_iu_obj,
+            &dirty_iv_obj,
+            &dirty_meta_obj)) {
         return NULL;
     }
     if (sc_bind_decal(img_obj, nx, nv, cell_u, cell_v, origin_u, origin_v, wrap, v_period, v_scale, &img, &map, &rc) != 0) {
@@ -806,11 +977,19 @@ static PyObject *py_laser_paint(PyObject *self, PyObject *args) {
         occupancy.period = occ_period;
         have_occ = 1;
     }
-        zrp = NULL;
-        if (zr_obj != Py_None) {
+    zrp = NULL;
+    if (zr_obj != Py_None) {
         if (sc_bind_f64(zr_obj, &zr, &zrp, "z_or_r") != 0) {
             goto fail;
         }
+    }
+    have_dirty = 0;
+    if (sc_bind_dirty(dirty_iu_obj, dirty_iv_obj, dirty_meta_obj, &dirty_iu_buf, &dirty_iv_buf, &dirty_meta_buf, &dirty, &have_dirty) !=
+        0) {
+        goto fail;
+    }
+    if (have_dirty) {
+        map.dirty = &dirty;
     }
     changed = 0;
     Py_BEGIN_ALLOW_THREADS
@@ -832,6 +1011,7 @@ static PyObject *py_laser_paint(PyObject *self, PyObject *args) {
         have_occ ? &occupancy : NULL,
         &changed);
     Py_END_ALLOW_THREADS
+    sc_dirty_writeback(&dirty, &dirty_meta_buf, have_dirty);
     PyBuffer_Release(&img);
     PyBuffer_Release(&u0);
     PyBuffer_Release(&v0);
@@ -846,6 +1026,15 @@ static PyObject *py_laser_paint(PyObject *self, PyObject *args) {
     }
     if (zr.buf) {
         PyBuffer_Release(&zr);
+    }
+    if (dirty_iu_buf.buf) {
+        PyBuffer_Release(&dirty_iu_buf);
+    }
+    if (dirty_iv_buf.buf) {
+        PyBuffer_Release(&dirty_iv_buf);
+    }
+    if (dirty_meta_buf.buf) {
+        PyBuffer_Release(&dirty_meta_buf);
     }
     if (changed) {
         Py_RETURN_TRUE;
@@ -879,26 +1068,42 @@ fail:
     if (zr.buf) {
         PyBuffer_Release(&zr);
     }
+    if (dirty_iu_buf.buf) {
+        PyBuffer_Release(&dirty_iu_buf);
+    }
+    if (dirty_iv_buf.buf) {
+        PyBuffer_Release(&dirty_iv_buf);
+    }
+    if (dirty_meta_buf.buf) {
+        PyBuffer_Release(&dirty_meta_buf);
+    }
     return NULL;
 }
 
 static PyObject *py_laser_clear(PyObject *self, PyObject *args) {
     PyObject *img_obj, *u0_obj, *v0_obj, *u1_obj, *v1_obj;
+    PyObject *dirty_iu_obj, *dirty_iv_obj, *dirty_meta_obj;
     int nx, nv, wrap, nseg;
     double cell_u, cell_v, origin_u, origin_v, v_period, v_scale, radius;
     Py_buffer img, u0, v0, u1, v1;
+    Py_buffer dirty_iu_buf, dirty_iv_buf, dirty_meta_buf;
     const double *u0p, *v0p, *u1p, *v1p;
     ScLaserDecal map;
-    int present, changed;
+    ScLaserDirty dirty;
+    int present, have_dirty, changed;
     (void)self;
     memset(&img, 0, sizeof(img));
     memset(&u0, 0, sizeof(u0));
     memset(&v0, 0, sizeof(v0));
     memset(&u1, 0, sizeof(u1));
     memset(&v1, 0, sizeof(v1));
+    memset(&dirty_iu_buf, 0, sizeof(dirty_iu_buf));
+    memset(&dirty_iv_buf, 0, sizeof(dirty_iv_buf));
+    memset(&dirty_meta_buf, 0, sizeof(dirty_meta_buf));
+    memset(&dirty, 0, sizeof(dirty));
     if (!PyArg_ParseTuple(
             args,
-            "OiiddddiddiOOOOd",
+            "OiiddddiddiOOOOdOOO",
             &img_obj,
             &nx,
             &nv,
@@ -914,7 +1119,10 @@ static PyObject *py_laser_clear(PyObject *self, PyObject *args) {
             &v0_obj,
             &u1_obj,
             &v1_obj,
-            &radius)) {
+            &radius,
+            &dirty_iu_obj,
+            &dirty_iv_obj,
+            &dirty_meta_obj)) {
         return NULL;
     }
     if (sc_bind_decal(img_obj, nx, nv, cell_u, cell_v, origin_u, origin_v, wrap, v_period, v_scale, &img, &map, &present) !=
@@ -929,15 +1137,33 @@ static PyObject *py_laser_clear(PyObject *self, PyObject *args) {
         sc_bind_f64(u1_obj, &u1, &u1p, "u1") != 0 || sc_bind_f64(v1_obj, &v1, &v1p, "v1") != 0) {
         goto fail;
     }
+    have_dirty = 0;
+    if (sc_bind_dirty(dirty_iu_obj, dirty_iv_obj, dirty_meta_obj, &dirty_iu_buf, &dirty_iv_buf, &dirty_meta_buf, &dirty, &have_dirty) !=
+        0) {
+        goto fail;
+    }
+    if (have_dirty) {
+        map.dirty = &dirty;
+    }
     changed = 0;
     Py_BEGIN_ALLOW_THREADS
     sc_laser_clear_capsules(&map, u0p, v0p, u1p, v1p, nseg, radius, &changed);
     Py_END_ALLOW_THREADS
+    sc_dirty_writeback(&dirty, &dirty_meta_buf, have_dirty);
     PyBuffer_Release(&img);
     PyBuffer_Release(&u0);
     PyBuffer_Release(&v0);
     PyBuffer_Release(&u1);
     PyBuffer_Release(&v1);
+    if (dirty_iu_buf.buf) {
+        PyBuffer_Release(&dirty_iu_buf);
+    }
+    if (dirty_iv_buf.buf) {
+        PyBuffer_Release(&dirty_iv_buf);
+    }
+    if (dirty_meta_buf.buf) {
+        PyBuffer_Release(&dirty_meta_buf);
+    }
     if (changed) {
         Py_RETURN_TRUE;
     }
@@ -957,6 +1183,15 @@ fail:
     }
     if (v1.buf) {
         PyBuffer_Release(&v1);
+    }
+    if (dirty_iu_buf.buf) {
+        PyBuffer_Release(&dirty_iu_buf);
+    }
+    if (dirty_iv_buf.buf) {
+        PyBuffer_Release(&dirty_iv_buf);
+    }
+    if (dirty_meta_buf.buf) {
+        PyBuffer_Release(&dirty_meta_buf);
     }
     return NULL;
 }

@@ -1470,8 +1470,12 @@ class StockSimulator:
                 _drop_pending()
                 break
             if idle and self._idle_cancel.is_set():
-                # Idle flushes every segment, so the queue is empty here. Dropping
-                # matches that and leaves bake progress already committed.
+                # Mill idle still flushes every segment; laser may batch ahead of CPs.
+                if laser_batch:
+                    if not _flush_laser():
+                        break
+                    interrupted = True
+                    break
                 _drop_pending()
                 break
             if follow_display:
@@ -1499,9 +1503,10 @@ class StockSimulator:
                 laser_batch.append(seg)
                 target = store.next_unrecorded_target()
                 at_checkpoint = target is not None and int(seg.end_vertex) >= int(target)
-                # Idle stays one stroke at a time. Foreground flushes on a checkpoint
-                # or when the display deadline stops the loop. Strokes are not merged.
-                if idle or at_checkpoint:
+                # Laser batches until the next checkpoint, a non-laser segment, display
+                # follow, or end of the loop (idle and foreground share this schedule).
+                # Strokes are not merged inside a batch.
+                if at_checkpoint:
                     if not _flush_laser():
                         break
                 continue

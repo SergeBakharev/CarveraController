@@ -235,6 +235,7 @@ class CylindricalBackend(LaserDecalMixin):
             occ_d_theta=float(self.d_theta),
             occ_period=laser.v_period if laser.v_period else 360.0,
             z_or_r=min_r,
+            dirty=laser.dirty_native_args(),
         )
         if changed:
             self._laser_dirty = True
@@ -301,6 +302,7 @@ class CylindricalBackend(LaserDecalMixin):
             laser_origin_v=0.0 if laser is None else laser.origin_v,
             laser_wrap=False if laser is None else laser.wrap_v,
             laser_period=360.0 if laser is None else laser.v_period,
+            laser_dirty=None if laser is None else laser.dirty_native_args(),
         )
         if laser_changed:
             self._laser_dirty = True

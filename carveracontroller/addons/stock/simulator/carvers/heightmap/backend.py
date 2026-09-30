@@ -198,6 +198,7 @@ class HeightmapBackend(LaserDecalMixin):
             laser_cell_v=0.0 if laser is None else laser.cell_v,
             laser_origin_u=0.0 if laser is None else laser.origin_u,
             laser_origin_v=0.0 if laser is None else laser.origin_v,
+            laser_dirty=None if laser is None else laser.dirty_native_args(),
         )
         if laser_changed:
             self._laser_dirty = True
@@ -267,6 +268,7 @@ class HeightmapBackend(LaserDecalMixin):
             occ_min_y=float(self.bounds.min_y),
             occ_cell=float(self.cell_size),
             z_or_r=laser_z,
+            dirty=laser.dirty_native_args(),
         )
         if changed:
             self._laser_dirty = True

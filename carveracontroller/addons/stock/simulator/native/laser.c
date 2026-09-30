@@ -155,6 +155,19 @@ static int sc_texel_allowed(
     return sc_occ_allows(occ, z_or_r, uu, vv);
 }
 
+static void sc_dirty_append(ScLaserDirty *dirty, int iu, int iv) {
+    if (dirty == NULL || dirty->overflow) {
+        return;
+    }
+    if (dirty->n >= dirty->cap || dirty->iu == NULL || dirty->iv == NULL) {
+        dirty->overflow = 1;
+        return;
+    }
+    dirty->iu[dirty->n] = (int32_t)iu;
+    dirty->iv[dirty->n] = (int32_t)iv;
+    dirty->n += 1;
+}
+
 /* 1 when the texel changed. */
 static int sc_write_texel(ScLaserDecal *map, int iu, int iv, uint8_t value) {
     uint8_t *p = &map->intensity[(size_t)iu * (size_t)map->nv + (size_t)iv];
@@ -163,12 +176,14 @@ static int sc_write_texel(ScLaserDecal *map, int iu, int iv, uint8_t value) {
             return 0;
         }
         *p = value;
+        sc_dirty_append(map->dirty, iu, iv);
         return 1;
     }
     if (!*p) {
         return 0;
     }
     *p = 0;
+    sc_dirty_append(map->dirty, iu, iv);
     return 1;
 }
 
@@ -396,16 +411,10 @@ static int sc_theta_bin(double center, double origin, double size, double period
 }
 
 static void sc_clear_at(ScLaserDecal *laser, int iu, int iv, int *changed) {
-    uint8_t *p;
     if (iu < 0 || iv < 0 || iu >= laser->nx || iv >= laser->nv) {
         return;
     }
-    p = &laser->intensity[(size_t)iu * (size_t)laser->nv + (size_t)iv];
-    if (!*p) {
-        return;
-    }
-    *p = 0;
-    if (changed != NULL) {
+    if (sc_write_texel(laser, iu, iv, 0) && changed != NULL) {
         *changed = 1;
     }
 }

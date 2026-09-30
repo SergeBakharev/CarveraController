@@ -57,6 +57,12 @@ def _soa(segments: list) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray
     return p0, p1, a0, a1
 
 
+def _laser_dirty_args(dirty: tuple[np.ndarray, np.ndarray, np.ndarray] | None) -> tuple:
+    if dirty is None:
+        return (None, None, None)
+    return (dirty[0], dirty[1], dirty[2])
+
+
 def _laser_call_args(
     image: np.ndarray | None,
     *,
@@ -67,9 +73,11 @@ def _laser_call_args(
     wrap_v: bool,
     v_period: float,
     flag: np.ndarray,
+    dirty: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
 ) -> tuple:
+    dirty_args = _laser_dirty_args(dirty)
     if image is None:
-        return (None, 0, 0, 0.0, 0.0, 0.0, 0.0, 0, 0.0, flag)
+        return (None, 0, 0, 0.0, 0.0, 0.0, 0.0, 0, 0.0, flag, *dirty_args)
     return (
         image,
         int(image.shape[0]),
@@ -81,6 +89,7 @@ def _laser_call_args(
         1 if wrap_v else 0,
         float(v_period),
         flag,
+        *dirty_args,
     )
 
 
@@ -100,6 +109,7 @@ def carve_heightmap(
     laser_cell_v: float = 0.0,
     laser_origin_u: float = 0.0,
     laser_origin_v: float = 0.0,
+    laser_dirty: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
 ) -> tuple[set[tuple[int, int, int]], bool]:
     if not segments or not profile:
         return set(), False
@@ -140,6 +150,7 @@ def carve_heightmap(
             wrap_v=False,
             v_period=0.0,
             flag=flag,
+            dirty=laser_dirty,
         ),
     )
     if heights_c is not heights:
@@ -171,6 +182,7 @@ def carve_cylindrical(
     laser_origin_v: float = 0.0,
     laser_wrap: bool = False,
     laser_period: float = 360.0,
+    laser_dirty: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
 ) -> tuple[set[tuple[int, int, int]], bool]:
     if not segments or not profile:
         return set(), False
@@ -217,6 +229,7 @@ def carve_cylindrical(
             wrap_v=laser_wrap,
             v_period=laser_period,
             flag=flag,
+            dirty=laser_dirty,
         ),
     )
     if radii_c is not radii:
@@ -318,6 +331,7 @@ def paint_laser(
     occ_d_theta: float = 1.0,
     occ_period: float = 360.0,
     z_or_r=None,
+    dirty: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
 ) -> bool:
     """Paint each segment as its own capsule. Returns whether any texel was raised."""
     impl = _require_impl()
@@ -329,6 +343,7 @@ def paint_laser(
     allow_a = None if allow is None else np.ascontiguousarray(allow, dtype=np.uint8)
     occ_a = None if occ is None else np.ascontiguousarray(occ, dtype=np.float32)
     zr = None if z_or_r is None else _as_f64(z_or_r)
+    dirty_iu, dirty_iv, dirty_meta = _laser_dirty_args(dirty)
     changed = bool(
         impl.laser_paint(
             image,
@@ -361,6 +376,9 @@ def paint_laser(
             float(occ_d_theta),
             float(occ_period),
             zr if zr is not None else None,
+            dirty_iu,
+            dirty_iv,
+            dirty_meta,
         )
     )
     if image is not intensity:
@@ -383,6 +401,7 @@ def clear_laser_capsules(
     wrap_v: bool = False,
     v_period: float = 0.0,
     v_scale: float = 1.0,
+    dirty: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
 ) -> bool:
     """Zero one capsule per segment. Returns whether any texel was cleared."""
     impl = _require_impl()
@@ -391,6 +410,7 @@ def clear_laser_capsules(
     nseg = int(u0a.shape[0])
     if nseg <= 0:
         return False
+    dirty_iu, dirty_iv, dirty_meta = _laser_dirty_args(dirty)
     changed = bool(
         impl.laser_clear(
             image,
@@ -409,6 +429,9 @@ def clear_laser_capsules(
             _as_f64(u1),
             _as_f64(v1),
             float(radius),
+            dirty_iu,
+            dirty_iv,
+            dirty_meta,
         )
     )
     if image is not intensity:

@@ -165,6 +165,7 @@ class VoxelBackend(LaserDecalMixin):
             wrap_v=laser.wrap_v,
             v_period=laser.v_period,
             v_scale=laser.v_scale,
+            dirty=laser.dirty_native_args(),
         )
 
     def _axis_yz(self) -> tuple[float, float]:
@@ -194,7 +195,7 @@ class VoxelBackend(LaserDecalMixin):
             return False
         radius = stroke_radius_mm(self._laser_cell_size)
         laser = self._ensure_laser()
-        allow = self._laser_allow_mask(laser, p0, p1, a0, a1, radius)
+        allow, origin = self._laser_allow_mask(laser, p0, p1, a0, a1, radius)
         if laser.mode == "cylindrical":
             changed = laser.paint_segment(
                 p0[0],
@@ -203,7 +204,7 @@ class VoxelBackend(LaserDecalMixin):
                 self._stock_theta(p1, a1),
                 radius,
                 allow,
-                allow_origin=(0, 0),
+                allow_origin=origin,
                 burn=burn,
             )
         else:
@@ -214,7 +215,7 @@ class VoxelBackend(LaserDecalMixin):
                 p1[1],
                 radius,
                 allow,
-                allow_origin=(0, 0),
+                allow_origin=origin,
                 burn=burn,
             )
         if changed:
@@ -231,6 +232,58 @@ class VoxelBackend(LaserDecalMixin):
                 changed = True
         return changed
 
+    def _sample_solid_world(self, xs: np.ndarray, ys: np.ndarray, zs: np.ndarray) -> np.ndarray:
+        """Vectorized occupancy sample matching ``ChunkedVoxelGrid.is_solid_at_world``."""
+        out = np.zeros(xs.shape, dtype=bool)
+        b = self.bounds
+        valid = (
+            (b.min_x <= xs)
+            & (xs < b.max_x)
+            & (b.min_y <= ys)
+            & (ys < b.max_y)
+            & (b.min_z <= zs)
+            & (zs < b.max_z)
+        )
+        if not np.any(valid):
+            return out
+        vox = max(float(self.cell_size), 1e-12)
+        ix = np.floor((xs - b.min_x) / vox).astype(np.int32)
+        iy = np.floor((ys - b.min_y) / vox).astype(np.int32)
+        iz = np.floor((zs - b.min_z) / vox).astype(np.int32)
+        in_grid = valid & (ix >= 0) & (ix < self.grid.nx) & (iy >= 0) & (iy < self.grid.ny) & (iz >= 0) & (iz < self.grid.nz)
+        if not np.any(in_grid):
+            return out
+        cs = int(self.grid.chunk_size)
+        cx = ix // cs
+        cy = iy // cs
+        cz = iz // cs
+        # Flatten chunk ids for grouping; stroke windows almost always hit one chunk.
+        chunk_id = (cx.astype(np.int64) * 1_000_003 + cy.astype(np.int64)) * 1_000_003 + cz.astype(np.int64)
+        flat = np.flatnonzero(in_grid)
+        ids = chunk_id.ravel()[flat]
+        order = np.argsort(ids, kind="mergesort")
+        flat = flat[order]
+        ids = ids[order]
+        starts = np.flatnonzero(np.r_[True, ids[1:] != ids[:-1]])
+        ends = np.r_[starts[1:], ids.size]
+        for s, e in zip(starts.tolist(), ends.tolist()):
+            idx = flat[s:e]
+            i0 = int(ix.ravel()[idx[0]])
+            j0 = int(iy.ravel()[idx[0]])
+            k0 = int(iz.ravel()[idx[0]])
+            coord = self.grid.chunk_of_voxel(i0, j0, k0)
+            state = self.grid.get_chunk_state(coord)
+            if state is CHUNK_FULL:
+                out.ravel()[idx] = True
+                continue
+            if state is CHUNK_EMPTY:
+                continue
+            lx = ix.ravel()[idx] - coord.cx * cs
+            ly = iy.ravel()[idx] - coord.cy * cs
+            lz = iz.ravel()[idx] - coord.cz * cs
+            out.ravel()[idx] = state[lx, ly, lz].astype(bool, copy=False)  # type: ignore[index]
+        return out
+
     def _stock_under_laser_xy(self, x: float, y: float, z_laser: float) -> bool:
         """True if remaining stock sits at/just under the beam (top plane is exclusive max_z)."""
         b = self.bounds
@@ -243,6 +296,25 @@ class VoxelBackend(LaserDecalMixin):
         z_in = max(z_hi - 0.51 * self.cell_size, b.min_z + 1e-6)
         return self.grid.is_solid_at_world(x, y, z_in)
 
+    def _stock_under_laser_xy_grid(self, x: np.ndarray, y: np.ndarray, z_laser: float) -> np.ndarray:
+        """Vectorized planar stock test for a laser allow window."""
+        b = self.bounds
+        allow = np.zeros(x.shape, dtype=np.uint8)
+        in_xy = (b.min_x <= x) & (x < b.max_x) & (b.min_y <= y) & (y < b.max_y)
+        if not np.any(in_xy):
+            return allow
+        z_hi = min(float(z_laser), b.max_z - 1e-6)
+        z_hi = max(z_hi, b.min_z)
+        z_hi_a = np.full(x.shape, z_hi, dtype=np.float64)
+        solid = self._sample_solid_world(x, y, z_hi_a)
+        z_in = max(z_hi - 0.51 * self.cell_size, b.min_z + 1e-6)
+        if z_in < z_hi - 1e-12:
+            need = in_xy & ~solid
+            if np.any(need):
+                solid = solid | self._sample_solid_world(x, y, np.full(x.shape, z_in, dtype=np.float64))
+        allow[in_xy & solid] = 1
+        return allow
+
     def _laser_allow_mask(
         self,
         laser: LaserMap,
@@ -251,19 +323,22 @@ class VoxelBackend(LaserDecalMixin):
         a0: float,
         a1: float,
         radius: float,
-    ) -> np.ndarray:
-        """True where a laser cell still has stock near the beam (skip air / pockets)."""
+    ) -> tuple[np.ndarray, tuple[int, int]]:
+        """Uint8 allow window whose [0,0] is laser index (iu0, iv0)."""
         z_mid = 0.5 * (p0[2] + p1[2])
         axis_y, axis_z = self._axis_yz()
-        allow = np.zeros((laser.nx, laser.nv), dtype=bool)
         pad = radius + laser.cell_u
         iu0 = max(0, int(math.floor((min(p0[0], p1[0]) - pad - laser.origin_u) / laser.cell_u)))
         iu1 = min(laser.nx - 1, int(math.floor((max(p0[0], p1[0]) + pad - laser.origin_u) / laser.cell_u)))
+        if iu0 > iu1:
+            return np.zeros((0, 0), dtype=np.uint8), (0, 0)
         probe_r = min(
             0.5 * min(self.bounds.size[1], self.bounds.size[2]),
             math.hypot(p0[1] - axis_y, p0[2] - axis_z),
         )
         probe_r = max(0.0, probe_r - 0.51 * self.cell_size)
+        rows = iu1 - iu0 + 1
+        uu = laser.origin_u + (np.arange(iu0, iu1 + 1, dtype=np.float64) + 0.5) * laser.cell_u
         if laser.wrap_v:
             pad_v = radius / max(laser.v_scale, 1e-12) + laser.cell_v
             iv_idx = laser._wrapped_v_indices(
@@ -271,24 +346,43 @@ class VoxelBackend(LaserDecalMixin):
                 self._stock_theta(p1, a1),
                 pad_v,
             )
-            iv_range = iv_idx.tolist()
-        else:
-            iv0 = max(0, int(math.floor((min(p0[1], p1[1]) - pad - laser.origin_v) / laser.cell_v)))
-            iv1 = min(laser.nv - 1, int(math.floor((max(p0[1], p1[1]) + pad - laser.origin_v) / laser.cell_v)))
-            iv_range = range(iv0, iv1 + 1)
-        for iu in range(iu0, iu1 + 1):
-            x = laser.origin_u + (iu + 0.5) * laser.cell_u
-            for iv in iv_range:
-                iv = int(iv)
-                if laser.wrap_v:
-                    ang = math.radians((iv + 0.5) * laser.cell_v)
-                    y = axis_y + math.sin(ang) * probe_r
-                    z = axis_z + math.cos(ang) * probe_r
-                    allow[iu, iv % laser.nv] = self.grid.is_solid_at_world(x, y, z)
-                else:
-                    y = laser.origin_v + (iv + 0.5) * laser.cell_v
-                    allow[iu, iv] = self._stock_under_laser_xy(x, y, z_mid)
-        return allow
+            # Contiguous window in laser index space; wrap spans use the full θ ring.
+            iv_unique = np.unique(iv_idx.astype(np.int32) % laser.nv)
+            if iv_unique.size == 0:
+                return np.zeros((rows, 0), dtype=np.uint8), (iu0, 0)
+            iv0 = int(iv_unique.min())
+            iv1 = int(iv_unique.max())
+            if iv1 - iv0 + 1 == int(iv_unique.size):
+                cols = iv1 - iv0 + 1
+                ivs = np.arange(iv0, iv1 + 1, dtype=np.int32)
+            else:
+                iv0 = 0
+                cols = laser.nv
+                ivs = np.arange(laser.nv, dtype=np.int32)
+            allow = np.zeros((rows, cols), dtype=np.uint8)
+            selected = np.zeros(laser.nv, dtype=bool)
+            selected[iv_unique] = True
+            use = selected[ivs]
+            if not np.any(use):
+                return allow, (iu0, iv0)
+            ang = np.radians((ivs.astype(np.float64) + 0.5) * laser.cell_v)
+            ys = axis_y + np.sin(ang) * probe_r
+            zs = axis_z + np.cos(ang) * probe_r
+            X = np.broadcast_to(uu[:, None], (rows, cols))
+            Y = np.broadcast_to(ys[None, :], (rows, cols))
+            Z = np.broadcast_to(zs[None, :], (rows, cols))
+            solid = self._sample_solid_world(X, Y, Z)
+            allow[:, use] = solid[:, use].astype(np.uint8, copy=False)
+            return np.ascontiguousarray(allow), (iu0, iv0)
+
+        iv0 = max(0, int(math.floor((min(p0[1], p1[1]) - pad - laser.origin_v) / laser.cell_v)))
+        iv1 = min(laser.nv - 1, int(math.floor((max(p0[1], p1[1]) + pad - laser.origin_v) / laser.cell_v)))
+        if iv0 > iv1:
+            return np.zeros((rows, 0), dtype=np.uint8), (iu0, 0)
+        vv = laser.origin_v + (np.arange(iv0, iv1 + 1, dtype=np.float64) + 0.5) * laser.cell_v
+        X, Y = np.meshgrid(uu, vv, indexing="ij")
+        allow = self._stock_under_laser_xy_grid(X, Y, z_mid)
+        return np.ascontiguousarray(allow), (iu0, iv0)
 
     def snapshot_full(self) -> object:
         raw, _nbytes = self.grid.snapshot_non_full()

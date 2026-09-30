@@ -85,11 +85,63 @@ def stroke_radius_mm(cell_size: float) -> float:
 
 
 LASER_SNAP_FULL = "full"
+LASER_SNAP_SPARSE_FULL = "sparse_full"
 LASER_SNAP_DELTA = "delta"
 LASER_SNAP_DROP = "drop"
 
 # COO row is (iu, iv, value); 2×uint32 + uint8, padded in a uint32 triple.
 _DELTA_BYTES_PER_TEXEL = 9
+_DIRTY_LOG_CAP = 262144
+
+
+class LaserDirtyLog:
+    """Index sink shared with native writers. ``state`` is ``[n, overflow]`` int32."""
+
+    __slots__ = ("iu", "iv", "state")
+
+    def __init__(self, cap: int = _DIRTY_LOG_CAP):
+        cap = max(int(cap), 1)
+        self.iu = np.empty(cap, dtype=np.int32)
+        self.iv = np.empty(cap, dtype=np.int32)
+        self.state = np.zeros(2, dtype=np.int32)
+
+    @property
+    def n(self) -> int:
+        return int(self.state[0])
+
+    @property
+    def overflow(self) -> bool:
+        return bool(self.state[1])
+
+    @property
+    def cap(self) -> int:
+        return int(self.iu.shape[0])
+
+    def reset(self) -> None:
+        self.state[:] = 0
+
+    def native_args(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        return (self.iu, self.iv, self.state)
+
+    def append_indices(self, iu: np.ndarray, iv: np.ndarray) -> None:
+        if self.overflow or iu.size == 0:
+            return
+        iu = np.asarray(iu, dtype=np.int32).reshape(-1)
+        iv = np.asarray(iv, dtype=np.int32).reshape(-1)
+        if iu.size != iv.size:
+            self.state[1] = 1
+            return
+        n = self.n
+        room = self.cap - n
+        if room <= 0:
+            self.state[1] = 1
+            return
+        take = min(int(iu.size), room)
+        self.iu[n : n + take] = iu[:take]
+        self.iv[n : n + take] = iv[:take]
+        self.state[0] = n + take
+        if take < int(iu.size):
+            self.state[1] = 1
 
 
 def compress_laser_sparse(rs: np.ndarray, cs: np.ndarray, vals: np.ndarray, shape: tuple[int, ...]) -> object:
@@ -127,6 +179,16 @@ def laser_diff_payload(prev: np.ndarray | None, curr: np.ndarray) -> object | No
     return (LASER_SNAP_DELTA, compress_laser_sparse(rs, cs, curr[rs, cs], curr.shape))
 
 
+def _laser_full_payload(curr: np.ndarray) -> object:
+    """Dense zlib full, or sparse-full when burned texels are cheap enough."""
+    burned = curr != 0
+    n = int(np.count_nonzero(burned))
+    if n > 0 and n * _DELTA_BYTES_PER_TEXEL <= curr.nbytes / 2:
+        rs, cs = np.nonzero(burned)
+        return (LASER_SNAP_SPARSE_FULL, compress_laser_sparse(rs, cs, curr[rs, cs], curr.shape))
+    return (LASER_SNAP_FULL, compress_array(curr))
+
+
 def apply_laser_tagged(laser: LaserMap, payload: object) -> None:
     """Apply a tagged laser extra onto ``laser`` (caller ensures the map exists)."""
     if not isinstance(payload, tuple) or not payload:
@@ -136,18 +198,27 @@ def apply_laser_tagged(laser: LaserMap, payload: object) -> None:
     if kind == LASER_SNAP_FULL and len(payload) >= 2:
         laser.restore(payload[1])
         return
+    if kind == LASER_SNAP_SPARSE_FULL and len(payload) >= 2:
+        rs, cs, vals, shape = decompress_laser_sparse(payload[1])
+        laser.intensity[:, :] = 0
+        if laser.intensity.shape == shape and rs.size:
+            laser.intensity[rs, cs] = vals
+        laser.reset_dirty_log()
+        return
     if kind == LASER_SNAP_DELTA and len(payload) >= 2:
         rs, cs, vals, shape = decompress_laser_sparse(payload[1])
         if laser.intensity.shape != shape:
             laser.intensity[:, :] = 0
+            laser.reset_dirty_log()
             return
         laser.intensity[rs, cs] = vals
+        laser.reset_dirty_log()
         return
     laser.restore(payload)
 
 
 def laser_snapshot_nbytes(blob: object) -> int:
-    """Byte estimate for a tagged laser extra (full / delta / drop)."""
+    """Byte estimate for a tagged laser extra (full / sparse-full / delta / drop)."""
     if blob is None:
         return 0
     if not isinstance(blob, tuple) or not blob:
@@ -155,9 +226,9 @@ def laser_snapshot_nbytes(blob: object) -> int:
     kind = blob[0]
     if kind == LASER_SNAP_DROP:
         return 8
-    if kind in (LASER_SNAP_FULL, LASER_SNAP_DELTA) and len(blob) >= 2:
+    if kind in (LASER_SNAP_FULL, LASER_SNAP_SPARSE_FULL, LASER_SNAP_DELTA) and len(blob) >= 2:
         data = blob[1]
-        if kind == LASER_SNAP_DELTA and isinstance(data, tuple) and len(data) >= 2:
+        if kind in (LASER_SNAP_DELTA, LASER_SNAP_SPARSE_FULL) and isinstance(data, tuple) and len(data) >= 2:
             return compressed_nbytes(data[1])
         return compressed_nbytes(data)
     return compressed_nbytes(blob)
@@ -208,6 +279,19 @@ class LaserMap:
         self.v_period = float(v_period) if v_period is not None else (360.0 if wrap_v else 0.0)
         self.v_scale = float(v_scale) if v_scale else 1.0
         self.intensity = np.zeros((self.nx, self.nv), dtype=np.uint8)
+        self._dirty = LaserDirtyLog()
+
+    def dirty_native_args(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        return self._dirty.native_args()
+
+    def reset_dirty_log(self) -> None:
+        self._dirty.reset()
+
+    def mark_dirty_overflow(self) -> None:
+        self._dirty.state[1] = 1
+
+    def log_dirty_indices(self, iu: np.ndarray, iv: np.ndarray) -> None:
+        self._dirty.append_indices(iu, iv)
 
     @classmethod
     def planar(cls, bounds: StockBounds, nx: int, ny: int, cell_size: float) -> LaserMap:
@@ -283,8 +367,11 @@ class LaserMap:
         slab = self.intensity[iu0 : iu0 + rows, iv0 : iv0 + cols]
         if slab.shape != mask.shape:
             return False
-        if not np.any(slab[mask]):
+        hit = mask & (slab != 0)
+        if not hit.any():
             return False
+        rs, cs = np.nonzero(hit)
+        self.log_dirty_indices(iu0 + rs, iv0 + cs)
         slab[mask] = 0
         return True
 
@@ -304,8 +391,12 @@ class LaserMap:
             return False
         iu = iu[valid]
         iv = iv[valid]
-        if not np.any(self.intensity[iu, iv]):
+        live = self.intensity[iu, iv] != 0
+        if not live.any():
             return False
+        iu = iu[live]
+        iv = iv[live]
+        self.log_dirty_indices(iu, iv)
         self.intensity[iu, iv] = 0
         return True
 
@@ -379,8 +470,11 @@ class LaserMap:
             if not sampled.any():
                 return False
             slab = self.intensity[lu0 : lu1 + 1, :]
-            if not np.any(slab[sampled]):
+            hit = sampled & (slab != 0)
+            if not hit.any():
                 return False
+            rs, cs = np.nonzero(hit)
+            self.log_dirty_indices(lu0 + rs, cs)
             slab[sampled] = 0
             return True
 
@@ -405,8 +499,11 @@ class LaserMap:
         if not sampled.any():
             return False
         slab = self.intensity[lu0 : lu1 + 1, lv0 : lv1 + 1]
-        if not np.any(slab[sampled]):
+        hit = sampled & (slab != 0)
+        if not hit.any():
             return False
+        rs, cs = np.nonzero(hit)
+        self.log_dirty_indices(lu0 + rs, lv0 + cs)
         slab[sampled] = 0
         return True
 
@@ -422,8 +519,9 @@ class LaserMap:
         restored = decompress_array(payload)
         if restored.shape != self.intensity.shape:
             self.intensity[:, :] = 0
-            return
-        self.intensity[:, :] = restored
+        else:
+            self.intensity[:, :] = restored
+        self.reset_dirty_log()
 
     def _index(self, u: float, v: float) -> tuple[int | None, int | None]:
         iu = int(math.floor((float(u) - self.origin_u) / max(self.cell_u, 1e-12)))
@@ -451,6 +549,7 @@ class LaserMap:
         allow_origin: tuple[int, int] | None,
     ) -> bool:
         origin = (0, 0) if allow_origin is None else allow_origin
+        dirty = self.dirty_native_args()
         if not int(value):
             from carveracontroller.addons.stock.simulator.native import clear_laser_capsules
 
@@ -468,6 +567,7 @@ class LaserMap:
                 wrap_v=self.wrap_v,
                 v_period=self.v_period,
                 v_scale=self.v_scale,
+                dirty=dirty,
             )
         from carveracontroller.addons.stock.simulator.native import paint_laser
 
@@ -488,6 +588,7 @@ class LaserMap:
             v_scale=self.v_scale,
             allow=None if allow is None else np.ascontiguousarray(allow, dtype=np.uint8),
             allow_origin=origin,
+            dirty=dirty,
         )
 
     def _wrapped_v_indices(self, v0: float, v1: float, pad_v: float) -> np.ndarray:
@@ -520,53 +621,196 @@ class LaserDecalMixin:
     _laser: LaserMap | None
     _laser_dirty: bool
     _laser_cp_baseline: np.ndarray | None
+    _laser_cp_had_map: bool
+    _burned_keys: set[int] | None
 
     def _init_laser(self) -> None:
         self._laser = None
         self._laser_dirty = False
         self._laser_cp_baseline = None
+        self._laser_cp_had_map = False
+        # Empty while the live map is known to be zeros. ``None`` means unknown
+        # (after a restore or a dirty-log overflow) and the next base frame scans once.
+        self._burned_keys = set()
 
     def _drop_laser(self) -> None:
-        # Keep ``_laser_cp_baseline`` so the next delta CP can emit ``("drop",)``.
+        # Keep ``_laser_cp_had_map`` so the next delta CP can emit ``("drop",)``.
         # Mark dirty when a map existed so occupancy reset still drops the GPU texture.
         had = self._laser is not None
         self._laser = None
+        self._burned_keys = set()
         if had:
             self._laser_dirty = True
 
     def _ensure_laser(self) -> LaserMap:
         if self._laser is None:
             self._laser = self._make_laser_map()
+            self._burned_keys = set()
         return self._laser
 
     def _make_laser_map(self) -> LaserMap:
         raise NotImplementedError
 
-    def _commit_laser_baseline(self) -> None:
-        if self._laser is None:
+    def _unique_dirty(self, laser: LaserMap) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Unique dirty indices and their current values. Caller checks ``n > 0``."""
+        dirty = laser._dirty
+        iu = dirty.iu[: dirty.n].copy()
+        iv = dirty.iv[: dirty.n].copy()
+        keys = iu.astype(np.int64) * int(laser.nv) + iv.astype(np.int64)
+        _, uniq = np.unique(keys, return_index=True)
+        iu = iu[uniq]
+        iv = iv[uniq]
+        return iu, iv, laser.intensity[iu, iv]
+
+    def _absorb_dirty_into_burned(self) -> None:
+        """Fold the open dirty log into the running nonzero-texel set."""
+        laser = self._laser
+        burned = self._burned_keys
+        if laser is None or burned is None:
+            return
+        dirty = laser._dirty
+        if dirty.overflow:
+            self._burned_keys = None
+            return
+        if dirty.n == 0:
+            return
+        iu, iv, curr = self._unique_dirty(laser)
+        keys = iu.astype(np.int64) * int(laser.nv) + iv.astype(np.int64)
+        for key, val in zip(keys.tolist(), curr.tolist()):
+            if val:
+                burned.add(int(key))
+            else:
+                burned.discard(int(key))
+
+    def _rebuild_burned_from_image(self) -> None:
+        laser = self._laser
+        if laser is None:
+            self._burned_keys = set()
+            return
+        rs, cs = np.nonzero(laser.intensity)
+        nv = int(laser.nv)
+        self._burned_keys = set((rs.astype(np.int64) * nv + cs.astype(np.int64)).tolist())
+
+    def _payload_from_burned(self) -> object:
+        """Sparse-full (or dense full) from the running burned set. No full-image scan."""
+        laser = self._laser
+        assert laser is not None
+        burned = self._burned_keys
+        if burned is None:
+            snap = _laser_full_payload(laser.intensity)
+            self._rebuild_burned_from_image()
+            return snap
+        shape = laser.intensity.shape
+        if not burned:
+            empty_i = np.empty(0, dtype=np.int32)
+            empty_v = np.empty(0, dtype=np.uint8)
+            return (LASER_SNAP_SPARSE_FULL, compress_laser_sparse(empty_i, empty_i, empty_v, shape))
+        nv = int(laser.nv)
+        arr = np.fromiter(burned, dtype=np.int64, count=len(burned))
+        iu, iv = np.divmod(arr, nv)
+        iu = iu.astype(np.int32, copy=False)
+        iv = iv.astype(np.int32, copy=False)
+        curr = laser.intensity[iu, iv]
+        keep = curr != 0
+        if not np.all(keep):
+            iu = iu[keep]
+            iv = iv[keep]
+            curr = curr[keep]
+            self._burned_keys = set((iu.astype(np.int64) * nv + iv.astype(np.int64)).tolist())
+        if int(iu.size) * _DELTA_BYTES_PER_TEXEL > laser.intensity.nbytes / 2:
+            return (LASER_SNAP_FULL, compress_array(laser.intensity))
+        return (LASER_SNAP_SPARSE_FULL, compress_laser_sparse(iu, iv, curr, shape))
+
+    def _commit_laser_baseline(self, *, force_full: bool = False) -> None:
+        laser = self._laser
+        if laser is None:
             self._laser_cp_baseline = None
+            self._laser_cp_had_map = False
+            return
+        self._laser_cp_had_map = True
+        dirty = laser._dirty
+        if (
+            force_full
+            or self._laser_cp_baseline is None
+            or self._laser_cp_baseline.shape != laser.intensity.shape
+            or dirty.overflow
+        ):
+            self._laser_cp_baseline = laser.intensity.copy()
         else:
-            self._laser_cp_baseline = self._laser.intensity.copy()
+            n = dirty.n
+            if n:
+                iu = dirty.iu[:n]
+                iv = dirty.iv[:n]
+                self._laser_cp_baseline[iu, iv] = laser.intensity[iu, iv]
+        dirty.reset()
+
+    def _delta_from_dirty_log(self) -> object | None:
+        """Build a COO delta from the dirty log, or fall back to a full scan once."""
+        laser = self._laser
+        assert laser is not None
+        dirty = laser._dirty
+        baseline = self._laser_cp_baseline
+        needs_scan = dirty.overflow or (
+            self._burned_keys is None and (baseline is None or baseline.shape != laser.intensity.shape)
+        )
+        if needs_scan:
+            snap = laser_diff_payload(baseline, laser.intensity)
+            self._rebuild_burned_from_image()
+            self._commit_laser_baseline(force_full=True)
+            return snap
+        if baseline is None or baseline.shape != laser.intensity.shape:
+            # First image is a complete snapshot. A delta would patch whatever
+            # decal the restorer already has, including a stale one.
+            self._absorb_dirty_into_burned()
+            if not self._burned_keys:
+                self._commit_laser_baseline(force_full=True)
+                return None
+            snap = self._payload_from_burned()
+            self._commit_laser_baseline(force_full=True)
+            return snap
+        n = dirty.n
+        if n == 0:
+            return None
+        iu, iv, curr = self._unique_dirty(laser)
+        changed = curr != baseline[iu, iv]
+        self._absorb_dirty_into_burned()
+        if not np.any(changed):
+            self._commit_laser_baseline()
+            return None
+        iu = iu[changed]
+        iv = iv[changed]
+        curr = curr[changed]
+        if int(iu.size) * _DELTA_BYTES_PER_TEXEL > laser.intensity.nbytes / 2:
+            snap = (LASER_SNAP_FULL, laser.snapshot())
+        else:
+            snap = (LASER_SNAP_DELTA, compress_laser_sparse(iu, iv, curr, laser.intensity.shape))
+        self._commit_laser_baseline()
+        return snap
 
     def laser_checkpoint_full(self) -> object | None:
         """Tagged full extra for a GOP base slot, or ``None`` if no map."""
         if self._laser is None:
             self._laser_cp_baseline = None
+            self._laser_cp_had_map = False
             return None
-        snap = (LASER_SNAP_FULL, self._laser.snapshot())
-        self._commit_laser_baseline()
+        if self._laser._dirty.overflow or self._burned_keys is None:
+            snap = _laser_full_payload(self._laser.intensity)
+            self._rebuild_burned_from_image()
+        else:
+            self._absorb_dirty_into_burned()
+            snap = self._payload_from_burned()
+        self._commit_laser_baseline(force_full=True)
         return snap
 
     def laser_checkpoint_delta(self) -> object | None:
         """Tagged extra vs the last recorded CP, or ``None`` if unchanged / still empty."""
         if self._laser is None:
-            if self._laser_cp_baseline is None:
+            if not self._laser_cp_had_map:
                 return None
+            self._laser_cp_had_map = False
             self._laser_cp_baseline = None
             return (LASER_SNAP_DROP,)
-        snap = laser_diff_payload(self._laser_cp_baseline, self._laser.intensity)
-        self._commit_laser_baseline()
-        return snap
+        return self._delta_from_dirty_log()
 
     def take_laser_dirty(self) -> bool:
         dirty = bool(self._laser_dirty)
@@ -584,25 +828,31 @@ class LaserDecalMixin:
             if occupancy_kind == "full":
                 self._drop_laser()
                 self._laser_cp_baseline = None
+                self._laser_cp_had_map = False
                 return
-            self._commit_laser_baseline()
+            self._burned_keys = None
+            self._commit_laser_baseline(force_full=True)
             return
         if isinstance(laser_payload, tuple) and laser_payload and laser_payload[0] == LASER_SNAP_DROP:
             self._drop_laser()
             self._laser_cp_baseline = None
+            self._laser_cp_had_map = False
             return
         kind = laser_payload[0] if isinstance(laser_payload, tuple) and laser_payload else None
         if kind == LASER_SNAP_DELTA:
             if self._laser is None:
                 self._laser = self._make_laser_map()
+                self._burned_keys = set()
             apply_laser_tagged(self._laser, laser_payload)
             self._laser_dirty = True
-            self._commit_laser_baseline()
+            self._burned_keys = None
+            self._commit_laser_baseline(force_full=True)
             return
         laser = self._ensure_laser()
         apply_laser_tagged(laser, laser_payload)
         self._laser_dirty = True
-        self._commit_laser_baseline()
+        self._burned_keys = None
+        self._commit_laser_baseline(force_full=True)
 
     def _snapshot_with_laser(self, payload: tuple, *, full: bool) -> tuple:
         extra = self.laser_checkpoint_full() if full else self.laser_checkpoint_delta()

@@ -57,6 +57,15 @@ typedef int (*ScGetChunkFn)(
 
 void sc_profile_prepare(ScProfile *p, const double *zs, const double *rs, int n);
 
+/* Optional dirty-index log for sparse laser checkpoints. Append only on real changes. */
+typedef struct ScLaserDirty {
+    int32_t *iu;
+    int32_t *iv;
+    int cap;
+    int n;
+    int overflow;
+} ScLaserDirty;
+
 /* World-space laser decal. `v` is Y (planar) or stock angle in degrees (cylindrical). */
 typedef struct ScLaserDecal {
     uint8_t *intensity;
@@ -69,6 +78,7 @@ typedef struct ScLaserDecal {
     int wrap_v;
     double v_period;
     double v_scale;
+    ScLaserDirty *dirty; /* optional; NULL skips logging */
 } ScLaserDecal;
 
 /* Optional occupancy test so a beam does not paint air.
