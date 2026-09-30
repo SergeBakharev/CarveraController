@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 def _sources(native_dir: Path) -> list[Path]:
-    names = ["profile.c", "heightmap.c", "cylindrical.c", "voxel.c", "laser.c", "_stock_carve.c"]
+    names = ["profile.c", "heightmap.c", "cylindrical.c", "voxel.c", "laser.c", "mesh.c", "_stock_carve.c"]
     return [native_dir / name for name in names]
 
 

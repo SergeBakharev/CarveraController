@@ -27,6 +27,81 @@ _EMPTY_I32 = np.empty(0, dtype=np.int32)
 _EMPTY_QUADS = np.empty((0, 4, 3), dtype=np.float32)
 
 
+_NATIVE_MISSING = object()
+
+
+def _neighbor_face_token(grid, coord, face):
+    """Empty (None), solid (True), or a uint8 slice for one neighboring face."""
+    from .grid import CHUNK_EMPTY, CHUNK_FULL
+
+    cx, cy, cz = coord.cx, coord.cy, coord.cz
+    if not (0 <= cx < grid.n_chunks_x and 0 <= cy < grid.n_chunks_y and 0 <= cz < grid.n_chunks_z):
+        return None
+    state = grid.get_chunk_state(coord)
+    if state is CHUNK_EMPTY:
+        return None
+    if state is CHUNK_FULL or not isinstance(state, np.ndarray):
+        return True
+    axis, index = face
+    if axis == "x":
+        sl = state[index, :, :]
+    elif axis == "y":
+        sl = state[:, index, :]
+    else:
+        sl = state[:, :, index]
+    if not np.any(sl):
+        return None
+    if bool(np.all(sl)):
+        return True
+    return np.ascontiguousarray(sl, dtype=np.uint8)
+
+
+def _face_modes_and_arrays(tokens: list):
+    modes = []
+    faces = []
+    for token in tokens:
+        if token is None:
+            modes.append(0)
+            faces.append(None)
+        elif token is True:
+            modes.append(1)
+            faces.append(None)
+        else:
+            modes.append(2)
+            faces.append(token)
+    return modes, faces
+
+
+def _native_chunk_mesh(grid, coord, occupancy, valid, color):
+    from carveracontroller.addons.stock.simulator import native as native_mod
+
+    from .grid import ChunkCoord as CC
+
+    if not native_mod.native_enabled() or not hasattr(native_mod._impl, "mesh_voxel"):
+        return _NATIVE_MISSING
+    specs = (
+        (CC(coord.cx + 1, coord.cy, coord.cz), ("x", 0)),
+        (CC(coord.cx - 1, coord.cy, coord.cz), ("x", -1)),
+        (CC(coord.cx, coord.cy + 1, coord.cz), ("y", 0)),
+        (CC(coord.cx, coord.cy - 1, coord.cz), ("y", -1)),
+        (CC(coord.cx, coord.cy, coord.cz + 1), ("z", 0)),
+        (CC(coord.cx, coord.cy, coord.cz - 1), ("z", -1)),
+    )
+    tokens = [_neighbor_face_token(grid, ncoord, face) for ncoord, face in specs]
+    modes, faces = _face_modes_and_arrays(tokens)
+    occ = None if occupancy is None else np.ascontiguousarray(occupancy, dtype=np.uint8)
+    return native_mod.mesh_voxel_chunk_arrays(
+        occ,
+        None if valid is None else np.ascontiguousarray(valid, dtype=np.uint8),
+        modes,
+        faces,
+        cs=int(grid.chunk_size),
+        origin=grid.chunk_world_origin(coord),
+        voxel=float(grid.voxel_size),
+        color=color,
+    )
+
+
 def mesh_chunk(
     grid: ChunkedVoxelGrid,
     coord: ChunkCoord,
@@ -39,6 +114,10 @@ def mesh_chunk(
     Vertex positions are in **world millimetres** (caller scales into viewer space).
     Coplanar unit faces are greedily merged; vertices/indices are ``array.array``.
     """
+    valid = None if grid._chunk_fully_in_bounds(coord) else grid._valid_mask(coord)
+    native = _native_chunk_mesh(grid, coord, occupancy, valid, color)
+    if native is not _NATIVE_MISSING:
+        return native
     cs = grid.chunk_size
     if occupancy.shape != (cs, cs, cs):
         raise ValueError(f"occupancy shape {occupancy.shape} != ({cs},{cs},{cs})")
@@ -360,6 +439,10 @@ def mesh_full_chunk(
 
     if not grid._chunk_fully_in_bounds(coord):
         return mesh_chunk(grid, coord, solid_occupancy_for_chunk(grid, coord), color)
+
+    native = _native_chunk_mesh(grid, coord, None, None, color)
+    if native is not _NATIVE_MISSING:
+        return native
 
     cs = grid.chunk_size
     ox, oy, oz = grid.chunk_world_origin(coord)

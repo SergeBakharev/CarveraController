@@ -8,7 +8,7 @@ import zlib
 import numpy as np
 
 from carveracontroller.addons.stock.simulator.carvers.backend import TileKey
-from carveracontroller.addons.stock.simulator.mesh_format import VERTEX_FORMAT
+from carveracontroller.addons.stock.simulator.mesh_format import DEFAULT_COLOR, VERTEX_FORMAT
 
 _FLOATS_PER_VERT = 12
 # Kivy Mesh indices are unsigned short; stay under 65536 vertices per draw.
@@ -181,6 +181,74 @@ def pack_quad_meshes(
         packed = pack_quad_mesh(corners[start:end], normals[start:end], color)
         if packed is not None:
             out.append(packed)
+    return out
+
+
+def aabb_box_mesh(
+    xmin: float,
+    ymin: float,
+    zmin: float,
+    xmax: float,
+    ymax: float,
+    zmax: float,
+    color: tuple[float, float, float, float] = DEFAULT_COLOR,
+) -> PackedMesh | None:
+    """Six outward quads for one solid box. A uniform shell is this, not a tile grid."""
+    if xmax <= xmin or ymax <= ymin or zmax <= zmin:
+        return None
+    corners = np.array(
+        (
+            ((xmin, ymin, zmax), (xmax, ymin, zmax), (xmax, ymax, zmax), (xmin, ymax, zmax)),
+            ((xmin, ymin, zmin), (xmin, ymax, zmin), (xmax, ymax, zmin), (xmax, ymin, zmin)),
+            ((xmin, ymin, zmax), (xmin, ymax, zmax), (xmin, ymax, zmin), (xmin, ymin, zmin)),
+            ((xmax, ymax, zmax), (xmax, ymin, zmax), (xmax, ymin, zmin), (xmax, ymax, zmin)),
+            ((xmax, ymin, zmax), (xmin, ymin, zmax), (xmin, ymin, zmin), (xmax, ymin, zmin)),
+            ((xmin, ymax, zmax), (xmax, ymax, zmax), (xmax, ymax, zmin), (xmin, ymax, zmin)),
+        ),
+        dtype=np.float32,
+    )
+    normals = np.array(
+        ((0, 0, 1), (0, 0, -1), (-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0)),
+        dtype=np.float32,
+    )
+    return pack_quad_mesh(corners, normals, color)
+
+
+def coalesce_indexed_meshes(parts: list) -> list[PackedMesh]:
+    """Concatenate indexed meshes, splitting before the uint16 vertex limit."""
+    out: list[PackedMesh] = []
+    cur_v = array.array("f")
+    cur_i = array.array("H")
+
+    def flush() -> None:
+        nonlocal cur_v, cur_i
+        if len(cur_v) == 0:
+            return
+        out.append((cur_v, cur_i, VERTEX_FORMAT))
+        cur_v = array.array("f")
+        cur_i = array.array("H")
+
+    for packed in parts:
+        if not packed:
+            continue
+        verts, indices, _fmt = packed
+        nv = len(verts) // _FLOATS_PER_VERT
+        if nv <= 0:
+            continue
+        if nv > MAX_KIVY_MESH_VERTS:
+            continue
+        base = len(cur_v) // _FLOATS_PER_VERT
+        if base and base + nv > MAX_KIVY_MESH_VERTS:
+            flush()
+            base = 0
+        cur_v.extend(verts)
+        if base == 0:
+            cur_i.extend(indices)
+        else:
+            shifted = np.frombuffer(memoryview(indices), dtype=np.uint16).astype(np.uint32)
+            shifted += np.uint32(base)
+            cur_i.frombytes(shifted.astype(np.uint16).tobytes())
+    flush()
     return out
 
 

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import array
 import math
 from collections.abc import Iterable
 
 import numpy as np
+
+from carveracontroller.addons.stock.simulator.mesh_format import VERTEX_FORMAT
 
 HAS_NATIVE = False
 _impl = None
@@ -437,3 +440,136 @@ def clear_laser_capsules(
     if image is not intensity:
         intensity[...] = image
     return changed
+
+
+def _packed_from_parts(parts) -> list[tuple[array.array, array.array, list]]:
+    out = []
+    for vert_bytes, idx_bytes in parts:
+        verts = array.array("f")
+        verts.frombytes(vert_bytes)
+        indices = array.array("H")
+        indices.frombytes(idx_bytes)
+        if len(verts) == 0:
+            continue
+        out.append((verts, indices, VERTEX_FORMAT))
+    return out
+
+
+def mesh_heightmap_patch(
+    patch: np.ndarray,
+    *,
+    gw: int,
+    gh: int,
+    x0: int,
+    y0: int,
+    nx: int,
+    ny: int,
+    origin_x: float,
+    origin_y: float,
+    min_z: float,
+    cell: float,
+    color: tuple[float, float, float, float],
+) -> list[tuple[array.array, array.array, list]]:
+    """Weld one heightmap window. Empty when the window has no remaining stock."""
+    impl = _require_impl()
+    parts = impl.mesh_heightmap(
+        np.ascontiguousarray(patch, dtype=np.float32),
+        int(gw),
+        int(gh),
+        int(x0),
+        int(y0),
+        int(nx),
+        int(ny),
+        float(origin_x),
+        float(origin_y),
+        float(min_z),
+        float(cell),
+        float(color[0]),
+        float(color[1]),
+        float(color[2]),
+        float(color[3]),
+    )
+    return _packed_from_parts(parts)
+
+
+def mesh_cylinder_arrays(
+    radii: np.ndarray,
+    *,
+    ix0: int,
+    nx_total: int,
+    min_x: float,
+    cell: float,
+    axis_y: float,
+    axis_z: float,
+    sin_t: np.ndarray,
+    cos_t: np.ndarray,
+    floor_r: float,
+    color: tuple[float, float, float, float],
+) -> list[tuple[array.array, array.array, list]]:
+    """Weld a cylindrical radius window, including end caps when the slab reaches them."""
+    impl = _require_impl()
+    nx, n_theta = int(radii.shape[0]), int(radii.shape[1])
+    parts = impl.mesh_cylinder(
+        np.ascontiguousarray(radii, dtype=np.float32),
+        nx,
+        n_theta,
+        int(ix0),
+        int(nx_total),
+        float(min_x),
+        float(cell),
+        float(axis_y),
+        float(axis_z),
+        np.ascontiguousarray(sin_t, dtype=np.float64),
+        np.ascontiguousarray(cos_t, dtype=np.float64),
+        float(floor_r),
+        float(color[0]),
+        float(color[1]),
+        float(color[2]),
+        float(color[3]),
+    )
+    return _packed_from_parts(parts)
+
+
+def mesh_voxel_chunk_arrays(
+    occ: np.ndarray | None,
+    valid: np.ndarray | None,
+    face_modes: list[int],
+    faces: list,
+    *,
+    cs: int,
+    origin: tuple[float, float, float],
+    voxel: float,
+    color: tuple[float, float, float, float],
+) -> tuple[array.array, array.array, list] | None:
+    """Greedy-mesh one chunk. ``occ`` None means the chunk is fully solid."""
+    impl = _require_impl()
+    face_objs = []
+    for mode, face in zip(face_modes, faces):
+        if int(mode) == 2 and face is not None:
+            face_objs.append(np.ascontiguousarray(face, dtype=np.uint8))
+        else:
+            face_objs.append(None)
+    parts = impl.mesh_voxel(
+        None if occ is None else np.ascontiguousarray(occ, dtype=np.uint8),
+        None if valid is None else np.ascontiguousarray(valid, dtype=np.uint8),
+        int(cs),
+        tuple(int(m) for m in face_modes),
+        tuple(face_objs),
+        float(origin[0]),
+        float(origin[1]),
+        float(origin[2]),
+        float(voxel),
+        float(color[0]),
+        float(color[1]),
+        float(color[2]),
+        float(color[3]),
+    )
+    packed = _packed_from_parts(parts)
+    if not packed:
+        return None
+    if len(packed) == 1:
+        return packed[0]
+    from carveracontroller.addons.stock.simulator.carvers.array_mesh import coalesce_indexed_meshes
+
+    merged = coalesce_indexed_meshes(packed)
+    return merged[0] if merged else None

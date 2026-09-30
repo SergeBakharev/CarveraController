@@ -149,8 +149,8 @@ def test_cylindrical_mesh_is_regular_grid():
     cyl = CylindricalBackend(bounds, 2.0, shape)
     meshes = cyl.mesh_tiles(cyl.initial_surface_keys())
     n_verts = sum(len(m[0]) // 12 for m in meshes.values() if m)
-    n_quads = (cyl.nx - 1) * cyl.n_theta + 2 * cyl.n_theta
-    assert n_verts == n_quads * 4
+    # Welded shell corners, plus a private ring and center on each end cap.
+    assert n_verts == cyl.nx * cyl.n_theta + 2 * (cyl.n_theta + 1)
 
 
 def test_cylindrical_sloped_mesh_stays_regular():
@@ -162,8 +162,8 @@ def test_cylindrical_sloped_mesh_stays_regular():
     cyl.radii[:, :] = 6.0 + 3.0 * xs + 2.0 * th
     meshes = cyl.mesh_tiles(cyl.initial_surface_keys())
     n_verts = sum(len(m[0]) // 12 for m in meshes.values() if m)
-    n_quads = (cyl.nx - 1) * cyl.n_theta + 2 * cyl.n_theta
-    assert n_verts == n_quads * 4
+    # Welded shell corners, plus a private ring and center on each end cap.
+    assert n_verts == cyl.nx * cyl.n_theta + 2 * (cyl.n_theta + 1)
 
 
 def test_cylindrical_slope_triangles_face_outward():
@@ -239,6 +239,51 @@ def test_cylindrical_ball_mill_clears_top():
     assert dirty
     assert not cyl.is_solid_at_world(20.0, 0.0, 10.0)
     assert cyl.is_solid_at_world(20.0, 0.0, 7.0)
+
+
+def test_cylindrical_relief_normals_follow_the_surface():
+    """A radial normal lights a rotary relief as a smooth bar. Shoulders must tilt."""
+    bounds = StockBounds(min_x=0, min_y=-12, min_z=-12, max_x=40, max_y=12, max_z=12)
+    shape = RotaryCylindricalStock(diameter_mm=20.0, length_mm=40.0)
+    cyl = CylindricalBackend(bounds, 1.0, shape)
+    cyl.radii[:, :] = np.float32(10.0)
+    mid = cyl.nx // 2
+    cyl.radii[mid, :] = np.float32(6.0)
+    slot = cyl.n_theta // 2
+    cyl.radii[: mid - 2, slot] = np.float32(6.0)
+    shoulder_x = float(bounds.min_x) + (mid - 1 + 0.5) * float(cyl.cell_size)
+    plain_x = float(bounds.min_x) + (2 + 0.5) * float(cyl.cell_size)
+    tilted = 0
+    plain = 0
+    theta_tilted = 0
+    ay, az = float(cyl.axis_y), float(cyl.axis_z)
+    slot_y = ay + 10.0 * float(cyl._sin_t[slot - 1])
+    slot_z = az + 10.0 * float(cyl._cos_t[slot - 1])
+    for packed in cyl.mesh_tiles(cyl.initial_surface_keys()).values():
+        if not packed:
+            continue
+        verts = np.asarray(packed[0], dtype=np.float64).reshape(-1, 12)
+        for row in verts:
+            n = row[3:6]
+            nlen = float(np.linalg.norm(n))
+            if nlen < 1e-6 or abs(n[0]) > 0.9:
+                continue
+            radial = np.array((0.0, row[1] - ay, row[2] - az))
+            rlen = float(np.linalg.norm(radial))
+            if rlen < 1e-6:
+                continue
+            align = abs(float(np.dot(n, radial)) / (nlen * rlen))
+            if abs(row[0] - shoulder_x) < 0.2 and rlen > 8.0:
+                if align < 0.95:
+                    tilted += 1
+            elif abs(row[0] - plain_x) < 0.2 and abs(row[1] - slot_y) < 0.8 and abs(row[2] - slot_z) < 0.8:
+                if align < 0.95:
+                    theta_tilted += 1
+            elif abs(row[0] - plain_x) < 0.2 and rlen > 8.0 and align > 0.99:
+                plain += 1
+    assert tilted > 10
+    assert theta_tilted > 0
+    assert plain > 10
 
 
 def test_cylindrical_mesh_has_end_caps():
@@ -338,8 +383,8 @@ def test_cylindrical_through_axis_does_not_pinch_mesh():
     assert np.any(ring <= 1e-6)
     meshes = cyl.mesh_tiles(cyl.initial_surface_keys())
     n_verts = sum(len(m[0]) // 12 for m in meshes.values() if m)
-    n_quads = (cyl.nx - 1) * cyl.n_theta + 2 * cyl.n_theta
-    assert n_verts == n_quads * 4
+    # Welded shell corners, plus a private ring and center on each end cap.
+    assert n_verts == cyl.nx * cyl.n_theta + 2 * (cyl.n_theta + 1)
     checked, flipped, axis_hits, degen = _shell_triangle_stats(cyl)
     assert checked > 0
     assert flipped == 0
@@ -355,8 +400,8 @@ def test_cylindrical_thin_waist_still_meshes():
     cyl.radii[:, :] = np.float32(0.3)
     meshes = cyl.mesh_tiles(cyl.initial_surface_keys())
     n_verts = sum(len(m[0]) // 12 for m in meshes.values() if m)
-    n_quads = (cyl.nx - 1) * cyl.n_theta + 2 * cyl.n_theta
-    assert n_verts == n_quads * 4
+    # Welded shell corners, plus a private ring and center on each end cap.
+    assert n_verts == cyl.nx * cyl.n_theta + 2 * (cyl.n_theta + 1)
     checked, flipped, axis_hits, degen = _shell_triangle_stats(cyl)
     assert checked > 0
     assert flipped == 0

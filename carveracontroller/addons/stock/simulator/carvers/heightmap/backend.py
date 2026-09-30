@@ -12,6 +12,7 @@ from carveracontroller.addons.stock.simulator.carvers.array_checkpoints import (
     restore_array_checkpoint,
 )
 from carveracontroller.addons.stock.simulator.carvers.array_mesh import (
+    aabb_box_mesh,
     compress_array,
     decompress_array,
     tile_keys_from_window_mask,
@@ -39,6 +40,10 @@ from carveracontroller.addons.stock.stock_shape import (
     RotaryCylindricalStock,
     StockShape,
 )
+
+# Cells per coalesced draw. 64×64 welded corners stay under the uint16 vertex cap
+# even when every edge is a cliff skirt.
+HEIGHTMAP_MESH_BIN = 64
 
 
 def pick_heightmap_size(bounds: StockBounds, cell_size_mm: float) -> tuple[int, int]:
@@ -366,27 +371,106 @@ class HeightmapBackend(LaserDecalMixin):
         mask = (valid != seed_valid) | (valid & (np.abs(self.heights - seed) > 1e-4))
         return tile_keys_from_window_mask(mask, 0, 0, self.tile_size)
 
-    def mesh_tiles(self, keys: set[TileKey]) -> dict[TileKey, tuple | None]:
-        """GPU meshes for requested tiles (vectorized; one draw per tile)."""
-        if not keys or self.heights.size == 0:
-            return {(0, 0, 0): None} if keys else {}
+    def uniform_shell(self) -> bool:
+        """True when the live field is an uncut rectangular block.
+
+        A partial ``copy_tiles`` window can look flat even after a pocket, so the
+        worker passes this flag from the live backend instead of trusting a copy.
+        """
+        if not isinstance(self.shape, RectangularStock):
+            return False
+        if self._ox != 0 or self._oy != 0:
+            return False
+        heights = self.heights
+        if heights.shape != (self.nx, self.ny) or heights.size == 0:
+            return False
+        top = np.float32(self.bounds.max_z)
+        return bool(np.max(np.abs(heights - top)) <= np.float32(1e-4))
+
+    def expand_mesh_bins(self, keys: set[TileKey]) -> set[TileKey]:
+        """Tile keys covering every mesh bin touched by ``keys``.
+
+        A bin is meshed as a whole so the draw key stays put while the tool moves
+        inside it. The caller still expands one more ring for the height halo.
+        """
         ts = self.tile_size
-        out: dict[TileKey, tuple | None] = {}
-        for key in keys:
-            tx, ty, tz = key
+        bins: set[tuple[int, int]] = set()
+        for tx, ty, tz in keys:
             if tz != 0:
                 continue
-            x0, y0 = tx * ts, ty * ts
-            packed = _mesh_heightmap_region(
-                self,
-                x0,
-                y0,
-                min(self.nx, x0 + ts),
-                min(self.ny, y0 + ts),
+            x_lo = tx * ts
+            y_lo = ty * ts
+            x_hi = min(self.nx, x_lo + ts) - 1
+            y_hi = min(self.ny, y_lo + ts) - 1
+            if x_hi < x_lo or y_hi < y_lo:
+                continue
+            for bx in range(x_lo // HEIGHTMAP_MESH_BIN, x_hi // HEIGHTMAP_MESH_BIN + 1):
+                for by in range(y_lo // HEIGHTMAP_MESH_BIN, y_hi // HEIGHTMAP_MESH_BIN + 1):
+                    bins.add((bx, by))
+        out: set[TileKey] = set()
+        for bx, by in bins:
+            cell_x0 = bx * HEIGHTMAP_MESH_BIN
+            cell_y0 = by * HEIGHTMAP_MESH_BIN
+            cell_x1 = min(self.nx, cell_x0 + HEIGHTMAP_MESH_BIN) - 1
+            cell_y1 = min(self.ny, cell_y0 + HEIGHTMAP_MESH_BIN) - 1
+            for tx in range(cell_x0 // ts, cell_x1 // ts + 1):
+                for ty in range(cell_y0 // ts, cell_y1 // ts + 1):
+                    if 0 <= tx < self.n_tiles_x and 0 <= ty < self.n_tiles_y:
+                        out.add((tx, ty, 0))
+        return out
+
+    def _bins_for_tile_keys(self, keys: set[TileKey]) -> set[tuple[int, int]]:
+        ts = self.tile_size
+        bins: set[tuple[int, int]] = set()
+        for tx, ty, tz in keys:
+            if tz != 0:
+                continue
+            x_lo = tx * ts
+            y_lo = ty * ts
+            x_hi = min(self.nx, x_lo + ts) - 1
+            y_hi = min(self.ny, y_lo + ts) - 1
+            if x_hi < x_lo or y_hi < y_lo:
+                continue
+            for bx in range(x_lo // HEIGHTMAP_MESH_BIN, x_hi // HEIGHTMAP_MESH_BIN + 1):
+                for by in range(y_lo // HEIGHTMAP_MESH_BIN, y_hi // HEIGHTMAP_MESH_BIN + 1):
+                    bins.add((bx, by))
+        return bins
+
+    def mesh_tiles(self, keys: set[TileKey], *, uniform: bool | None = None) -> dict[TileKey, tuple | None]:
+        """GPU meshes for the bins covering ``keys``.
+
+        An uncut rectangle is one box at ``(0, 0, 0)``. Carved stock is one welded
+        mesh per ``HEIGHTMAP_MESH_BIN`` block, split only if a block exceeds the
+        uint16 vertex cap.
+        """
+        if not keys or self.heights.size == 0:
+            return {(0, 0, 0): None} if keys else {}
+        if uniform is None:
+            uniform = self.uniform_shell()
+        if uniform:
+            bounds = self.bounds
+            vs = float(self.cell_size)
+            box = aabb_box_mesh(
+                float(bounds.min_x),
+                float(bounds.min_y),
+                float(bounds.min_z),
+                float(bounds.min_x) + self.nx * vs,
+                float(bounds.min_y) + self.ny * vs,
+                float(bounds.max_z),
             )
-            out[key] = packed[0] if packed else None
-            for extra_i, item in enumerate(packed[1:], start=1):
-                out[(tx, ty, extra_i)] = item
+            return {(0, 0, 0): box}
+        out: dict[TileKey, tuple | None] = {}
+        for bx, by in sorted(self._bins_for_tile_keys(keys)):
+            x0 = bx * HEIGHTMAP_MESH_BIN
+            y0 = by * HEIGHTMAP_MESH_BIN
+            x1 = min(self.nx, x0 + HEIGHTMAP_MESH_BIN)
+            y1 = min(self.ny, y0 + HEIGHTMAP_MESH_BIN)
+            packed = _mesh_heightmap_region(self, x0, y0, x1, y1)
+            if not packed:
+                out[(bx, by, 0)] = None
+                continue
+            for part, item in enumerate(packed):
+                out[(bx, by, part)] = item
         return out
 
     def hud_stats(self) -> dict:

@@ -10,7 +10,7 @@ import os
 from setuptools import Extension, setup
 
 src = os.environ["STOCK_CARVE_SRC"]
-names = ["profile.c", "heightmap.c", "cylindrical.c", "voxel.c", "laser.c", "_stock_carve.c"]
+names = ["profile.c", "heightmap.c", "cylindrical.c", "voxel.c", "laser.c", "mesh.c", "_stock_carve.c"]
 setup(
     name="stockcarve",
     ext_modules=[

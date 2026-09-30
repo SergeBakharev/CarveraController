@@ -395,8 +395,9 @@ class CylindricalBackend(LaserDecalMixin):
         mask = np.abs(self.radii - seed) > 1e-4
         return tile_keys_from_window_mask(mask, 0, 0, self.tile_size)
 
-    def mesh_tiles(self, keys: set[TileKey]) -> dict[TileKey, tuple | None]:
+    def mesh_tiles(self, keys: set[TileKey], *, uniform: bool | None = None) -> dict[TileKey, tuple | None]:
         """Coalesced GPU meshes for the whole cylindrical shell (uint16-safe chunks)."""
+        del uniform
         if not keys or self.radii.size == 0:
             return {(0, 0, 0): None} if keys else {}
         packed = _mesh_cylindrical_field(self)
@@ -452,6 +453,28 @@ class CylindricalBackend(LaserDecalMixin):
 
 def _mesh_cylindrical_field(backend: CylindricalBackend) -> list[tuple[list[float], list[int], list]]:
     """Regular (x, θ) grid — no greedy X-merge (that left T-junction holes on slopes)."""
+    from carveracontroller.addons.stock.simulator import native as native_mod
+    from carveracontroller.addons.stock.simulator.mesh_format import DEFAULT_COLOR
+
+    if native_mod.native_enabled() and hasattr(native_mod._impl, "mesh_cylinder") and backend.radii.size:
+        return native_mod.mesh_cylinder_arrays(
+            backend.radii,
+            ix0=int(backend._ox),
+            nx_total=int(backend.nx),
+            min_x=float(backend.bounds.min_x),
+            cell=float(backend.cell_size),
+            axis_y=float(backend.axis_y),
+            axis_z=float(backend.axis_z),
+            sin_t=backend._sin_t,
+            cos_t=backend._cos_t,
+            floor_r=shell_floor_radius_mm(backend.cell_size),
+            color=DEFAULT_COLOR,
+        )
+    return _mesh_cylindrical_field_python(backend)
+
+
+def _mesh_cylindrical_field_python(backend: CylindricalBackend) -> list[tuple[list[float], list[int], list]]:
+    """Python fallback: unshared quads plus a diagonal pick."""
     ox = backend._ox
     radii = backend.radii
     nx_win, n_theta = int(radii.shape[0]), int(radii.shape[1])

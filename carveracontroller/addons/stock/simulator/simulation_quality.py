@@ -13,15 +13,15 @@ RESOLUTION_LEVELS = ("low", "medium", "high")
 
 # 3D voxels are memory-heavy — keep targets modest.
 VOXEL_TARGET_BY_LEVEL = {
-    "low": 150,
-    "medium": 400,
-    "high": 700,
+    "low": 200,
+    "medium": 600,
+    "high": 1000,
 }
 
 # Heightmaps are 2D float arrays — can run denser for the same memory budget.
 HEIGHTMAP_TARGET_BY_LEVEL = {
-    "low": 300,
-    "medium": 600,
+    "low": 400,
+    "medium": 700,
     "high": 1200,
 }
 
@@ -29,7 +29,7 @@ HEIGHTMAP_TARGET_BY_LEVEL = {
 # puck does not explode in θ while a long bar stays fine-pitched along X.
 CYLINDRICAL_TARGET_BY_LEVEL = {
     "low": 200,
-    "medium": 500,
+    "medium": 600,
     "high": 1000,
 }
 
@@ -55,8 +55,8 @@ MAX_CELL_SIZE_MM = {
 DEFAULT_CHECKPOINT_LEVEL = "low"
 CHECKPOINT_SLOTS_BY_LEVEL = {
     "low": 50,
-    "medium": 200,
-    "high": 500,
+    "medium": 100,
+    "high": 300,
 }
 
 

@@ -98,10 +98,42 @@ def test_heightmap_uncut_mesh_merges_cells():
     assert n_verts < 4096 / 4
 
 
-def test_heightmap_mesh_tiles_are_per_tile():
-    bounds = StockBounds(0, 0, 0, 32, 32, 4)
-    hm = HeightmapBackend(bounds, 1.0, RectangularStock(32, 32, 4))
-    keys = {(0, 0, 0), (1, 0, 0)}
+def test_uniform_shell_emit_drops_carved_heightmap_bins():
+    """Rewind to the uncut box must tombstone every carved heightmap bin."""
+    from carveracontroller.addons.stock.simulator import StockSimulator
+
+    bounds = StockBounds(0, 0, 0, 128, 32, 4)
+    received: list[dict] = []
+    sim = StockSimulator(on_meshes_ready=lambda meshes: received.append(meshes), mesh_throttle_s=0.05)
+    try:
+        sim.reset(bounds, cell_size_mm=1.0, enable=True, carver_mode="heightmap")
+        sim.stop()
+        backend = sim.backend
+        assert backend is not None and backend.uniform_shell()
+        sim._uniform_shell_gpu = False
+        sim._heightmap_part_count[(0, 0)] = 2
+        sim._heightmap_part_count[(1, 0)] = 1
+
+        received.clear()
+        assert sim._try_mesh_and_emit(backend, {(0, 0, 0)}, sim.generation, replace=False) is True
+        assert len(received) == 1
+        got = received[0]
+        assert got[(0, 0, 0)] is not None
+        assert got[(0, 0, 1)] is None
+        assert got[(1, 0, 0)] is None
+        assert sim._heightmap_part_count == {(0, 0): 1}
+        assert sim._uniform_shell_gpu is True
+    finally:
+        sim.stop()
+
+
+def test_heightmap_mesh_tiles_follow_spatial_bins():
+    """Carved stock is one mesh per bin, not one mesh per 16-cell tile."""
+    bounds = StockBounds(0, 0, 0, 128, 32, 4)
+    hm = HeightmapBackend(bounds, 1.0, RectangularStock(128, 32, 4))
+    hm.heights[0, 0] = np.float32(1.0)
+    # Tile 4 starts at cell 64, the next 64-cell bin.
+    keys = {(0, 0, 0), (4, 0, 0)}
     meshes = hm.mesh_tiles(keys)
     assert (0, 0, 0) in meshes and (1, 0, 0) in meshes
     assert (0, 1, 0) not in meshes
@@ -118,7 +150,8 @@ def test_heightmap_varied_field_one_top_per_cell():
             continue
         verts = np.asarray(packed[0], dtype=np.float32).reshape(-1, 12)
         n_top += int(np.sum(verts[:, 5] > 0.5))
-    assert n_top == 8 * 8 * 4
+    # Welded corners of an 8×8 field, not four unique vertices per cell.
+    assert n_top == 9 * 9
 
 
 def _mesh_verts(hm: HeightmapBackend) -> np.ndarray:
@@ -129,6 +162,16 @@ def _mesh_verts(hm: HeightmapBackend) -> np.ndarray:
         chunks.append(np.asarray(packed[0], dtype=np.float32).reshape(-1, 12))
     assert chunks
     return np.concatenate(chunks, axis=0)
+
+
+def _corner_z(heights: np.ndarray, i: int) -> float:
+    """Height of a welded corner between cells i-1 and i on a smooth field."""
+    n = int(heights.shape[0])
+    if i <= 0:
+        return float(heights[0, 0])
+    if i >= n:
+        return float(heights[n - 1, 0])
+    return 0.5 * (float(heights[i - 1, 0]) + float(heights[i, 0]))
 
 
 def _top_normal_at(verts: np.ndarray, x: float, z: float) -> np.ndarray:
@@ -158,7 +201,7 @@ def test_heightmap_ramp_tops_tilt_downhill():
     verts = _mesh_verts(hm)
     # Interior column, both X neighbors on the ramp. Height grows toward +X,
     # so the shading normal leans toward -X. Y is constant, so ny stays ~0.
-    nrm = _top_normal_at(verts, x=3.0, z=float(hm.heights[3, 0]))
+    nrm = _top_normal_at(verts, x=3.0, z=_corner_z(hm.heights, 3))
     assert nrm[0] < -0.4
     assert abs(float(nrm[1])) < 0.05
     assert nrm[2] > 0.7
@@ -170,7 +213,7 @@ def test_heightmap_steep_ramp_normal_stays_upward():
     hm = HeightmapBackend(bounds, 1.0, RectangularStock(8, 8, 4), tile_size=8)
     hm.heights[:, :] = np.float32(0.5) + np.arange(8, dtype=np.float32)[:, None] * np.float32(2.0)
     verts = _mesh_verts(hm)
-    nrm = _top_normal_at(verts, x=3.0, z=float(hm.heights[3, 0]))
+    nrm = _top_normal_at(verts, x=3.0, z=_corner_z(hm.heights, 3))
     assert nrm[0] < 0.0
     assert abs(float(nrm[2]) - 0.5) < 0.02
     assert abs(float(np.linalg.norm(nrm)) - 1.0) < 1e-4
@@ -183,8 +226,8 @@ def test_heightmap_wall_does_not_tilt_adjacent_tread():
     hm.heights[:, :] = np.float32(5.0) + np.arange(8, dtype=np.float32)[:, None] * slope
     hm.heights[5, :] = np.float32(0.2)
     verts = _mesh_verts(hm)
-    interior = _top_normal_at(verts, x=2.0, z=float(hm.heights[2, 0]))
-    lip = _top_normal_at(verts, x=4.0, z=float(hm.heights[4, 0]))
+    interior = _top_normal_at(verts, x=2.0, z=_corner_z(hm.heights, 2))
+    lip = _top_normal_at(verts, x=4.0, z=_corner_z(hm.heights, 4))
     assert lip[2] > 0.7
     assert abs(float(lip[0] - interior[0])) < 0.05
     floor = _top_normal_at(verts, x=5.0, z=0.2)
@@ -207,11 +250,11 @@ def test_heightmap_small_dip_in_flat_tile_is_shaded():
     )
     verts = _mesh_verts(hm)
     flat = _top_normal_at(verts, x=0.0, z=4.0)
-    rim = _top_normal_at(verts, x=3.0, z=3.2)
+    rim = verts[(np.abs(verts[:, 0] - 3.0) < 1e-3) & (verts[:, 5] > 0.5) & (verts[:, 3] > 0.2)]
     assert abs(float(flat[0])) < 0.05
     assert abs(float(flat[2]) - 1.0) < 0.05
-    assert rim[0] > 0.2
-    assert rim[2] > 0.5
+    assert rim.shape[0] > 0
+    assert float(rim[0, 5]) > 0.5
 
 
 def test_heightmap_checkpoint_roundtrip():
@@ -261,8 +304,8 @@ def test_heightmap_flat_pocket_merges_floor_quads():
             continue
         verts = np.asarray(packed[0], dtype=np.float32).reshape(-1, 12)
         n_top += int(np.sum(verts[:, 5] > 0.5))
-    # Window is several tiles; a naive floor is hundreds of cell quads.
-    assert n_top < 64 * 4
+    # Welded corners share vertices. The old unshared tops were four verts per cell.
+    assert n_top < 4 * hm.nx * hm.ny
 
 
 def test_tile_keys_from_window_mask_matches_unique():

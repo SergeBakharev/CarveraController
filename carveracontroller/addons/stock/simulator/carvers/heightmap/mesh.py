@@ -362,7 +362,37 @@ def _merged_skirt_quads(
 
 
 def mesh_heightmap_region(backend, x0: int, y0: int, x1: int, y1: int):
-    """Build Kivy quad meshes for cells ``[x0:x1, y0:y1]``."""
+    """Build Kivy quad meshes for cells ``[x0:x1, y0:y1]``.
+
+    The native mesher welds cell corners and emits vertical skirts only where a
+    neighbor drops by more than a cliff, or at the stock boundary.
+    """
+    if x0 >= x1 or y0 >= y1:
+        return []
+    from carveracontroller.addons.stock.simulator import native as native_mod
+
+    if native_mod.native_enabled() and hasattr(native_mod._impl, "mesh_heightmap"):
+        patch = np.ascontiguousarray(backend._read_patch(x0 - 1, y0 - 1, x1 + 1, y1 + 1), dtype=np.float32)
+        vs = float(backend.cell_size)
+        return native_mod.mesh_heightmap_patch(
+            patch,
+            gw=x1 - x0,
+            gh=y1 - y0,
+            x0=int(x0),
+            y0=int(y0),
+            nx=int(backend.nx),
+            ny=int(backend.ny),
+            origin_x=float(backend.bounds.min_x) + x0 * vs,
+            origin_y=float(backend.bounds.min_y) + y0 * vs,
+            min_z=float(backend.bounds.min_z),
+            cell=vs,
+            color=DEFAULT_COLOR,
+        )
+    return _mesh_heightmap_region_python(backend, x0, y0, x1, y1)
+
+
+def _mesh_heightmap_region_python(backend, x0: int, y0: int, x1: int, y1: int):
+    """Python fallback used when the native mesh extension is not built."""
     if x0 >= x1 or y0 >= y1:
         return []
 

@@ -1146,12 +1146,8 @@ def test_partial_mesh_copy_matches_live_dirty_meshes():
 
 
 def test_try_mesh_and_emit_uses_partial_copy_result():
-    """Worker emit path returns the same chunk meshes as a live 1-ring remesh."""
-    from carveracontroller.addons.stock.simulator import (
-        StockSimulator,
-        _expand_dirty_with_neighbors,
-    )
-    from carveracontroller.addons.stock.simulator.carvers.voxel.mesher import mesh_dirty_chunks
+    """Worker emit path returns the same bin meshes as a live remesh of those bins."""
+    from carveracontroller.addons.stock.simulator import StockSimulator
 
     bounds = StockBounds(min_x=-10, min_y=-10, min_z=-8, max_x=10, max_y=10, max_z=0)
     received: list[dict] = []
@@ -1170,13 +1166,146 @@ def test_try_mesh_and_emit_uses_partial_copy_result():
             length=10.0,
         )
         dirty = carve_segment_into_grid(grid, (-6.0, 0.0, -2.0), (6.0, 0.0, -2.0), tool)
-        mesh_keys = _expand_dirty_with_neighbors(grid, dirty)
-        expected = mesh_dirty_chunks(grid, mesh_keys)
+        # Incremental bins, not the one-box shell the initial emit may have uploaded.
+        sim._uniform_shell_gpu = False
+        mesh_keys = backend.expand_mesh_bins(backend.expand_dirty(dirty))
+        expected = backend.mesh_tiles(mesh_keys, uniform=False)
+        sim._voxel_part_count[(9, 9, 9)] = 1
 
         received.clear()
         assert sim._try_mesh_and_emit(backend, dirty, sim.generation, replace=False) is True
         assert len(received) == 1
         assert received[0] == expected
+        assert (9, 9, 9) not in received[0]
+        assert sim._voxel_part_count[(9, 9, 9)] == 1
+        assert any(packed is not None for packed in received[0].values())
+    finally:
+        sim.stop()
+
+
+def test_retire_voxel_draw_keys_drops_overflow_when_a_bin_shrinks():
+    """A later remesh with fewer uint16 splits must tombstone the leftover draws."""
+    from carveracontroller.addons.stock.simulator.carvers.voxel.backend import (
+        VOXEL_MESH_PART_STRIDE,
+        retire_voxel_draw_keys,
+        voxel_draw_key,
+    )
+
+    draw = ("verts", "idx", [])
+    base = (1, 2, 3)
+    counts: dict[tuple[int, int, int], int] = {}
+    first = {voxel_draw_key(base, 0): draw, voxel_draw_key(base, 1): draw}
+    retire_voxel_draw_keys(first, counts)
+    assert counts[base] == 2
+    assert first[voxel_draw_key(base, 1)] is draw
+
+    second = {voxel_draw_key(base, 0): draw}
+    retire_voxel_draw_keys(second, counts)
+    assert second[voxel_draw_key(base, 0)] is draw
+    assert second[voxel_draw_key(base, 1)] is None
+    assert counts[base] == 1
+
+    neighbor = (1, 2, 4)
+    other = {voxel_draw_key(neighbor, 0): draw}
+    retire_voxel_draw_keys(other, counts)
+    assert voxel_draw_key(base, 1) not in other
+    assert counts[base] == 1
+    assert counts[neighbor] == 1
+
+    counts[base] = 3
+    empty = {base: None}
+    retire_voxel_draw_keys(empty, counts)
+    assert empty[voxel_draw_key(base, 0)] is None
+    assert empty[voxel_draw_key(base, 1)] is None
+    assert empty[voxel_draw_key(base, 2)] is None
+    assert base not in counts
+
+    high = (0, 0, 1)
+    untouched = {(0, 0, 0): 4}
+    meshes = {high: draw}
+    retire_voxel_draw_keys(meshes, untouched)
+    assert (0, 0, VOXEL_MESH_PART_STRIDE) not in meshes
+    assert untouched[(0, 0, 0)] == 4
+    assert untouched[high] == 1
+
+
+def test_try_mesh_and_emit_retires_voxel_overflow_draws():
+    """Worker emit sends None for voxel splits the latest bin mesh no longer uses."""
+    from carveracontroller.addons.stock.simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator.carvers.voxel.backend import (
+        VOXEL_MESH_PART_STRIDE,
+        voxel_draw_key,
+    )
+
+    bounds = StockBounds(min_x=-10, min_y=-10, min_z=-8, max_x=10, max_y=10, max_z=0)
+    received: list[dict] = []
+    sim = StockSimulator(on_meshes_ready=lambda meshes: received.append(meshes), mesh_throttle_s=0.05)
+    try:
+        sim.reset(bounds, cell_size_mm=1.0, enable=True, carver_mode="voxel")
+        sim.stop()
+        backend = sim.backend
+        grid = sim.grid
+        assert backend is not None and grid is not None
+        tool = ToolDefinition(
+            number=1,
+            tool_type=ToolType.FLAT_END_MILL,
+            diameter=3.0,
+            flute_length=5.0,
+            length=10.0,
+        )
+        dirty = carve_segment_into_grid(grid, (-6.0, 0.0, -2.0), (6.0, 0.0, -2.0), tool)
+        sim._uniform_shell_gpu = False
+        mesh_keys = backend.expand_mesh_bins(backend.expand_dirty(dirty))
+        expected = backend.mesh_tiles(mesh_keys, uniform=False)
+        parts_for: dict[tuple[int, int, int], int] = {}
+        for key, packed in expected.items():
+            if not packed:
+                continue
+            z = int(key[2])
+            part = z // VOXEL_MESH_PART_STRIDE if z >= VOXEL_MESH_PART_STRIDE else 0
+            base = (int(key[0]), int(key[1]), z - part * VOXEL_MESH_PART_STRIDE)
+            parts_for[base] = max(parts_for.get(base, -1), part)
+        base = next(iter(parts_for))
+        keep = parts_for[base] + 1
+        sim._voxel_part_count[base] = keep + 2
+
+        received.clear()
+        assert sim._try_mesh_and_emit(backend, dirty, sim.generation, replace=False) is True
+        assert len(received) == 1
+        assert received[0][voxel_draw_key(base, keep - 1)] is not None
+        assert received[0][voxel_draw_key(base, keep)] is None
+        assert received[0][voxel_draw_key(base, keep + 1)] is None
+        assert sim._voxel_part_count[base] == keep
+    finally:
+        sim.stop()
+
+
+def test_uniform_shell_emit_drops_carved_voxel_bins():
+    """Rewind to the uncut box must tombstone every carved bin draw."""
+    from carveracontroller.addons.stock.simulator import StockSimulator
+    from carveracontroller.addons.stock.simulator.carvers.voxel.backend import voxel_draw_key
+
+    bounds = StockBounds(min_x=-10, min_y=-10, min_z=-8, max_x=10, max_y=10, max_z=0)
+    received: list[dict] = []
+    sim = StockSimulator(on_meshes_ready=lambda meshes: received.append(meshes), mesh_throttle_s=0.05)
+    try:
+        sim.reset(bounds, cell_size_mm=1.0, enable=True, carver_mode="voxel")
+        sim.stop()
+        backend = sim.backend
+        assert backend is not None and backend.uniform_shell()
+        sim._uniform_shell_gpu = False
+        sim._voxel_part_count[(0, 0, 0)] = 2
+        sim._voxel_part_count[(1, 0, 0)] = 1
+
+        received.clear()
+        assert sim._try_mesh_and_emit(backend, {(0, 0, 0)}, sim.generation, replace=False) is True
+        assert len(received) == 1
+        got = received[0]
+        assert got[(0, 0, 0)] is not None
+        assert got[voxel_draw_key((0, 0, 0), 1)] is None
+        assert got[(1, 0, 0)] is None
+        assert sim._voxel_part_count == {(0, 0, 0): 1}
+        assert sim._uniform_shell_gpu is True
     finally:
         sim.stop()
 

@@ -1196,12 +1196,305 @@ fail:
     return NULL;
 }
 
+static PyObject *sc_batch_to_list(ScMeshBatch *batch) {
+    PyObject *list = PyList_New(batch->nparts);
+    int i;
+    if (list == NULL) {
+        return NULL;
+    }
+    for (i = 0; i < batch->nparts; i++) {
+        ScMeshPart *part = &batch->parts[i];
+        PyObject *verts = PyBytes_FromStringAndSize(
+            (const char *)part->verts, (Py_ssize_t)part->nverts * 12 * (Py_ssize_t)sizeof(float));
+        PyObject *indices = PyBytes_FromStringAndSize(
+            (const char *)part->indices, (Py_ssize_t)part->nindices * (Py_ssize_t)sizeof(uint16_t));
+        PyObject *item;
+        if (verts == NULL || indices == NULL) {
+            Py_XDECREF(verts);
+            Py_XDECREF(indices);
+            Py_DECREF(list);
+            return NULL;
+        }
+        item = PyTuple_Pack(2, verts, indices);
+        Py_DECREF(verts);
+        Py_DECREF(indices);
+        if (item == NULL) {
+            Py_DECREF(list);
+            return NULL;
+        }
+        PyList_SET_ITEM(list, i, item);
+    }
+    return list;
+}
+
+static PyObject *py_mesh_heightmap(PyObject *self, PyObject *args) {
+    PyObject *patch_obj;
+    Py_buffer patch;
+    int gw, gh, x0, y0, nx, ny;
+    double ox, oy, min_z, cell, cr, cg, cb, ca;
+    ScMeshBatch batch;
+    PyObject *list;
+    int rc;
+    (void)self;
+    memset(&patch, 0, sizeof(patch));
+    memset(&batch, 0, sizeof(batch));
+    if (!PyArg_ParseTuple(
+            args,
+            "Oiiiiiidddddddd",
+            &patch_obj,
+            &gw,
+            &gh,
+            &x0,
+            &y0,
+            &nx,
+            &ny,
+            &ox,
+            &oy,
+            &min_z,
+            &cell,
+            &cr,
+            &cg,
+            &cb,
+            &ca)) {
+        return NULL;
+    }
+    if (sc_get_buffer(patch_obj, &patch, 0) != 0) {
+        return NULL;
+    }
+    if (gw < 0 || gh < 0 || patch.len < (Py_ssize_t)(gw + 2) * (gh + 2) * (Py_ssize_t)sizeof(float)) {
+        PyErr_SetString(PyExc_ValueError, "heightmap patch is smaller than the halo");
+        PyBuffer_Release(&patch);
+        return NULL;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    rc = sc_mesh_heightmap(
+        (const float *)patch.buf, gw, gh, x0, y0, nx, ny, ox, oy, min_z, cell, cr, cg, cb, ca, &batch);
+    Py_END_ALLOW_THREADS
+    PyBuffer_Release(&patch);
+    if (rc != 0) {
+        sc_mesh_batch_free(&batch);
+        return PyErr_NoMemory();
+    }
+    list = sc_batch_to_list(&batch);
+    sc_mesh_batch_free(&batch);
+    return list;
+}
+
+static PyObject *py_mesh_cylinder(PyObject *self, PyObject *args) {
+    PyObject *radii_obj, *sin_obj, *cos_obj;
+    Py_buffer radii, sint, cost;
+    int nx, n_theta, ix0, nx_total;
+    double min_x, cell, ay, az, floor_r, cr, cg, cb, ca;
+    ScMeshBatch batch;
+    PyObject *list;
+    int rc;
+    (void)self;
+    memset(&radii, 0, sizeof(radii));
+    memset(&sint, 0, sizeof(sint));
+    memset(&cost, 0, sizeof(cost));
+    memset(&batch, 0, sizeof(batch));
+    if (!PyArg_ParseTuple(
+            args,
+            "OiiiiddddOOddddd",
+            &radii_obj,
+            &nx,
+            &n_theta,
+            &ix0,
+            &nx_total,
+            &min_x,
+            &cell,
+            &ay,
+            &az,
+            &sin_obj,
+            &cos_obj,
+            &floor_r,
+            &cr,
+            &cg,
+            &cb,
+            &ca)) {
+        return NULL;
+    }
+    if (sc_get_buffer(radii_obj, &radii, 0) != 0) {
+        return NULL;
+    }
+    if (sc_get_buffer(sin_obj, &sint, 0) != 0 || sc_get_buffer(cos_obj, &cost, 0) != 0) {
+        PyBuffer_Release(&radii);
+        if (sint.buf) {
+            PyBuffer_Release(&sint);
+        }
+        return NULL;
+    }
+    if (nx < 0 || n_theta < 0 || radii.len < (Py_ssize_t)nx * n_theta * (Py_ssize_t)sizeof(float) ||
+        sint.len < (Py_ssize_t)n_theta * (Py_ssize_t)sizeof(double) ||
+        cost.len < (Py_ssize_t)n_theta * (Py_ssize_t)sizeof(double)) {
+        PyErr_SetString(PyExc_ValueError, "cylindrical mesh buffers are the wrong size");
+        PyBuffer_Release(&radii);
+        PyBuffer_Release(&sint);
+        PyBuffer_Release(&cost);
+        return NULL;
+    }
+    Py_BEGIN_ALLOW_THREADS
+    rc = sc_mesh_cylinder(
+        (const float *)radii.buf,
+        nx,
+        n_theta,
+        ix0,
+        nx_total,
+        min_x,
+        cell,
+        ay,
+        az,
+        (const double *)sint.buf,
+        (const double *)cost.buf,
+        floor_r,
+        cr,
+        cg,
+        cb,
+        ca,
+        &batch);
+    Py_END_ALLOW_THREADS
+    PyBuffer_Release(&radii);
+    PyBuffer_Release(&sint);
+    PyBuffer_Release(&cost);
+    if (rc != 0) {
+        sc_mesh_batch_free(&batch);
+        return PyErr_NoMemory();
+    }
+    list = sc_batch_to_list(&batch);
+    sc_mesh_batch_free(&batch);
+    return list;
+}
+
+static PyObject *py_mesh_voxel(PyObject *self, PyObject *args) {
+    PyObject *occ_obj, *valid_obj, *modes_obj, *faces_obj;
+    Py_buffer occ, valid, face_views[6];
+    int face_mode[6];
+    const uint8_t *face_ptr[6];
+    int cs, i, rc;
+    double ox, oy, oz, vs, cr, cg, cb, ca;
+    ScMeshBatch batch;
+    PyObject *list;
+    (void)self;
+    memset(&occ, 0, sizeof(occ));
+    memset(&valid, 0, sizeof(valid));
+    memset(face_views, 0, sizeof(face_views));
+    memset(&batch, 0, sizeof(batch));
+    if (!PyArg_ParseTuple(
+            args, "OOiOOdddddddd", &occ_obj, &valid_obj, &cs, &modes_obj, &faces_obj, &ox, &oy, &oz, &vs, &cr, &cg, &cb, &ca)) {
+        return NULL;
+    }
+    if (cs <= 0) {
+        PyErr_SetString(PyExc_ValueError, "voxel chunk size must be positive");
+        return NULL;
+    }
+    if (occ_obj != Py_None && sc_get_buffer(occ_obj, &occ, 0) != 0) {
+        return NULL;
+    }
+    if (valid_obj != Py_None && sc_get_buffer(valid_obj, &valid, 0) != 0) {
+        if (occ.buf) {
+            PyBuffer_Release(&occ);
+        }
+        return NULL;
+    }
+    if (!PySequence_Check(modes_obj) || !PySequence_Check(faces_obj) || PySequence_Size(modes_obj) != 6 ||
+        PySequence_Size(faces_obj) != 6) {
+        PyErr_SetString(PyExc_ValueError, "voxel mesh expects 6 face modes and 6 faces");
+        goto fail;
+    }
+    for (i = 0; i < 6; i++) {
+        PyObject *mode_obj = PySequence_GetItem(modes_obj, i);
+        PyObject *face_obj = PySequence_GetItem(faces_obj, i);
+        long mode;
+        if (mode_obj == NULL || face_obj == NULL) {
+            Py_XDECREF(mode_obj);
+            Py_XDECREF(face_obj);
+            goto fail;
+        }
+        mode = PyLong_AsLong(mode_obj);
+        Py_DECREF(mode_obj);
+        if (mode < 0 || mode > 2) {
+            Py_DECREF(face_obj);
+            PyErr_SetString(PyExc_ValueError, "voxel face mode must be 0, 1, or 2");
+            goto fail;
+        }
+        face_mode[i] = (int)mode;
+        face_ptr[i] = NULL;
+        if (mode == 2) {
+            if (sc_get_buffer(face_obj, &face_views[i], 0) != 0) {
+                Py_DECREF(face_obj);
+                face_views[i].buf = NULL;
+                goto fail;
+            }
+            if (face_views[i].len < (Py_ssize_t)cs * cs) {
+                Py_DECREF(face_obj);
+                PyErr_SetString(PyExc_ValueError, "voxel face is smaller than the chunk");
+                goto fail;
+            }
+            face_ptr[i] = (const uint8_t *)face_views[i].buf;
+        }
+        Py_DECREF(face_obj);
+    }
+    Py_BEGIN_ALLOW_THREADS
+    rc = sc_mesh_voxel_chunk(
+        occ.buf ? (const uint8_t *)occ.buf : NULL,
+        valid.buf ? (const uint8_t *)valid.buf : NULL,
+        cs,
+        face_mode,
+        face_ptr,
+        ox,
+        oy,
+        oz,
+        vs,
+        cr,
+        cg,
+        cb,
+        ca,
+        &batch);
+    Py_END_ALLOW_THREADS
+    for (i = 0; i < 6; i++) {
+        if (face_views[i].buf) {
+            PyBuffer_Release(&face_views[i]);
+            face_views[i].buf = NULL;
+        }
+    }
+    if (occ.buf) {
+        PyBuffer_Release(&occ);
+    }
+    if (valid.buf) {
+        PyBuffer_Release(&valid);
+    }
+    if (rc != 0) {
+        sc_mesh_batch_free(&batch);
+        return PyErr_NoMemory();
+    }
+    list = sc_batch_to_list(&batch);
+    sc_mesh_batch_free(&batch);
+    return list;
+fail:
+    for (i = 0; i < 6; i++) {
+        if (face_views[i].buf) {
+            PyBuffer_Release(&face_views[i]);
+        }
+    }
+    if (occ.buf) {
+        PyBuffer_Release(&occ);
+    }
+    if (valid.buf) {
+        PyBuffer_Release(&valid);
+    }
+    sc_mesh_batch_free(&batch);
+    return NULL;
+}
+
 static PyMethodDef methods[] = {
     {"heightmap", py_heightmap, METH_VARARGS, "Carve a heightmap batch."},
     {"cylindrical", py_cylindrical, METH_VARARGS, "Carve a cylindrical batch."},
     {"voxel", py_voxel, METH_VARARGS, "Carve a voxel batch."},
     {"laser_paint", py_laser_paint, METH_VARARGS, "Paint laser capsules into a decal."},
     {"laser_clear", py_laser_clear, METH_VARARGS, "Clear laser capsules from a decal."},
+    {"mesh_heightmap", py_mesh_heightmap, METH_VARARGS, "Weld a heightmap window into Kivy meshes."},
+    {"mesh_cylinder", py_mesh_cylinder, METH_VARARGS, "Weld a cylindrical shell into Kivy meshes."},
+    {"mesh_voxel", py_mesh_voxel, METH_VARARGS, "Greedy-mesh one voxel chunk."},
     {NULL, NULL, 0, NULL},
 };
 

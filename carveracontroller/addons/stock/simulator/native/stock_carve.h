@@ -192,6 +192,89 @@ void sc_laser_clear_coarse_cell(
     int coarse_nv,
     int *changed);
 
+/* One Kivy mesh: 12 floats per vertex (pos, normal, color, uv), uint16 indices. */
+typedef struct ScMeshPart {
+    float *verts;
+    uint16_t *indices;
+    int nverts;
+    int nindices;
+} ScMeshPart;
+
+typedef struct ScMeshBatch {
+    ScMeshPart *parts;
+    int nparts;
+    int cap;
+} ScMeshBatch;
+
+void sc_mesh_batch_free(ScMeshBatch *batch);
+
+/* Weld a heightmap window. `patch` is the (gw+2) by (gh+2) halo around cells
+ * [0, gw) x [0, gh), row-major, matching NumPy C order. Vertical skirts are
+ * emitted only for cliffs and for the stock boundary, not for gentle steps.
+ * Returns 0, or -1 on allocation failure.
+ */
+int sc_mesh_heightmap(
+    const float *patch,
+    int gw,
+    int gh,
+    int x0,
+    int y0,
+    int grid_nx,
+    int grid_ny,
+    double origin_x,
+    double origin_y,
+    double min_z,
+    double cell,
+    double cr,
+    double cg,
+    double cb,
+    double ca,
+    ScMeshBatch *out);
+
+/* Weld a cylindrical shell. `radii` is (nx, n_theta) starting at global X
+ * index `ix0` of a field `nx_total` wide. Caps are separate vertices so their
+ * ±X normals are not welded into the radial shell. Returns 0, or -1.
+ */
+int sc_mesh_cylinder(
+    const float *radii,
+    int nx,
+    int n_theta,
+    int ix0,
+    int nx_total,
+    double min_x,
+    double cell,
+    double axis_y,
+    double axis_z,
+    const double *sin_t,
+    const double *cos_t,
+    double floor_r,
+    double cr,
+    double cg,
+    double cb,
+    double ca,
+    ScMeshBatch *out);
+
+/* Greedy exposed faces of one voxel chunk.
+ * `occ` NULL means every in-bounds voxel is solid. `valid` NULL means all are
+ * in bounds. Face modes are 0 empty, 1 solid, 2 `faces[i]` uint8 (cs, cs):
+ * +X, -X, +Y, -Y, +Z, -Z. Returns 0, or -1.
+ */
+int sc_mesh_voxel_chunk(
+    const uint8_t *occ,
+    const uint8_t *valid,
+    int cs,
+    const int face_mode[6],
+    const uint8_t *const faces[6],
+    double ox,
+    double oy,
+    double oz,
+    double voxel,
+    double cr,
+    double cg,
+    double cb,
+    double ca,
+    ScMeshBatch *out);
+
 /* Delete cubes inside the tool. `get_chunk` loads occupancy from the host. */
 int sc_voxel_carve(
     const ScVoxelGrid *grid,

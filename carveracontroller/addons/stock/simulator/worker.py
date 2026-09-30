@@ -22,6 +22,11 @@ from carveracontroller.addons.stock.simulator.carver_select import (
     resolve_cutting_profile,
 )
 from carveracontroller.addons.stock.simulator.carvers.laser_map import laser_burn_uint8, pick_laser_cell_size_mm
+from carveracontroller.addons.stock.simulator.carvers.voxel.backend import (
+    _voxel_draw_bin,
+    retire_voxel_draw_keys,
+    voxel_draw_key,
+)
 from carveracontroller.addons.stock.simulator.simulation_quality import (
     CHECKPOINT_SLOTS_BY_LEVEL,
     DEFAULT_CARVER_RESOLUTION,
@@ -495,6 +500,11 @@ class StockSimulator:
         self._force_mesh_replace = False
         # Packed cylindrical draw keys from the last emit (to tombstone extras).
         self._coalesce_gpu_keys: set[tuple[int, int, int]] = set()
+        # Viewer is showing the one-box uncut shell. The next carved emit remeshes
+        # every bin so key (0, 0, 0) stops being that box.
+        self._uniform_shell_gpu = False
+        self._heightmap_part_count: dict[tuple[int, int], int] = {}
+        self._voxel_part_count: dict[tuple[int, int, int], int] = {}
         # Toolpath published from UI; worker copies refs per job under lock.
         self._path_positions: list[float] | None = None
         self._path_vertex_types: list[float] | None = None
@@ -706,6 +716,9 @@ class StockSimulator:
             self._force_mesh_replace = True
             self._mesh_updates_enabled = True
             self._coalesce_gpu_keys.clear()
+            self._uniform_shell_gpu = False
+            self._heightmap_part_count.clear()
+            self._voxel_part_count.clear()
         self._drain_queue()
         self.start()
         self._emit_checkpoints()
@@ -728,6 +741,9 @@ class StockSimulator:
             self._force_mesh_replace = False
             self._mesh_updates_enabled = True
             self._coalesce_gpu_keys.clear()
+            self._uniform_shell_gpu = False
+            self._heightmap_part_count.clear()
+            self._voxel_part_count.clear()
             if self._checkpoints is not None:
                 self._checkpoints.clear()
         self._drain_queue()
@@ -1700,6 +1716,9 @@ class StockSimulator:
                 display_changed_since_cp.clear()
                 bake_changed_since_cp.clear()
                 self._coalesce_gpu_keys.clear()
+                self._uniform_shell_gpu = False
+                self._heightmap_part_count.clear()
+                self._voxel_part_count.clear()
                 dirty_gen = gen
 
             live = backend
@@ -1968,14 +1987,31 @@ class StockSimulator:
             # Cylindrical wraps in θ and is drawn as one field. Playback patches
             # that field in place (no __replace__) so the viewer does not
             # destroy GPU meshes every throttle window. Heightmap/voxel tiles
-            # patch incrementally.
+            # patch incrementally, in spatial bins rather than one mesh per tile.
             coalesce = str(getattr(backend, "kind", "")) == BACKEND_CYLINDRICAL
+            live_uniform = False
             if dirty_keys:
+                uniform_fn = getattr(backend, "uniform_shell", None)
+                live_uniform = bool(uniform_fn()) if callable(uniform_fn) else False
+                break_shell = (not coalesce) and self._uniform_shell_gpu and not live_uniform
+                expand = getattr(backend, "expand_mesh_bins", None)
                 if coalesce:
                     mesh_keys = backend.initial_surface_keys()
                     tmp = backend.copy_tiles(mesh_keys)
+                elif live_uniform:
+                    # The box only reads bounds. Those do not change without a
+                    # generation bump, which drops this emit.
+                    mesh_keys = set(dirty_keys)
+                    tmp = backend
                 else:
-                    mesh_keys = backend.expand_dirty(dirty_keys)
+                    if break_shell:
+                        mesh_keys = backend.initial_surface_keys()
+                        if callable(expand):
+                            mesh_keys = expand(mesh_keys)
+                    else:
+                        mesh_keys = backend.expand_dirty(dirty_keys)
+                        if callable(expand):
+                            mesh_keys = expand(mesh_keys)
                     copy_keys = backend.expand_dirty(mesh_keys)
                     tmp = backend.copy_tiles(copy_keys)
             else:
@@ -1983,7 +2019,7 @@ class StockSimulator:
                 tmp = None
 
         if dirty_keys and tmp is not None:
-            meshes = tmp.mesh_tiles(mesh_keys)
+            meshes = tmp.mesh_tiles(mesh_keys, uniform=live_uniform)
         else:
             meshes = {}
 
@@ -2007,6 +2043,17 @@ class StockSimulator:
                         for old in self._coalesce_gpu_keys - current:
                             meshes[old] = None
                     self._coalesce_gpu_keys = current
+                elif not coalesce and dirty_keys:
+                    self._uniform_shell_gpu = bool(live_uniform)
+                    kind = str(getattr(backend, "kind", ""))
+                    if live_uniform:
+                        # The box replaces every carved bin. Mark tracked bins the
+                        # box did not reuse so retirement deletes those draws.
+                        self._mark_bins_replaced_by_uniform_shell(meshes, kind)
+                    if kind == BACKEND_HEIGHTMAP:
+                        self._retire_heightmap_parts(meshes)
+                    elif kind == BACKEND_VOXEL:
+                        retire_voxel_draw_keys(meshes, self._voxel_part_count)
                 out: dict = {}
                 if replace:
                     if dirty_keys or meshes:
@@ -2024,6 +2071,57 @@ class StockSimulator:
             except Exception:
                 logger.exception("stock mesh callback failed")
             return True
+
+    def _mark_bins_replaced_by_uniform_shell(self, meshes: dict, kind: str) -> None:
+        """Empty tracked bins absent from an uncut-box emit.
+
+        Retirement then drops their overflow splits. The box key stays, and
+        incremental remeshes do not call this: bins missing from a partial emit
+        are still on screen.
+        """
+        if kind == BACKEND_HEIGHTMAP:
+            present = {
+                (int(key[0]), int(key[1]))
+                for key in meshes
+                if isinstance(key, tuple) and len(key) == 3
+            }
+            for bx, by in list(self._heightmap_part_count):
+                if (bx, by) not in present:
+                    meshes[(bx, by, 0)] = None
+            return
+        if kind != BACKEND_VOXEL:
+            return
+        present: set[tuple[int, int, int]] = set()
+        for key in meshes:
+            if isinstance(key, tuple) and len(key) == 3:
+                base, _part = _voxel_draw_bin(key)
+                present.add(base)
+        for base in list(self._voxel_part_count):
+            if base not in present:
+                meshes[voxel_draw_key(base, 0)] = None
+
+    def _retire_heightmap_parts(self, meshes: dict) -> None:
+        """Drop leftover uint16 splits when a bin now fits in fewer draws."""
+        seen: dict[tuple[int, int], int] = {}
+        for key, packed in list(meshes.items()):
+            if not isinstance(key, tuple) or len(key) != 3:
+                continue
+            base = (int(key[0]), int(key[1]))
+            if packed is None and int(key[2]) == 0:
+                seen[base] = -1
+                continue
+            if packed is None:
+                continue
+            seen[base] = max(seen.get(base, -1), int(key[2]))
+        for base, last in seen.items():
+            prev = self._heightmap_part_count.get(base, 0)
+            keep = 0 if last < 0 else last + 1
+            for part in range(keep, prev):
+                meshes[(base[0], base[1], part)] = None
+            if keep:
+                self._heightmap_part_count[base] = keep
+            else:
+                self._heightmap_part_count.pop(base, None)
 
     def _cached_cutting_profile(self, tool_def, tool_unit_scale: float):
         scale = float(tool_unit_scale) if tool_unit_scale else 1.0
