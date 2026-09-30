@@ -13,24 +13,24 @@ RESOLUTION_LEVELS = ("low", "medium", "high")
 
 # 3D voxels are memory-heavy — keep targets modest.
 VOXEL_TARGET_BY_LEVEL = {
-    "low": 100,
-    "medium": 300,
-    "high": 500,
+    "low": 150,
+    "medium": 400,
+    "high": 700,
 }
 
 # Heightmaps are 2D float arrays — can run denser for the same memory budget.
 HEIGHTMAP_TARGET_BY_LEVEL = {
-    "low": 200,
-    "medium": 500,
-    "high": 1000,
+    "low": 300,
+    "medium": 600,
+    "high": 1200,
 }
 
 # Cylindrical r(x,θ) is 2D; cell size uses max(X, πD) so a short large-diameter
 # puck does not explode in θ while a long bar stays fine-pitched along X.
 CYLINDRICAL_TARGET_BY_LEVEL = {
-    "low": 150,
-    "medium": 400,
-    "high": 800,
+    "low": 200,
+    "medium": 500,
+    "high": 1000,
 }
 
 _TARGET_BY_CARVER = {
@@ -41,9 +41,9 @@ _TARGET_BY_CARVER = {
 
 # Minimum cell size (mm).
 MIN_CELL_SIZE_MM = {
-    "voxel": 0.1,
+    "voxel": 0.08,
     "heightmap": 0.05,
-    "cylindrical": 0.2,
+    "cylindrical": 0.1,
 }
 MAX_CELL_SIZE_MM = {
     "voxel": 1.0,
@@ -52,11 +52,11 @@ MAX_CELL_SIZE_MM = {
 }
 
 # Equally spaced restore-point slots along the toolpath
-DEFAULT_CHECKPOINT_LEVEL = "medium"
+DEFAULT_CHECKPOINT_LEVEL = "low"
 CHECKPOINT_SLOTS_BY_LEVEL = {
-    "low": 256,
-    "medium": 1024,
-    "high": 4096,
+    "low": 50,
+    "medium": 200,
+    "high": 500,
 }
 
 
@@ -133,7 +133,7 @@ def format_diameter_mm(diameter_mm: float) -> str:
 
 
 def normalize_checkpoint_level(value: Any) -> str:
-    """Return a known checkpoint-retention level, defaulting to ``medium``."""
+    """Return a known checkpoint-retention level, defaulting to ``low``."""
     if isinstance(value, str):
         key = value.strip().lower()
         if key in CHECKPOINT_SLOTS_BY_LEVEL:
