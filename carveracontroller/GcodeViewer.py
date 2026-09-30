@@ -64,12 +64,12 @@ from .addons.stock.simulator.carver_select import DEFAULT_CARVER_MODE, normalize
 from .addons.stock.simulator.mesh_format import VERTEX_FORMAT as CARVED_VERTEX_FORMAT
 from .addons.stock.simulator.simulation_quality import (
     CHECKPOINT_SLOTS_BY_LEVEL,
+    DEFAULT_CARVER_RESOLUTION,
     DEFAULT_CHECKPOINT_LEVEL,
-    DEFAULT_VOXEL_RESOLUTION,
     format_cell_size_mm,
     format_diameter_mm,
+    normalize_carver_resolution,
     normalize_checkpoint_level,
-    normalize_voxel_resolution,
 )
 from .addons.stock.stock_aabb_mesh import (
     STOCK_VERTEX_FORMAT,
@@ -908,7 +908,7 @@ class GCodeViewer(Widget):
         # patches GPU chunks; otherwise the last meshed shell (often uncut)
         # is shown for a frame.
         self._defer_carved_stock = False
-        self.stock_voxel_resolution = DEFAULT_VOXEL_RESOLUTION
+        self.stock_carver_resolution = DEFAULT_CARVER_RESOLUTION
         self.stock_checkpoint_level = DEFAULT_CHECKPOINT_LEVEL
         self.stock_carver_mode = DEFAULT_CARVER_MODE
         self.stock_material = DEFAULT_MATERIAL
@@ -2000,7 +2000,7 @@ class GCodeViewer(Widget):
         bounds: StockBounds | None,
         visible: bool = True,
         simulate_cut: bool = False,
-        voxel_resolution: str = DEFAULT_VOXEL_RESOLUTION,
+        carver_resolution: str = DEFAULT_CARVER_RESOLUTION,
         checkpoint_level: str = DEFAULT_CHECKPOINT_LEVEL,
         mesh_while_playing: bool = False,
         carver_mode: str = DEFAULT_CARVER_MODE,
@@ -2023,7 +2023,7 @@ class GCodeViewer(Widget):
         stock_visible = bool(visible) and bounds is not None
         want_sim = bool(simulate_cut) and self.simulation_available() and stock_visible
         mesh_while = bool(mesh_while_playing)
-        voxel_res = normalize_voxel_resolution(voxel_resolution)
+        carver_res = normalize_carver_resolution(carver_resolution)
         ckpt = normalize_checkpoint_level(checkpoint_level)
         carver = normalize_carver_mode(carver_mode)
         material = normalize_stock_material(material)
@@ -2033,7 +2033,7 @@ class GCodeViewer(Widget):
             and new_shape == self.stock_shape
             and want_sim == self.simulate_cut
             and mesh_while == self.stock_mesh_while_playing
-            and voxel_res == self.stock_voxel_resolution
+            and carver_res == self.stock_carver_resolution
             and ckpt == self.stock_checkpoint_level
             and carver == self.stock_carver_mode
         )
@@ -2043,7 +2043,7 @@ class GCodeViewer(Widget):
         self.stock_visible = stock_visible
         self.simulate_cut = want_sim
         self.stock_mesh_while_playing = mesh_while
-        self.stock_voxel_resolution = voxel_res
+        self.stock_carver_resolution = carver_res
         self.stock_checkpoint_level = ckpt
         self.stock_carver_mode = carver
         self.stock_material = material
@@ -2580,7 +2580,7 @@ class GCodeViewer(Widget):
         self._stock_simulator.reset(
             self.stock_bounds_mm,
             enable=True,
-            resolution_level=self.stock_voxel_resolution,
+            resolution_level=self.stock_carver_resolution,
             checkpoint_slots=CHECKPOINT_SLOTS_BY_LEVEL[self.stock_checkpoint_level],
             shape=self.stock_shape,
             carver_mode=self.stock_carver_mode,

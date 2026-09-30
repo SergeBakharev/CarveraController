@@ -806,7 +806,7 @@ def test_seek_forward_past_existing_checkpoint_jumps_instead_of_recarving():
         sim.stop()
 
 
-def test_reset_applies_voxel_target_and_checkpoint_slots():
+def test_reset_applies_cell_target_and_checkpoint_slots():
     """StockSimulator.reset() should honor quality presets for grid size + store."""
 
     from carveracontroller.addons.stock.simulator import StockSimulator
@@ -823,7 +823,7 @@ def test_reset_applies_voxel_target_and_checkpoint_slots():
 
     sim = StockSimulator()
     try:
-        sim.reset(bounds, enable=True, voxel_target=target, checkpoint_slots=slots, carver_mode="voxel")
+        sim.reset(bounds, enable=True, cell_target=target, checkpoint_slots=slots, carver_mode="voxel")
         time.sleep(0.05)
         assert sim.grid is not None
         assert abs(sim.grid.voxel_size - expected_size) < 1e-9

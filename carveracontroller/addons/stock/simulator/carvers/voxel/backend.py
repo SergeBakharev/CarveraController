@@ -236,21 +236,16 @@ class VoxelBackend(LaserDecalMixin):
         """Vectorized occupancy sample matching ``ChunkedVoxelGrid.is_solid_at_world``."""
         out = np.zeros(xs.shape, dtype=bool)
         b = self.bounds
-        valid = (
-            (b.min_x <= xs)
-            & (xs < b.max_x)
-            & (b.min_y <= ys)
-            & (ys < b.max_y)
-            & (b.min_z <= zs)
-            & (zs < b.max_z)
-        )
+        valid = (b.min_x <= xs) & (xs < b.max_x) & (b.min_y <= ys) & (ys < b.max_y) & (b.min_z <= zs) & (zs < b.max_z)
         if not np.any(valid):
             return out
         vox = max(float(self.cell_size), 1e-12)
         ix = np.floor((xs - b.min_x) / vox).astype(np.int32)
         iy = np.floor((ys - b.min_y) / vox).astype(np.int32)
         iz = np.floor((zs - b.min_z) / vox).astype(np.int32)
-        in_grid = valid & (ix >= 0) & (ix < self.grid.nx) & (iy >= 0) & (iy < self.grid.ny) & (iz >= 0) & (iz < self.grid.nz)
+        in_grid = (
+            valid & (ix >= 0) & (ix < self.grid.nx) & (iy >= 0) & (iy < self.grid.ny) & (iz >= 0) & (iz < self.grid.nz)
+        )
         if not np.any(in_grid):
             return out
         cs = int(self.grid.chunk_size)

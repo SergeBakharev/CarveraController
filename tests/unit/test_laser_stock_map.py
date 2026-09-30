@@ -7,9 +7,9 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from carveracontroller.addons.stock.simulator.carvers.array_mesh import compress_array
 from carveracontroller.addons.stock.simulator.carvers.cylindrical import CylindricalBackend
 from carveracontroller.addons.stock.simulator.carvers.heightmap import HeightmapBackend
-from carveracontroller.addons.stock.simulator.carvers.array_mesh import compress_array
 from carveracontroller.addons.stock.simulator.carvers.laser_map import (
     LASER_PREVIEW_GAMMA,
     LASER_SNAP_DELTA,

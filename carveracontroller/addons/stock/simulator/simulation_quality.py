@@ -8,7 +8,7 @@ from typing import Any
 from carveracontroller.addons.stock.stock_geometry import StockBounds
 
 # Target cells along the carver's reference length (see ``_reference_length_mm``).
-DEFAULT_VOXEL_RESOLUTION = "low"
+DEFAULT_CARVER_RESOLUTION = "medium"
 RESOLUTION_LEVELS = ("low", "medium", "high")
 
 # 3D voxels are memory-heavy — keep targets modest.
@@ -60,18 +60,18 @@ CHECKPOINT_SLOTS_BY_LEVEL = {
 }
 
 
-def normalize_voxel_resolution(value: Any) -> str:
+def normalize_carver_resolution(value: Any) -> str:
     """Return a known resolution level, defaulting to ``low``."""
     if isinstance(value, str):
         key = value.strip().lower()
         if key in VOXEL_TARGET_BY_LEVEL:
             return key
-    return DEFAULT_VOXEL_RESOLUTION
+    return DEFAULT_CARVER_RESOLUTION
 
 
 def cell_target_for_carver(carver: str, level: Any) -> int:
     """Cells along the reference length for ``carver`` at resolution ``level``."""
-    key = normalize_voxel_resolution(level)
+    key = normalize_carver_resolution(level)
     table = _TARGET_BY_CARVER.get(str(carver).strip().lower(), VOXEL_TARGET_BY_LEVEL)
     return int(table[key])
 

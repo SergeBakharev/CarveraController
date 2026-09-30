@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from carveracontroller.CNC import LASER_TOOL_NUMBER
-from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition, ToolType
 from carveracontroller.addons.stock.simulator import CheckpointStore, PathSnapshot, StockSimulator
 from carveracontroller.addons.stock.simulator.worker import CarveJob
+from carveracontroller.addons.tool_visualization.tool_definition import ToolDefinition, ToolType
+from carveracontroller.CNC import LASER_TOOL_NUMBER
 
 
 def _flat_tool():

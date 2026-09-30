@@ -24,8 +24,8 @@ from carveracontroller.addons.stock.simulator.carver_select import (
 from carveracontroller.addons.stock.simulator.carvers.laser_map import laser_burn_uint8, pick_laser_cell_size_mm
 from carveracontroller.addons.stock.simulator.simulation_quality import (
     CHECKPOINT_SLOTS_BY_LEVEL,
+    DEFAULT_CARVER_RESOLUTION,
     DEFAULT_CHECKPOINT_LEVEL,
-    DEFAULT_VOXEL_RESOLUTION,
     pick_cell_size_mm,
 )
 from carveracontroller.addons.stock.stock_geometry import StockBounds, rotate_yz
@@ -470,7 +470,7 @@ class StockSimulator:
         self._cell_size_mm = 1.0
         self._bounds: StockBounds | None = None
         self._checkpoint_slots = CHECKPOINT_SLOTS_BY_LEVEL[DEFAULT_CHECKPOINT_LEVEL]
-        self._resolution_level = DEFAULT_VOXEL_RESOLUTION
+        self._resolution_level = DEFAULT_CARVER_RESOLUTION
         self._queue: queue.Queue = queue.Queue()
         self._worker: threading.Thread | None = None
         self._lock = threading.RLock()
@@ -650,7 +650,7 @@ class StockSimulator:
         bounds: StockBounds,
         cell_size_mm: float | None = None,
         enable: bool = True,
-        voxel_target: int | None = None,
+        cell_target: int | None = None,
         checkpoint_slots: int | None = None,
         shape: StockShape | None = None,
         carver_mode: str = DEFAULT_CARVER_MODE,
@@ -658,7 +658,7 @@ class StockSimulator:
     ) -> None:
         """(Re)initialize the carver backend. Clears any pending carve jobs.
 
-        ``voxel_target`` forces a cell count along the longest axis. Otherwise
+        ``cell_target`` forces a cell count along the longest axis. Otherwise
         ``resolution_level`` (low/medium/high) picks a per-carver default target.
         """
         slots = (
@@ -681,7 +681,7 @@ class StockSimulator:
             self._bounds = bounds
             self._carver_mode = normalize_carver_mode(carver_mode)
             self._checkpoint_slots = slots
-            level = resolution_level if resolution_level is not None else DEFAULT_VOXEL_RESOLUTION
+            level = resolution_level if resolution_level is not None else DEFAULT_CARVER_RESOLUTION
             self._resolution_level = level
             kind = self._recommend_backend_kind_locked()
             if cell_size_mm is not None:
@@ -691,7 +691,7 @@ class StockSimulator:
                     bounds,
                     carver=kind,
                     level=level,
-                    target=voxel_target,
+                    target=cell_target,
                 )
             self._cell_size_mm = float(size)
             self._install_backend_locked(bounds, self._shape, size, kind)

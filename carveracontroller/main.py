@@ -148,12 +148,12 @@ from carveracontroller.addons.probing.ProbingPopup import ProbingPopup
 from carveracontroller.addons.stock.stock_defaults import (
     bounds_from_settings,
     carver_mode_from_settings,
+    carver_resolution_from_settings,
     checkpoint_level_from_settings,
     default_settings,
     material_from_settings,
     mesh_while_playing_from_settings,
     shape_from_settings,
-    voxel_resolution_from_settings,
 )
 from carveracontroller.addons.stock.stock_estimate import auto_stock_for_loaded_file, header_stock_usable
 from carveracontroller.addons.stock.ui.StockSettingsPopup import StockSettingsPopup
@@ -3242,7 +3242,7 @@ class Makera(RelativeLayout):
                 bounds,
                 visible=bool(settings.get("show_stock", False)),
                 simulate_cut=simulate,
-                voxel_resolution=voxel_resolution_from_settings(settings),
+                carver_resolution=carver_resolution_from_settings(settings),
                 checkpoint_level=checkpoint_level_from_settings(settings),
                 mesh_while_playing=mesh_while_playing_from_settings(settings),
                 carver_mode=carver_mode_from_settings(settings),

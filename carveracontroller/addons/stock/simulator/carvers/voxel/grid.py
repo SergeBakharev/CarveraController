@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from carveracontroller.addons.stock.simulator.simulation_quality import (
-    DEFAULT_VOXEL_RESOLUTION,
+    DEFAULT_CARVER_RESOLUTION,
     MAX_CELL_SIZE_MM,
     MIN_CELL_SIZE_MM,
     VOXEL_TARGET_BY_LEVEL,
@@ -27,7 +27,7 @@ MAX_VOXEL_SIZE_MM = MAX_CELL_SIZE_MM["voxel"]
 
 def pick_voxel_size_mm(
     bounds: StockBounds,
-    target: int = VOXEL_TARGET_BY_LEVEL[DEFAULT_VOXEL_RESOLUTION],
+    target: int = VOXEL_TARGET_BY_LEVEL[DEFAULT_CARVER_RESOLUTION],
 ) -> float:
     """Choose a voxel size so the longest stock axis has roughly ``target`` voxels."""
     return pick_cell_size_mm(bounds, carver="voxel", target=target)
