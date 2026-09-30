@@ -2080,11 +2080,7 @@ class StockSimulator:
         are still on screen.
         """
         if kind == BACKEND_HEIGHTMAP:
-            present = {
-                (int(key[0]), int(key[1]))
-                for key in meshes
-                if isinstance(key, tuple) and len(key) == 3
-            }
+            present = {(int(key[0]), int(key[1])) for key in meshes if isinstance(key, tuple) and len(key) == 3}
             for bx, by in list(self._heightmap_part_count):
                 if (bx, by) not in present:
                     meshes[(bx, by, 0)] = None

@@ -21,6 +21,18 @@ def _viewer(**kwargs) -> GCodeViewer:
     return viewer
 
 
+def test_show_all_moves_playhead_to_end_of_new_path():
+    viewer = _viewer(lengths=[0.0, 10.0, 25.0], cur_line_index=99.0, display_count=1.0, dynamic_display=True)
+
+    viewer.show_all()
+
+    assert viewer.dynamic_display is False
+    assert viewer.display_count == 25.0
+    assert viewer.cur_line_index == pytest.approx(2.0)
+    viewer._stock_simulator.set_display_vertex.assert_called_once_with(pytest.approx(2.0))
+    assert viewer._scene_dirty is True
+
+
 def test_carved_stock_hidden_while_deferred_after_pause():
     viewer = _viewer(dynamic_display=False, _defer_carved_stock=True)
     assert viewer._carved_stock_visible() is False

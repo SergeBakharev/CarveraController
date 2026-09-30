@@ -903,7 +903,7 @@ class GCodeViewer(Widget):
         self.stock_shape: StockShape | None = None
         self.stock_visible = False
         self.simulate_cut = False
-        self.stock_mesh_while_playing = False
+        self.stock_mesh_while_playing = True
         # Keep the translucent AABB up after pause until the worker flush
         # patches GPU chunks; otherwise the last meshed shell (often uncut)
         # is shown for a frame.
@@ -1152,6 +1152,7 @@ class GCodeViewer(Widget):
         self.axiszmesh.clear()
         self._remove_view_cube_from_canvas()
         self.display_count = 0
+        self.cur_line_index = 0
         self._sim_carved_vertex = 0
         self._sim_progress_vertex = 0
         self.sim_progress = 0.0
@@ -1487,24 +1488,28 @@ class GCodeViewer(Widget):
         self.off_y = offy
         self._scene_dirty = True
 
+    def _apply_display_distance(self, distance: float) -> None:
+        """Move the preview playhead to ``distance`` without notifying the file list."""
+        self.display_count = float(distance)
+        self._scene_dirty = True
+        if not self.lengths:
+            return
+        cur_display_distance = float(self.display_count)
+        line_index = binary_find_left(self.lengths, cur_display_distance)
+        line_ratio = 0.0
+        if line_index < len(self.lengths) - 1 and self.lengths[line_index + 1] > self.lengths[line_index]:
+            line_ratio = (cur_display_distance - self.lengths[line_index]) / (
+                self.lengths[line_index + 1] - self.lengths[line_index]
+            )
+        self.cur_line_index = line_index + line_ratio
+        self._sync_stock_simulation(self.cur_line_index)
+
     # set displaying limit
     def set_pos_by_distance(self, distance):
         if distance > self.get_total_distance():
             print("distance is out of bounds")
             return
-        self.display_count = float(distance)
-        self._scene_dirty = True
-        # Sync cur_line_index to display_count so get_cur_pos_index() returns the correct line
-        if self.lengths:
-            cur_display_distance = float(self.display_count)
-            line_index = binary_find_left(self.lengths, cur_display_distance)
-            line_ratio = 0.0
-            if line_index < len(self.lengths) - 1 and self.lengths[line_index + 1] > self.lengths[line_index]:
-                line_ratio = (cur_display_distance - self.lengths[line_index]) / (
-                    self.lengths[line_index + 1] - self.lengths[line_index]
-                )
-            self.cur_line_index = line_index + line_ratio
-            self._sync_stock_simulation(self.cur_line_index)
+        self._apply_display_distance(distance)
         # Trigger frame callback to update line highlighting
         if self.frame_callback is not None:
             cur_distance, linenumber = self.get_cur_pos_index()
@@ -1813,8 +1818,7 @@ class GCodeViewer(Widget):
 
     def show_all(self):
         self.dynamic_display = False
-        self.display_count = self.get_total_distance()
-        self._scene_dirty = True
+        self._apply_display_distance(self.get_total_distance())
 
     def restore_default_view(self):
         self.m_xLookAt = 0
@@ -2002,7 +2006,7 @@ class GCodeViewer(Widget):
         simulate_cut: bool = False,
         carver_resolution: str = DEFAULT_CARVER_RESOLUTION,
         checkpoint_level: str = DEFAULT_CHECKPOINT_LEVEL,
-        mesh_while_playing: bool = False,
+        mesh_while_playing: bool = True,
         carver_mode: str = DEFAULT_CARVER_MODE,
         shape: StockShape | None = None,
         material: str = DEFAULT_MATERIAL,

@@ -137,18 +137,18 @@ def test_default_settings_include_quality_presets():
     settings = default_settings()
     assert settings["carver_resolution"] == DEFAULT_CARVER_RESOLUTION
     assert settings["checkpoint_level"] == DEFAULT_CHECKPOINT_LEVEL
-    assert settings["mesh_while_playing"] is False
+    assert settings["mesh_while_playing"] is True
     assert settings["material"] == "beige"
     assert carver_resolution_from_settings(settings) == DEFAULT_CARVER_RESOLUTION
     assert checkpoint_level_from_settings(settings) == DEFAULT_CHECKPOINT_LEVEL
-    assert mesh_while_playing_from_settings(settings) is False
+    assert mesh_while_playing_from_settings(settings) is True
 
 
 def test_settings_helpers_normalize_bad_values():
     assert carver_resolution_from_settings({}) == DEFAULT_CARVER_RESOLUTION
     assert checkpoint_level_from_settings({"checkpoint_level": "bogus"}) == DEFAULT_CHECKPOINT_LEVEL
     assert carver_resolution_from_settings({"carver_resolution": "High"}) == "high"
-    assert mesh_while_playing_from_settings({}) is False
+    assert mesh_while_playing_from_settings({}) is True
     assert mesh_while_playing_from_settings({"mesh_while_playing": False}) is False
     assert mesh_while_playing_from_settings({"mesh_while_playing": 0}) is False
     assert mesh_while_playing_from_settings({"mesh_while_playing": True}) is True

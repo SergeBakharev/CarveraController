@@ -52,7 +52,7 @@ def default_settings() -> dict[str, Any]:
         "origin": default_origin().to_dict(),
         "show_stock": False,
         "simulate_cut": False,
-        "mesh_while_playing": False,
+        "mesh_while_playing": True,
         "carver_resolution": DEFAULT_CARVER_RESOLUTION,
         "checkpoint_level": DEFAULT_CHECKPOINT_LEVEL,
         "carver_mode": DEFAULT_CARVER_MODE,
@@ -81,7 +81,16 @@ def checkpoint_level_from_settings(settings: dict[str, Any]) -> str:
 
 
 def mesh_while_playing_from_settings(settings: dict[str, Any]) -> bool:
-    return bool(settings.get("mesh_while_playing", False))
+    return bool(settings.get("mesh_while_playing", True))
+
+
+def should_auto_simulate_cut(show_stock: bool, preference_enabled: bool, simulation_available: bool) -> bool:
+    """True when a file load should turn on cut simulation.
+
+    All three must hold: header stock is being shown, the viewer preference is
+    on, and the loaded path can actually be carved.
+    """
+    return bool(show_stock) and bool(preference_enabled) and bool(simulation_available)
 
 
 def carver_mode_from_settings(settings: dict[str, Any]) -> str:

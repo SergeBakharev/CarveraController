@@ -154,6 +154,7 @@ from carveracontroller.addons.stock.stock_defaults import (
     material_from_settings,
     mesh_while_playing_from_settings,
     shape_from_settings,
+    should_auto_simulate_cut,
 )
 from carveracontroller.addons.stock.stock_estimate import auto_stock_for_loaded_file, header_stock_usable
 from carveracontroller.addons.stock.ui.StockSettingsPopup import StockSettingsPopup
@@ -3254,11 +3255,16 @@ class Makera(RelativeLayout):
             return False
         return True
 
-    def _reset_stock_settings(self, shape=None, origin=None, show_stock=False):
+    def _reset_stock_settings(self, shape=None, origin=None, show_stock=False, simulate_cut=False):
         """Push a stock reset into the popup and viewer. Must already be main thread."""
         popup = getattr(self, "stock_settings_popup", None)
         if popup is not None:
-            settings = popup.reset_for_loaded_file(shape=shape, origin=origin, show_stock=show_stock)
+            settings = popup.reset_for_loaded_file(
+                shape=shape,
+                origin=origin,
+                show_stock=show_stock,
+                simulate_cut=simulate_cut,
+            )
         else:
             settings = default_settings()
             if shape is not None:
@@ -3266,7 +3272,7 @@ class Makera(RelativeLayout):
             if origin is not None:
                 settings["origin"] = origin.to_dict()
             settings["show_stock"] = bool(show_stock)
-            settings["simulate_cut"] = False
+            settings["simulate_cut"] = bool(simulate_cut) and bool(show_stock)
         return self._apply_stock_settings_impl(settings)
 
     def _should_auto_show_header_stock(self, cam_stock) -> bool:
@@ -3277,6 +3283,15 @@ class Makera(RelativeLayout):
             Config.get("carvera", "gcode_auto_show_stock")
             if Config.has_option("carvera", "gcode_auto_show_stock")
             else "1"
+        )
+        return raw not in ("0", "false", "False")
+
+    def _auto_simulate_cut_preference(self) -> bool:
+        """True when the viewer setting asks to simulate cuts on automatic stock."""
+        raw = (
+            Config.get("carvera", "gcode_auto_simulate_cut")
+            if Config.has_option("carvera", "gcode_auto_simulate_cut")
+            else "0"
         )
         return raw not in ("0", "false", "False")
 
@@ -3311,8 +3326,7 @@ class Makera(RelativeLayout):
         """Hide stock for a new file load (shape/origin filled later in load_end).
 
         Must run on the main thread — touches popup widgets and rebuilds GL meshes.
-        Uses the last *applied* snapshot (not live UI) so an open popup's dirty
-        or invalid edits are discarded rather than committed.
+        Starts from factory defaults so an open popup's dirty edits are discarded.
         """
         self._reset_stock_settings()
 
@@ -8176,8 +8190,15 @@ class Makera(RelativeLayout):
         self.gcode_viewer.dynamic_display = False
 
     # -----------------------------------------------------------------------
+    def _set_preview_slider_to_end(self) -> None:
+        """Park the preview timeline knob at the end of the loaded path."""
+        slider = getattr(self, "gcode_play_slider", None)
+        if slider is not None:
+            slider.value = slider.max
+
     def gcode_play_to_end(self):
         self.gcode_viewer.show_all()
+        self._set_preview_slider_to_end()
         self.gcode_playing = False
         self.gcode_viewer.dynamic_display = False
 
@@ -8436,6 +8457,7 @@ class Makera(RelativeLayout):
             self.gcode_cannot_visualise = False
             self.gcode_viewer_distance = self.gcode_viewer.get_total_distance()
             self.gcode_viewer.show_all()
+            self._set_preview_slider_to_end()
 
         self._push_path_visibility()
         self.refresh_gcode_color_legend()
@@ -8470,10 +8492,17 @@ class Makera(RelativeLayout):
             popup.rotary_mode = bool(app.has_4axis)
             popup.has_off_axis_y = bool(app.has_off_axis_y)
         metadata = getattr(self, "cam_metadata", None) or CamMetadata.empty()
+        show_stock = self._should_auto_show_header_stock(metadata.stock)
+        simulation_available = bool(self.gcode_viewer is not None and self.gcode_viewer.simulation_available())
         self._reset_stock_settings(
             shape=shape,
             origin=origin,
-            show_stock=self._should_auto_show_header_stock(metadata.stock),
+            show_stock=show_stock,
+            simulate_cut=should_auto_simulate_cut(
+                show_stock,
+                self._auto_simulate_cut_preference(),
+                simulation_available,
+            ),
         )
         self.apply_bed_settings()
         self.coord_popup.load_config()
@@ -9108,6 +9137,8 @@ def set_config_defaults(default_lang):
     # G-code viewer defaults
     if not Config.has_option("carvera", "gcode_auto_show_stock"):
         Config.set("carvera", "gcode_auto_show_stock", "1")
+    if not Config.has_option("carvera", "gcode_auto_simulate_cut"):
+        Config.set("carvera", "gcode_auto_simulate_cut", "0")
     if not Config.has_option("carvera", "gcode_viewer_ghost_paths"):
         Config.set("carvera", "gcode_viewer_ghost_paths", "0")
     if not Config.has_option("carvera", "gcode_highlight_enabled"):

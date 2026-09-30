@@ -36,6 +36,7 @@ from carveracontroller.addons.stock.stock_defaults import (
     DEFAULT_LENGTH_MM,
     DEFAULT_WIDTH_MM,
     default_settings,
+    mesh_while_playing_from_settings,
 )
 from carveracontroller.addons.stock.stock_geometry import StockBounds
 from carveracontroller.addons.stock.stock_material import (
@@ -581,28 +582,29 @@ class StockSettingsPopup(ModalView):
         self._update_rotary_origin_visibility()
         self._schedule_fit_popup_height()
 
-    def reset_for_loaded_file(self, shape=None, origin=None, show_stock: bool = False) -> dict:
-        """Reset session toggles for a newly loaded file; optionally replace shape/origin.
+    def reset_for_loaded_file(
+        self,
+        shape=None,
+        origin=None,
+        show_stock: bool = False,
+        simulate_cut: bool = False,
+    ) -> dict:
+        """Replace the session with factory stock defaults for a newly loaded file.
 
-        Cut simulation is always forced off. Stock preview is off unless
-        *show_stock* is true (CAM-header stock was applied).
+        Shape and origin are replaced when provided (auto stock for the file).
+        Stock preview follows *show_stock*. Cut simulation follows *simulate_cut*
+        only when stock is shown.
 
-        Used when a new G-code file loads. Must not read the live form — dirty
-        or invalid mid-edit fields would otherwise be committed (or wipe the
-        applied baseline via a defaults fallback).
-
-        Quality / playback-mesh flags are kept from the last applied snapshot.
-        When *shape* / *origin* are provided (auto-init), they overwrite the
-        previous file's dimensions; otherwise those fields are left as-is.
+        Must not read the live form — dirty or invalid mid-edit fields would
+        otherwise be committed.
         """
-        settings = dict(self._settings_snapshot)
-        settings["show_stock"] = bool(show_stock)
-        settings["simulate_cut"] = False
-        settings["material"] = normalize_stock_material(settings.get("material"))
+        settings = default_settings()
         if shape is not None:
             settings["shape"] = shape.to_dict()
         if origin is not None:
             settings["origin"] = origin.to_dict()
+        settings["show_stock"] = bool(show_stock)
+        settings["simulate_cut"] = bool(simulate_cut) and bool(show_stock)
         self._write_settings_to_ui(settings)
         self._settings_snapshot = dict(settings)
         return settings
@@ -673,7 +675,7 @@ class StockSettingsPopup(ModalView):
         ids.chk_show_stock.active = bool(settings.get("show_stock", False))
         ids.chk_simulate.active = bool(settings.get("simulate_cut", False))
         if "chk_mesh_while_playing" in ids:
-            ids.chk_mesh_while_playing.active = bool(settings.get("mesh_while_playing", False))
+            ids.chk_mesh_while_playing.active = mesh_while_playing_from_settings(settings)
         ids.spn_carver_resolution.text = self._label_for_value(
             self._carver_resolution_pairs,
             settings.get("carver_resolution", DEFAULT_CARVER_RESOLUTION),
