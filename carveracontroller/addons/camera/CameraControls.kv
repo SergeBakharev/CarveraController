@@ -58,7 +58,7 @@
             on_release:
                 root.adjust_open = not root.adjust_open
     CameraButtonSlot:
-        visible: app.camera_streaming
+        visible: app.camera_streaming and app.sd_videos_available
         TransparentButton:
             icon: 'data/file.png'
             tooltip_txt: tr._('Browse videos')

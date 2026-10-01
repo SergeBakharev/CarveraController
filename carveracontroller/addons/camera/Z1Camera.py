@@ -210,6 +210,12 @@ class Z1Camera:
                 if self._streaming and self._session == session:
                     logger.error("Camera stream failed: %s", exc)
                     retry = True
+            except Exception:
+                # Anything else used to kill the reader and leave the panel
+                # open with _streaming still true, so start() would not run again.
+                if self._streaming and self._session == session:
+                    logger.exception("Camera stream failed")
+                    retry = True
             finally:
                 if client is not None:
                     client.close()

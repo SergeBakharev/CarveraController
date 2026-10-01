@@ -403,6 +403,89 @@ def test_finish_machine_ls_clears_state_when_listing_is_current(monkeypatch):
     assert root.controller.lsCommand.call_count == 1
 
 
+def _videos_probe_host():
+    root = _machine_ls_host()
+    root.sd_videos_available = False
+    root._sd_videos_probe_inflight = False
+    root._sd_videos_probe_keep = None
+    return root
+
+
+def test_videos_probe_keeps_the_folder_the_browser_is_waiting_on(monkeypatch):
+    root = _videos_probe_host()
+    monkeypatch.setattr("carveracontroller.main.SHORT_LOAD_TIMEOUT", 3, raising=False)
+    monkeypatch.setattr("carveracontroller.main.App.get_running_app", lambda: None)
+    root._machine_ls_wanted_path = "/sd/gcodes"
+    root.process_loaded_dir = lambda path=None: Makera._note_sd_videos_listing(
+        root,
+        path,
+        [{"name": "videos", "is_dir": True}, {"name": "gcodes", "is_dir": True}],
+    )
+
+    Makera._run_sd_videos_probe(root)
+
+    assert root._machine_ls_wanted_path == "/sd/gcodes"
+    assert root._machine_ls_sent_path == "/sd"
+    assert root._sd_videos_probe_keep == "/sd/gcodes"
+    root.controller.lsCommand.assert_called_once_with("/sd")
+    root.controller.loadEOF = True
+    Makera._finish_machine_ls(root, root.short_load_time + 0.1)
+    assert root.controller.lsCommand.call_count == 1
+    assert root._machine_ls_wanted_path == "/sd/gcodes"
+    assert root.controller.loadNUM == 0
+    assert root.sd_videos_available is True
+    assert root._sd_videos_probe_inflight is False
+
+
+def test_videos_probe_does_not_replace_an_in_flight_listing(monkeypatch):
+    root = _videos_probe_host()
+    monkeypatch.setattr("carveracontroller.main.threading.Thread", _ImmediateThread)
+    Makera.request_machine_ls(root, "/sd/gcodes")
+    Makera.request_machine_ls(root, "/sd/gcodes/jobs")
+
+    Makera._run_sd_videos_probe(root)
+
+    assert root._machine_ls_wanted_path == "/sd/gcodes/jobs"
+    assert root._machine_ls_sent_path == "/sd/gcodes"
+    assert root.controller.lsCommand.call_count == 1
+    assert root._sd_videos_probe_inflight is False
+
+
+def test_videos_probe_yields_when_the_browser_asks_for_another_folder(monkeypatch):
+    root = _videos_probe_host()
+    monkeypatch.setattr("carveracontroller.main.SHORT_LOAD_TIMEOUT", 3, raising=False)
+    monkeypatch.setattr("carveracontroller.main.threading.Thread", _ImmediateThread)
+    root._machine_ls_wanted_path = "/sd/gcodes"
+    root.process_loaded_dir = lambda path=None: None
+
+    Makera._run_sd_videos_probe(root)
+    Makera.request_machine_ls(root, "/sd/gcodes/jobs")
+    root.controller.loadEOF = True
+    Makera._finish_machine_ls(root, root.short_load_time + 0.1)
+
+    assert root.controller.lsCommand.call_count == 2
+    root.controller.lsCommand.assert_called_with("/sd/gcodes/jobs")
+    assert root._machine_ls_sent_path == "/sd/gcodes/jobs"
+    assert root.controller.loadNUM == LOAD_DIR
+
+
+def test_videos_probe_failure_does_not_popup_over_the_current_folder(monkeypatch):
+    root = _videos_probe_host()
+    scheduled = []
+    monkeypatch.setattr("carveracontroller.main.SHORT_LOAD_TIMEOUT", 3, raising=False)
+    monkeypatch.setattr("carveracontroller.main.Clock.schedule_once", lambda cb, t: scheduled.append(cb))
+    root._machine_ls_wanted_path = "/sd/gcodes"
+    root.process_loaded_dir = lambda path=None: None
+
+    Makera._run_sd_videos_probe(root)
+    root.controller.loadERR = True
+    Makera._finish_machine_ls(root, root.short_load_time + 0.1)
+
+    assert scheduled == []
+    assert root.controller.loadNUM == 0
+    assert root._machine_ls_wanted_path == "/sd/gcodes"
+
+
 def test_extra_worker_does_not_override_ui_wanted_path(monkeypatch):
     root = _machine_ls_host()
     monkeypatch.setattr("carveracontroller.main.SHORT_LOAD_TIMEOUT", 3, raising=False)

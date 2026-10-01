@@ -4,8 +4,7 @@ The firmware appends this suffix before the closing ``>``:
 
 ``|E:<transfer>,<record-requested>,<recording>,<sd-used>,<sd-total>|OTA:<phase>,<progress>``
 
-Recording captures frames only while it has been requested and the machine is
-running a job. The red recording mark uses that combination. The camera
+The red recording mark follows the firmware ``recording`` field. The camera
 settings panel shows the ``|E:`` fields while it is open.
 """
 
@@ -16,9 +15,9 @@ from typing import Callable
 Translate = Callable[[str], str]
 
 
-def timelapse_capture_active(requested: int, machine_state: str) -> bool:
-    """True when timelapse is armed and the machine is running a job."""
-    return bool(requested) and machine_state == "Run"
+def timelapse_is_recording(recording: int) -> bool:
+    """True when the firmware reports that it is writing a timelapse."""
+    return bool(recording)
 
 
 def format_timelapse_status(

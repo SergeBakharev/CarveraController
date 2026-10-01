@@ -159,7 +159,7 @@ from carveracontroller.addons.stock.stock_estimate import auto_stock_for_loaded_
 from carveracontroller.addons.stock.ui.StockSettingsPopup import StockSettingsPopup
 from carveracontroller.documentation import resolve_documentation_url
 from carveracontroller.serial_listeners import dispatch_serial_line
-from carveracontroller.timelapse import format_timelapse_status, timelapse_capture_active
+from carveracontroller.timelapse import format_timelapse_status, timelapse_is_recording
 from carveracontroller.ui.config_run import CoordPopup
 from carveracontroller.ui.file_browser import FileBrowserPopup
 from carveracontroller.ui.file_browser.sources import (
@@ -2587,6 +2587,9 @@ class Makera(RelativeLayout):
     recent_remote_dir_list = []
     sd_videos_available = False
     _sd_videos_probe_inflight = False
+    # Folder the UI was waiting on when a background /sd probe started.
+    # None means the probe is the listing itself, so finish treats it normally.
+    _sd_videos_probe_keep = None
 
     lines = []
 
@@ -3086,7 +3089,7 @@ class Makera(RelativeLayout):
         """Open the file browser on the machine Videos folder."""
         app = App.get_running_app()
         unavailable = app.state not in ("Idle", NOT_CONNECTED) and not app.playing
-        if unavailable or self._is_popup_open():
+        if unavailable or self._is_popup_open() or not self.sd_videos_available:
             return False
         self.file_popup.open_for_videos()
         return True
@@ -3809,18 +3812,28 @@ class Makera(RelativeLayout):
         app = App.get_running_app()
         if app is None or app.state != "Idle":
             return
-        if self.backing_up_config or self.downloading_config:
+        if self.sd_videos_available or self.backing_up_config or self.downloading_config:
             return
         if machine_path_key(getattr(self.file_popup, "machine_dir", "")) == "/sd":
             return
         threading.Thread(target=self._run_sd_videos_probe, daemon=True).start()
 
     def _run_sd_videos_probe(self):
+        """List /sd without taking the folder the file browser is waiting on.
+
+        ``_machine_ls_wanted_path`` stays whatever the UI asked for. Finish
+        still chains a newer request, and a probe that nobody interrupted
+        does not list that folder a second time.
+        """
         with self._machine_ls_lock:
-            if self.controller.loadNUM == LOAD_DIR or self._sd_videos_probe_inflight:
+            if self.controller.loadNUM == LOAD_DIR or self._sd_videos_probe_inflight or self.sd_videos_available:
                 return
             self._sd_videos_probe_inflight = True
-            self._machine_ls_wanted_path = "/sd"
+            wanted = self._machine_ls_wanted_path
+            if wanted and machine_path_key(wanted) != "/sd":
+                self._sd_videos_probe_keep = wanted
+            else:
+                self._sd_videos_probe_keep = None
             self._start_machine_ls("/sd")
 
     def _note_sd_videos_listing(self, listed_path, file_list):
@@ -3830,6 +3843,9 @@ class Makera(RelativeLayout):
         if not file_list:
             return
         self.sd_videos_available = listing_has_directory(file_list, "videos")
+        app = App.get_running_app()
+        if app is not None:
+            app.sd_videos_available = self.sd_videos_available
 
     # -----------------------------------------------------------------------
     def _remember_connection_method(self, method):
@@ -5573,8 +5589,18 @@ class Makera(RelativeLayout):
             timed_out = now - self.short_load_time > SHORT_LOAD_TIMEOUT
             sent_path = self._machine_ls_sent_path
             wanted_path = self._machine_ls_wanted_path
+            keep = self._sd_videos_probe_keep
+            self._sd_videos_probe_keep = None
             superseded = machine_ls_is_superseded(sent_path, wanted_path)
-            if not superseded:
+            # A background /sd probe is not the folder the UI asked for. Leave
+            # that folder alone unless a newer request arrived while probing.
+            background_probe = keep is not None and machine_path_key(sent_path or "") == "/sd"
+            if background_probe and machine_path_key(wanted_path or "") == machine_path_key(keep):
+                superseded = False
+                report_failure = False
+            else:
+                report_failure = not superseded
+            if report_failure:
                 if self.controller.loadERR:
                     Clock.schedule_once(partial(self.loadError, tr._("Error loading dir") + " '%s'!" % (sent_path,)), 0)
                 elif timed_out:
@@ -6656,9 +6682,16 @@ class Makera(RelativeLayout):
                     app.supports_camera = False
                     self.sd_videos_available = False
                     self._sd_videos_probe_inflight = False
+                    self._sd_videos_probe_keep = None
+                    app.sd_videos_available = False
                     CNC.vars["tl_status"] = 0
+                    CNC.vars["tl_transfer"] = 0
                     CNC.vars["tl_requested"] = 0
                     CNC.vars["tl_recording"] = 0
+                    CNC.vars["tl_sd_used"] = 0
+                    CNC.vars["tl_sd_total"] = 0
+                    CNC.vars["ota_phase"] = 0
+                    CNC.vars["ota_progress"] = 0
                     self.camera_checked = False
                     self.camera_probe += 1  # discard the result of a probe still in flight
                     self.camera_stream.stop()
@@ -7114,10 +7147,11 @@ class Makera(RelativeLayout):
             logger.error(sys.exc_info()[1])
 
     def _refresh_timelapse_indicator(self, app):
-        """Red recording mark while timelapse is armed and the machine is running."""
+        """Red recording mark while the firmware reports that it is recording."""
         has_status = bool(CNC.vars.get("tl_status")) and app.state not in (NOT_CONNECTED, "N/A")
         requested = int(CNC.vars.get("tl_requested") or 0)
-        active = has_status and timelapse_capture_active(requested, app.state)
+        recording = int(CNC.vars.get("tl_recording") or 0)
+        active = has_status and timelapse_is_recording(recording)
         if app.timelapse_recording != active:
             app.timelapse_recording = active
         if app.timelapse_status != has_status:
@@ -7129,7 +7163,7 @@ class Makera(RelativeLayout):
         text = format_timelapse_status(
             transfer=int(CNC.vars.get("tl_transfer") or 0),
             requested=requested,
-            recording=int(CNC.vars.get("tl_recording") or 0),
+            recording=recording,
             sd_used=int(CNC.vars.get("tl_sd_used") or 0),
             sd_total=int(CNC.vars.get("tl_sd_total") or 0),
             translate=tr._,
@@ -8991,6 +9025,7 @@ class MakeraApp(App):
     supports_camera = BooleanProperty(False)
     camera_streaming = BooleanProperty(False)
     camera_reconnecting = BooleanProperty(False)
+    sd_videos_available = BooleanProperty(False)
     timelapse_recording = BooleanProperty(False)
     timelapse_status = BooleanProperty(False)
     timelapse_status_text = StringProperty("")
