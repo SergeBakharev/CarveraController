@@ -5072,20 +5072,34 @@ class Makera(RelativeLayout):
         threading.Thread(target=self._download_files_worker, args=(jobs,), daemon=True).start()
 
     def _download_files_worker(self, jobs):
-        for index, (remote_path, dest) in enumerate(jobs):
+        for remote_path, dest in jobs:
             if getattr(self, "_batch_stop", False):
                 break
-            self._batch_index = index
-            Clock.schedule_once(lambda _dt, i=index: self._show_batch_file(i), 0)
             self.downloading_file = remote_path
             self.downloading_size = self.file_popup._size_for_path(remote_path)
             self.downloading_config = False
             result = self.doDownload(remote_path, dest, show_progress=True, open_after=False)
             if result is None or result < 0 or getattr(self, "_batch_stop", False):
                 break
-            self._batch_completed_bytes += self._batch_files[index][1] if index < len(self._batch_files) else 0
-            self._batch_index = index + 1
+            # Progress events are already queued. Count the file on the UI thread
+            # before the next download posts progress, or the finished file's final
+            # percent is painted onto the next file.
+            self._finish_batch_file_on_ui()
         Clock.schedule_once(self._end_batch_progress, 0)
+
+    def _finish_batch_file_on_ui(self):
+        done = threading.Event()
+
+        def _finish(_dt):
+            try:
+                self._complete_current_batch_file()
+            except Exception:
+                logger.exception("Could not update batch download progress")
+            finally:
+                done.set()
+
+        Clock.schedule_once(_finish, 0)
+        done.wait()
 
     def save_machine_file_to_device(self, remote_path, dest):
         if not remote_path or not dest:
@@ -5707,27 +5721,36 @@ class Makera(RelativeLayout):
     def downloadCallback(self, remote_path, packet_size, success_count, error_count):
         """Progress callback for legacy XMODEM downloads."""
         packets = self.downloading_size / packet_size + (1 if self.downloading_size % packet_size > 0 else 0)
-        Clock.schedule_once(
-            partial(
-                self.progressUpdate, success_count * 100.0 / packets, tr._("Downloading") + " \n%s" % remote_path, False
-            ),
-            0,
-        )
+        self._post_download_progress(success_count * 100.0 / packets, remote_path)
 
     def downloadCallback_framed(self, seq_rev, totalpackets):
         """Progress callback for Makera framed downloads (seq, total)."""
         if not totalpackets:
             return
         remote_path = getattr(self, "downloading_file", "") or ""
+        self._post_download_progress(seq_rev * 100.0 / totalpackets, remote_path)
+
+    def _post_download_progress(self, percent, remote_path):
+        if getattr(self, "_batch_kind", None) == "download":
+            # Bind the file this packet belongs to. The clock can run the update
+            # after that file has been completed and the next one has started.
+            index = getattr(self, "_batch_index", 0)
+            Clock.schedule_once(
+                lambda _dt, i=index, p=percent: self._apply_download_batch_progress(i, p),
+                0,
+            )
+            return
         Clock.schedule_once(
-            partial(
-                self.progressUpdate,
-                seq_rev * 100.0 / totalpackets,
-                tr._("Downloading") + " \n%s" % remote_path,
-                False,
-            ),
+            partial(self.progressUpdate, percent, tr._("Downloading") + " \n%s" % remote_path, False),
             0,
         )
+
+    def _apply_download_batch_progress(self, index, percent):
+        if getattr(self, "_batch_kind", None) != "download":
+            return
+        if index != getattr(self, "_batch_index", None):
+            return
+        self._apply_batch_file_percent(percent)
 
     # -----------------------------------------------------------------------
     def cancelSelectFile(self):

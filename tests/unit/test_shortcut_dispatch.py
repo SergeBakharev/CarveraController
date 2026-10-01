@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -420,6 +422,149 @@ def test_batch_progress_uses_byte_sizes():
     assert batch_percents(0, 0, 40, 0) == (40, 0.0)
     assert format_byte_count(1536) == "1.5 KB"
     assert format_byte_count(2 * 1024 * 1024) == "2.0 MB"
+
+
+def _bind_makera(root, *names):
+    for name in names:
+        setattr(root, name, getattr(Makera, name).__get__(root))
+
+
+def _batch_download_root():
+    popup = SimpleNamespace(
+        file_text="",
+        file_value=0,
+        batch_text="",
+        batch_value=0,
+        _is_open=True,
+        open=Mock(),
+        dismiss=Mock(),
+        ids={},
+    )
+    root = SimpleNamespace(
+        batch_progress_popup=popup,
+        _batch_kind="download",
+        _batch_files=[("a.nc", 1000), ("b.nc", 1000)],
+        _batch_index=0,
+        _batch_completed_bytes=0,
+        _batch_total_bytes=2000,
+        _batch_stop=False,
+        _batch_file_active=False,
+        downloading_file="",
+        downloading_size=1000,
+        downloading_config=False,
+        file_popup=SimpleNamespace(_size_for_path=lambda _path: 1000),
+    )
+    _bind_makera(
+        root,
+        "_post_download_progress",
+        "_apply_download_batch_progress",
+        "_apply_batch_file_percent",
+        "_complete_current_batch_file",
+        "_finish_batch_file_on_ui",
+        "_end_batch_progress",
+        "_download_files_worker",
+    )
+    return root, popup
+
+
+def test_stale_download_progress_does_not_fill_the_next_file():
+    root, popup = _batch_download_root()
+
+    Makera._apply_batch_file_percent(root, 100)
+    assert popup.file_value == 100
+    assert popup.batch_value == 50
+
+    Makera._complete_current_batch_file(root)
+    assert root._batch_index == 1
+    assert root._batch_completed_bytes == 1000
+    assert popup.file_value == 0
+    assert popup.batch_value == 50
+
+    Makera._apply_download_batch_progress(root, 0, 100)
+    assert popup.file_value == 0
+    assert popup.batch_value == 50
+
+    Makera._apply_download_batch_progress(root, 1, 25)
+    assert popup.file_value == 25
+    assert popup.batch_value == 62.5
+
+
+def test_batch_download_worker_counts_a_file_only_after_its_progress_is_applied(monkeypatch):
+    root, popup = _batch_download_root()
+    pending = []
+    pending_lock = threading.Lock()
+
+    def schedule_once(callback, _timeout=0):
+        with pending_lock:
+            pending.append(callback)
+
+    monkeypatch.setattr("carveracontroller.main.Clock.schedule_once", schedule_once)
+
+    entered = threading.Event()
+    release = threading.Event()
+    calls = {"n": 0}
+
+    def fake_download(remote_path, _dest, show_progress=True, open_after=True):
+        Makera.downloadCallback(root, remote_path, 1000, 1, 0)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            entered.set()
+            release.wait(2)
+        return 1
+
+    root.doDownload = fake_download
+    worker = threading.Thread(target=lambda: root._download_files_worker([("a.nc", "a"), ("b.nc", "b")]))
+    worker.start()
+    try:
+        assert entered.wait(2)
+        assert root._batch_index == 0
+        assert root._batch_completed_bytes == 0
+        release.set()
+
+        end = time.monotonic() + 2
+        while time.monotonic() < end:
+            with pending_lock:
+                if len(pending) >= 2:
+                    break
+            time.sleep(0.005)
+        else:
+            raise AssertionError("file completion was not queued")
+        assert root._batch_completed_bytes == 0
+        assert root._batch_index == 0
+
+        with pending_lock:
+            progress_cb, finish_cb = pending[0], pending[1]
+            del pending[:2]
+        progress_cb(0)
+        assert popup.file_value == 100
+        assert popup.batch_value == 50
+        finish_cb(0)
+        assert root._batch_index == 1
+        assert root._batch_completed_bytes == 1000
+        assert popup.file_value == 0
+        assert popup.batch_value == 50
+
+        end = time.monotonic() + 2
+        while worker.is_alive() and time.monotonic() < end:
+            with pending_lock:
+                queued = pending[:]
+                pending.clear()
+            for callback in queued:
+                callback(0)
+            time.sleep(0.005)
+    finally:
+        release.set()
+        end = time.monotonic() + 2
+        while worker.is_alive() and time.monotonic() < end:
+            with pending_lock:
+                queued = pending[:]
+                pending.clear()
+            for callback in queued:
+                callback(0)
+            time.sleep(0.005)
+        worker.join(0.2)
+    assert not worker.is_alive()
+    assert popup.batch_value == 100
 
 
 def test_start_job_applicability_and_opening():
