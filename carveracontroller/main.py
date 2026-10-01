@@ -4483,12 +4483,16 @@ class Makera(RelativeLayout):
                     self.controller.loadNUM = 0
                     self.controller.loadEOF = False
                     self.controller.loadERR = False
+                    if not delete_failed:
+                        self._remote_deleted_paths.append(deleting_file)
                     if not delete_failed and getattr(self, "pending_remote_delete_files", []):
                         Clock.schedule_once(self.removeNextRemoteFile, 0)
                     else:
+                        removed = list(getattr(self, "_remote_deleted_paths", []))
+                        self._remote_deleted_paths = []
                         self.pending_remote_delete_files = []
                         self.deleting_remote_file = ""
-                        Clock.schedule_once(self.file_popup.refresh_machine, 0)
+                        Clock.schedule_once(lambda _dt, paths=removed: self._after_remote_delete(paths), 0)
             if self.controller.loadNUM == LOAD_MV:
                 if self.controller.loadEOF or self.controller.loadERR or t - self.short_load_time > SHORT_LOAD_TIMEOUT:
                     if self.controller.loadERR:
@@ -5951,12 +5955,19 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def removeRemoteFile(self, filename):
         self.pending_remote_delete_files = []
+        self._remote_deleted_paths = []
         self.startRemoteDelete(filename)
 
     # -----------------------------------------------------------------------
     def removeRemoteFiles(self, filenames):
         self.pending_remote_delete_files = list(filenames)
+        self._remote_deleted_paths = []
         self.removeNextRemoteFile()
+
+    def _after_remote_delete(self, paths, *_args):
+        if paths:
+            self.file_popup.forget_selected_paths(paths)
+        self.file_popup.refresh_machine()
 
     # -----------------------------------------------------------------------
     def removeNextRemoteFile(self, *args):

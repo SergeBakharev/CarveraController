@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 from carveracontroller.Controller import LOAD_DIR
 from carveracontroller.main import Makera
+from carveracontroller.ui.file_browser.FileBrowserPopup import FileBrowserPopup
 from carveracontroller.ui.file_browser.sources import (
     ICON_FILE,
     ICON_FIRMWARE,
@@ -807,6 +808,74 @@ def test_action_state_machine_disconnected_and_multi():
         selected_file_count=2,
     )
     assert busy_files.show_download is False
+
+
+def _selection_popup(*, entries, selected):
+    popup = SimpleNamespace(
+        location=LOCATION_MACHINE,
+        multi_select_mode=True,
+        selected_device_paths=["/tmp/local.nc"],
+        selected_device_file="/tmp/local.nc",
+        selected_machine_paths=list(selected),
+        selected_machine_file=selected[-1] if selected else "",
+        selected_machine_filesize=1,
+        _highlight_path=selected[-1] if selected else "",
+        _machine_entries=list(entries),
+        _device_entries=[],
+        ids={},
+    )
+    for name in (
+        "_selected_paths",
+        "_apply_selected_paths",
+        "_current_entries",
+        "_path_is_dir",
+        "_size_for_path",
+        "forget_selected_paths",
+        "_prune_missing_selection",
+    ):
+        setattr(popup, name, getattr(FileBrowserPopup, name).__get__(popup))
+    popup._rebuild_list = lambda *args, **kwargs: None
+    popup._sync_chrome = lambda: None
+    return popup
+
+
+def test_deleted_multi_selection_is_dropped_before_the_listing_updates():
+    entries = [
+        {"path": "/sd/a.nc", "is_dir": False, "size": 10},
+        {"path": "/sd/b.nc", "is_dir": False, "size": 10},
+        {"path": "/sd/keep.nc", "is_dir": False, "size": 4},
+    ]
+    popup = _selection_popup(entries=entries, selected=["/sd/a.nc", "/sd/b.nc", "/sd/keep.nc"])
+    popup.forget_selected_paths(["/sd/a.nc", "/sd/b.nc"])
+    assert popup.selected_machine_paths == ["/sd/keep.nc"]
+    assert popup.selected_machine_file == "/sd/keep.nc"
+    assert popup.multi_select_mode is True
+    assert popup.selected_device_paths == ["/tmp/local.nc"]
+
+    popup.forget_selected_paths(["/sd/keep.nc"])
+    assert popup.selected_machine_paths == []
+    assert popup.selected_machine_file == ""
+    assert popup._highlight_path == ""
+    assert popup.multi_select_mode is False
+
+
+def test_reopen_drops_selection_missing_from_the_listing():
+    popup = _selection_popup(
+        entries=[{"path": "/sd/keep.nc", "is_dir": False, "size": 4}],
+        selected=["/sd/a.nc", "/sd/keep.nc"],
+    )
+    popup.multi_select_mode = False
+    popup._highlight_path = "/sd/a.nc"
+    popup._prune_missing_selection()
+    assert popup.selected_machine_paths == ["/sd/keep.nc"]
+    assert popup.selected_machine_file == "/sd/keep.nc"
+    assert popup._highlight_path == ""
+    assert popup.selected_device_paths == ["/tmp/local.nc"]
+
+    popup._machine_entries = []
+    popup._prune_missing_selection()
+    assert popup.selected_machine_paths == []
+    assert popup.multi_select_mode is False
 
 
 def test_action_state_ios_device_uses_browse():

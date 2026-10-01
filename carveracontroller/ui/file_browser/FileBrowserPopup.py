@@ -308,6 +308,7 @@ class FileBrowserPopup(ModalView):
             self.location = LOCATION_MACHINE if app is not None and app.state != "N/A" else LOCATION_DEVICE
         self._restore_device_dir()
         self._restore_machine_dir()
+        self._prune_missing_selection()
         self.open()
         self._apply_location(refresh=True)
 
@@ -724,6 +725,7 @@ class FileBrowserPopup(ModalView):
             if reset_scroll:
                 rv.scroll_y = 1
             return
+        self._prune_missing_selection()
         selected_paths = self._selected_paths()
         entries = self._current_entries()
         self._fill_entry_thumbnails(entries)
@@ -761,6 +763,37 @@ class FileBrowserPopup(ModalView):
         self.selected_device_paths = []
         self.selected_machine_paths = []
         self._last_range_index = -1
+
+    def forget_selected_paths(self, paths) -> None:
+        """Drop paths that were deleted before the directory listing catches up."""
+        gone = {os.path.normpath(path) for path in paths if path}
+        if not gone:
+            return
+        kept = [path for path in self._selected_paths() if path and os.path.normpath(path) not in gone]
+        if self._highlight_path and os.path.normpath(self._highlight_path) in gone:
+            self._highlight_path = ""
+        self._apply_selected_paths(kept)
+        if not kept:
+            self.multi_select_mode = False
+            self._highlight_path = ""
+        self._rebuild_list()
+        self._sync_chrome()
+
+    def _prune_missing_selection(self) -> None:
+        """Drop a selection whose files are no longer in this directory."""
+        present = {os.path.normpath(entry.get("path") or "") for entry in self._current_entries() if entry.get("path")}
+        paths = self._selected_paths()
+        kept = [path for path in paths if path and os.path.normpath(path) in present]
+        highlight = self._highlight_path
+        if highlight and os.path.normpath(highlight) not in present:
+            highlight = ""
+        if kept == paths and highlight == self._highlight_path:
+            return
+        self._highlight_path = highlight
+        self._apply_selected_paths(kept)
+        if not kept:
+            self.multi_select_mode = False
+            self._highlight_path = ""
 
     def _on_open_folder(self, path: str):
         if self.location == LOCATION_DEVICE:
