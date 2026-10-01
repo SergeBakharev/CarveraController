@@ -2763,7 +2763,7 @@ class Makera(RelativeLayout):
         self.camera_stream = Z1Camera(
             on_frame=self._show_camera_frame,
             on_streaming=self._set_camera_streaming,
-            on_error=partial(self.show_message_popup, btn_disabled=False),
+            on_reconnecting=self._set_camera_reconnecting,
         )
         self.ids.camera_splitter.bind(collapsed=self._on_camera_splitter_collapsed)
         self.ids.camera_splitter.collapse()
@@ -8367,10 +8367,19 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def _set_camera_streaming(self, streaming):
+        """Collapse the panel when the camera session actually ends.
+
+        A dropped socket stays streaming and reports reconnecting instead, so a
+        blip does not come through here.
+        """
         App.get_running_app().camera_streaming = streaming
         splitter = self.ids.get("camera_splitter")
         if splitter is not None and not streaming and not splitter.collapsed:
             splitter.collapse()
+
+    # -----------------------------------------------------------------------
+    def _set_camera_reconnecting(self, reconnecting):
+        App.get_running_app().camera_reconnecting = reconnecting
 
     # -----------------------------------------------------------------------
     def clear_selection(self):
@@ -8981,6 +8990,7 @@ class MakeraApp(App):
     is_community_firmware = BooleanProperty(False)
     supports_camera = BooleanProperty(False)
     camera_streaming = BooleanProperty(False)
+    camera_reconnecting = BooleanProperty(False)
     timelapse_recording = BooleanProperty(False)
     timelapse_status = BooleanProperty(False)
     timelapse_status_text = StringProperty("")

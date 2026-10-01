@@ -1,5 +1,6 @@
 """Unit tests for file browser listing, grouping, and action state."""
 
+import importlib
 import os
 import threading
 from queue import Queue
@@ -8,6 +9,9 @@ from unittest.mock import MagicMock
 
 from carveracontroller.Controller import LOAD_DIR
 from carveracontroller.main import Makera
+from carveracontroller.ui.file_browser.FileBrowserPopup import FileBrowserPopup
+
+file_browser_popup = importlib.import_module("carveracontroller.ui.file_browser.FileBrowserPopup")
 from carveracontroller.ui.file_browser.sources import (
     ICON_FILE,
     ICON_FIRMWARE,
@@ -26,9 +30,11 @@ from carveracontroller.ui.file_browser.sources import (
     file_type_label,
     group_and_sort_entries,
     is_compact_width,
+    is_gcode_machine_dir,
     is_job_file,
     is_machine_root,
     is_under_machine_root,
+    is_videos_dir,
     list_device_directory,
     listing_has_directory,
     local_child_path,
@@ -227,6 +233,50 @@ def test_machine_root_and_parent():
     assert is_under_machine_root("\\sd\\videos")
     assert is_under_machine_root("/sd") is False
     assert is_under_machine_root("/tmp/gcodes") is False
+    assert is_gcode_machine_dir("/sd/gcodes")
+    assert is_gcode_machine_dir("/sd/gcodes/jobs")
+    assert is_gcode_machine_dir("\\sd\\gcodes\\jobs")
+    assert is_gcode_machine_dir("/sd/videos") is False
+    assert is_videos_dir("/sd/videos")
+    assert is_videos_dir("/sd/videos/clip")
+    assert is_videos_dir("\\sd\\videos")
+    assert is_videos_dir("/sd/gcodes") is False
+
+
+def test_videos_visit_does_not_replace_the_gcodes_folder(monkeypatch):
+    remembered = []
+    makera = SimpleNamespace(
+        recent_remote_dir_list=["/sd/videos", "/sd/gcodes/jobs"],
+        update_recent_remote_dir_list=remembered.append,
+        fetch_recent_remote_dir_list=lambda: None,
+    )
+    monkeypatch.setattr(file_browser_popup, "_makera", lambda: makera)
+    popup = SimpleNamespace(firmware_mode=False, machine_dir="/sd/videos")
+
+    FileBrowserPopup._remember_machine_dir(popup)
+    popup.machine_dir = "/sd/videos/clip"
+    FileBrowserPopup._remember_machine_dir(popup)
+    assert remembered == []
+
+    FileBrowserPopup._restore_machine_dir(popup)
+    assert popup.machine_dir == "/sd/gcodes/jobs"
+
+    popup.machine_dir = "/sd/gcodes/jobs"
+    FileBrowserPopup._remember_machine_dir(popup)
+    assert remembered == ["/sd/gcodes/jobs"]
+
+
+def test_jobs_browser_falls_back_to_gcodes_when_only_videos_was_remembered(monkeypatch):
+    makera = SimpleNamespace(
+        recent_remote_dir_list=["/sd/videos/clip"],
+        fetch_recent_remote_dir_list=lambda: None,
+    )
+    monkeypatch.setattr(file_browser_popup, "_makera", lambda: makera)
+    popup = SimpleNamespace(machine_dir="/sd/videos")
+
+    FileBrowserPopup._restore_machine_dir(popup)
+
+    assert popup.machine_dir == "/sd/gcodes"
 
 
 def test_videos_location_is_offered_only_when_the_directory_exists():

@@ -15,6 +15,7 @@
 #:import play_progress_bar carveracontroller.ui.PlayProgressBar
 #:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
 #:import CameraView carveracontroller.addons.camera.CameraView.CameraView
+#:import CameraReconnectSpinner carveracontroller.addons.camera.CameraView.CameraReconnectSpinner
 #:import LASER_TOOL_NUMBER carveracontroller.CNC.LASER_TOOL_NUMBER
 #:import ZPROBE_TOOL_NUMBER carveracontroller.CNC.ZPROBE_TOOL_NUMBER
 #:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
@@ -3298,6 +3299,10 @@
                                             brightness: app.camera_brightness
                                             contrast: app.camera_contrast
                                             gamma: app.camera_gamma
+                                        CameraReconnectSpinner:
+                                            active: app.camera_reconnecting
+                                            pos: self.parent.pos
+                                            size: self.parent.size
                                         CameraControls:
                                             id: camera_controls
                                             pos_hint: {'x': 0, 'top': 1}

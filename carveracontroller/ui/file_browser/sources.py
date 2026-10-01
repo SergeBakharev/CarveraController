@@ -95,13 +95,29 @@ def is_machine_root(path: str) -> bool:
     )
 
 
+def _machine_root_name(path: str) -> str:
+    raw = (path or "").replace("\\", "/")
+    parts = [part for part in raw.split("/") if part and part != "."]
+    if len(parts) >= 2 and parts[0].lower() == "sd":
+        return parts[1].lower()
+    return ""
+
+
+def is_gcode_machine_dir(path: str) -> bool:
+    """True for /sd/gcodes and folders beneath it."""
+    return _machine_root_name(path) == "gcodes"
+
+
+def is_videos_dir(path: str) -> bool:
+    """True for /sd/videos and folders beneath it."""
+    return _machine_root_name(path) == "videos"
+
+
 def is_under_machine_root(path: str) -> bool:
     """True for /sd/gcodes, /sd/videos, and folders beneath either."""
     if is_machine_root(path):
         return True
-    raw = (path or "").replace("\\", "/")
-    parts = [part for part in raw.split("/") if part and part != "."]
-    return len(parts) >= 2 and parts[0].lower() == "sd" and parts[1].lower() in _MACHINE_ROOT_NAMES
+    return _machine_root_name(path) in _MACHINE_ROOT_NAMES
 
 
 def listing_has_directory(entries: Iterable, name: str) -> bool:
