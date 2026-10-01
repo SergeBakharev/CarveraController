@@ -113,6 +113,15 @@ def is_videos_dir(path: str) -> bool:
     return _machine_root_name(path) == "videos"
 
 
+def is_machine_video_path(path: str) -> bool:
+    """True for /sd/video, /sd/videos, and anything beneath either.
+
+    The Makera ESP32 advertises an MD5 for these downloads that does not match
+    the file, even when the bytes are intact.
+    """
+    return _machine_root_name(path) in ("video", "videos")
+
+
 def is_under_machine_root(path: str) -> bool:
     """True for /sd/gcodes, /sd/videos, and folders beneath either."""
     if is_machine_root(path):

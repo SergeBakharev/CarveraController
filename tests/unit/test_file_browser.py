@@ -1,6 +1,7 @@
 """Unit tests for file browser listing, grouping, and action state."""
 
 import importlib
+import logging
 import os
 import threading
 from queue import Queue
@@ -33,6 +34,7 @@ from carveracontroller.ui.file_browser.sources import (
     is_gcode_machine_dir,
     is_job_file,
     is_machine_root,
+    is_machine_video_path,
     is_under_machine_root,
     is_videos_dir,
     list_device_directory,
@@ -241,6 +243,11 @@ def test_machine_root_and_parent():
     assert is_videos_dir("/sd/videos/clip")
     assert is_videos_dir("\\sd\\videos")
     assert is_videos_dir("/sd/gcodes") is False
+    assert is_machine_video_path("/sd/videos/clip.avi")
+    assert is_machine_video_path("/sd/video/clip.avi")
+    assert is_machine_video_path("\\sd\\videos\\job\\clip.avi")
+    assert is_machine_video_path("/sd/gcodes/part.nc") is False
+    assert is_machine_video_path("/sd/videocache/clip.avi") is False
 
 
 def test_videos_visit_does_not_replace_the_gcodes_folder(monkeypatch):
@@ -650,6 +657,50 @@ def test_config_backup_md5_mismatch_keeps_file(monkeypatch, tmp_path):
     assert messages == []
 
 
+def test_video_download_md5_mismatch_keeps_the_file_and_warns(monkeypatch, tmp_path, caplog):
+    root = _download_host(tmp_path)
+    root.backing_up_config = False
+    root.controller.stream.modem = SimpleNamespace(download_md5_failed=True)
+    root.controller.stream.download.side_effect = _download_bytes_then_fail
+    messages = _collect_messages(root)
+    scheduled = []
+    monkeypatch.setattr("carveracontroller.main.App.get_running_app", lambda: None)
+    monkeypatch.setattr("carveracontroller.main.Clock.schedule_once", lambda cb, t=0: scheduled.append(cb))
+
+    local_path = str(tmp_path / "clip.avi")
+    with caplog.at_level(logging.WARNING, logger="carveracontroller.main"):
+        result = Makera.doDownload(root, "/sd/videos/clip.avi", local_path, show_progress=False, open_after=False)
+    for callback in scheduled:
+        callback(0)
+
+    assert result > 0
+    with open(local_path, encoding="utf-8") as handle:
+        assert handle.read() == "factory-config"
+    assert messages == []
+    warnings = [record.message for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("known issue with video file downloads from the Makera ESP32" in message for message in warnings)
+    assert any("/sd/videos/clip.avi" in message for message in warnings)
+    root._decompress_downloaded_file_in_place.assert_called_once_with(local_path, integrity_label="/sd/videos/clip.avi")
+
+
+def test_singular_video_dir_md5_mismatch_is_the_same_known_issue(monkeypatch, tmp_path, caplog):
+    root = _download_host(tmp_path)
+    root.controller.stream.modem = SimpleNamespace(download_md5_failed=True)
+    root.controller.stream.download.side_effect = _download_bytes_then_fail
+    messages = _collect_messages(root)
+    monkeypatch.setattr("carveracontroller.main.App.get_running_app", lambda: None)
+    monkeypatch.setattr("carveracontroller.main.Clock.schedule_once", lambda *args, **kwargs: None)
+
+    local_path = str(tmp_path / "clip.avi")
+    with caplog.at_level(logging.WARNING, logger="carveracontroller.main"):
+        result = Makera.doDownload(root, "/sd/video/clip.avi", local_path, show_progress=False, open_after=False)
+
+    assert result > 0
+    assert os.path.exists(local_path)
+    assert messages == []
+    assert any("Makera ESP32" in record.message for record in caplog.records)
+
+
 def test_download_md5_mismatch_still_fails_outside_backup(monkeypatch, tmp_path):
     root = _download_host(tmp_path)
     root.backing_up_config = False
@@ -686,6 +737,23 @@ def test_backup_deferred_md5_mismatch_keeps_decompressed_file(monkeypatch, tmp_p
     assert path.read_text(encoding="utf-8") == "hello"
     assert root._backup_md5_mismatches == ["/sd/config.txt"]
     assert scheduled == []
+
+
+def test_deferred_video_md5_mismatch_keeps_the_file(monkeypatch, tmp_path, caplog):
+    root = Makera.__new__(Makera)
+    root.backing_up_config = False
+    path = tmp_path / "clip.avi"
+    path.write_text("frames", encoding="utf-8")
+    root.controller = SimpleNamespace(stream=SimpleNamespace(modem=SimpleNamespace(deferred_download_md5="0" * 32)))
+    root.show_message_popup = MagicMock()
+    scheduled = []
+    monkeypatch.setattr("carveracontroller.main.Clock.schedule_once", lambda cb, t=0: scheduled.append(cb))
+
+    with caplog.at_level(logging.WARNING, logger="carveracontroller.main"):
+        assert Makera._verify_deferred_download_md5(root, str(path), label="/sd/video/clip.avi") is True
+    assert path.read_text(encoding="utf-8") == "frames"
+    assert scheduled == []
+    assert any("Makera ESP32" in record.message for record in caplog.records)
 
 
 def test_deferred_md5_mismatch_still_rejects_outside_backup(monkeypatch, tmp_path):

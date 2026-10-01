@@ -165,6 +165,7 @@ from carveracontroller.ui.file_browser import FileBrowserPopup
 from carveracontroller.ui.file_browser.sources import (
     LOCATION_DEVICE,
     is_job_file,
+    is_machine_video_path,
     listing_has_directory,
     local_child_path,
     local_sibling_path,
@@ -4807,6 +4808,12 @@ class Makera(RelativeLayout):
         self.fill_remote_dir_callback = None
         self.file_popup.restore_machine_root()
 
+    def _warn_video_download_md5(self, remote_path):
+        logger.warning(
+            "Kept %s despite an MD5 mismatch. This is a known issue with video file downloads from the Makera ESP32.",
+            remote_path,
+        )
+
     def _note_config_backup_md5_mismatch(self, filename):
         name = str(filename or "").strip()
         if not name:
@@ -5123,9 +5130,23 @@ class Makera(RelativeLayout):
 
         self.heartbeat_time = time.time()
 
+        # The Makera ESP32 advertises a digest for /sd/video and /sd/videos files
+        # that does not match the bytes. The file is fine; keep it and warn.
+        if (
+            download_result is None
+            and md5_failed
+            and is_machine_video_path(remote_path)
+            and os.path.exists(tmp_filename)
+        ):
+            self._warn_video_download_md5(remote_path)
+            try:
+                kept_size = os.path.getsize(tmp_filename)
+            except OSError:
+                kept_size = 1
+            download_result = kept_size if kept_size > 0 else 1
         # Factory images sometimes advertise an MD5 that does not match the file.
         # Keep the received bytes and let the backup finish; warn after it completes.
-        if download_result is None and was_backup and md5_failed and os.path.exists(tmp_filename):
+        elif download_result is None and was_backup and md5_failed and os.path.exists(tmp_filename):
             self._note_config_backup_md5_mismatch(remote_path)
             try:
                 kept_size = os.path.getsize(tmp_filename)
@@ -5207,7 +5228,8 @@ class Makera(RelativeLayout):
                 self._ingest_machine_gcode_thumbnail(remote_path, local_path)
             else:
                 if self._decompress_downloaded_file_in_place(
-                    local_path, integrity_label=remote_path if was_backup else None
+                    local_path,
+                    integrity_label=remote_path if was_backup or is_machine_video_path(remote_path) else None,
                 ):
                     self._ingest_machine_gcode_thumbnail(remote_path, local_path)
 
@@ -5917,6 +5939,10 @@ class Makera(RelativeLayout):
         actual = Utils.md5(filepath)
         if actual.lower() == expected.lower():
             logger.info("Download MD5 matched after decompress: %s", actual)
+            return True
+
+        if is_machine_video_path(label or ""):
+            self._warn_video_download_md5(label or filepath)
             return True
 
         logger.error(
