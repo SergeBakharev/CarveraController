@@ -31,27 +31,27 @@ from carveracontroller.addons.stock.stock_geometry import StockBounds
 
 
 def test_voxel_preset_defaults():
-    assert VOXEL_TARGET_BY_LEVEL["low"] == 100
-    assert HEIGHTMAP_TARGET_BY_LEVEL["high"] == 1000
+    assert VOXEL_TARGET_BY_LEVEL["low"] == 200
+    assert HEIGHTMAP_TARGET_BY_LEVEL["high"] == 1200
     assert HEIGHTMAP_TARGET_BY_LEVEL["high"] > VOXEL_TARGET_BY_LEVEL["high"]
-    assert DEFAULT_CARVER_RESOLUTION == "low"
+    assert DEFAULT_CARVER_RESOLUTION == "medium"
 
 
 def test_cell_target_for_carver():
     assert cell_target_for_carver("voxel", "high") == VOXEL_TARGET_BY_LEVEL["high"]
     assert cell_target_for_carver("heightmap", "high") == HEIGHTMAP_TARGET_BY_LEVEL["high"]
-    assert cell_target_for_carver("cylindrical", "medium") == 400
+    assert cell_target_for_carver("cylindrical", "medium") == CYLINDRICAL_TARGET_BY_LEVEL["medium"]
     assert cell_target_for_carver("unknown", "low") == VOXEL_TARGET_BY_LEVEL["low"]
 
 
 def test_checkpoint_slots_match_presets_and_store_default():
-    assert CHECKPOINT_SLOTS_BY_LEVEL == {"low": 256, "medium": 1024, "high": 4096}
+    assert CHECKPOINT_SLOTS_BY_LEVEL == {"low": 50, "medium": 100, "high": 300}
     store = CheckpointStore()
-    assert store.slot_count == CHECKPOINT_SLOTS_BY_LEVEL["medium"]
+    assert store.slot_count == 1024
     assert store.base_interval == 4
-    assert checkpoint_slots_for_level("high") == 4096
+    assert checkpoint_slots_for_level("high") == CHECKPOINT_SLOTS_BY_LEVEL["high"]
     assert checkpoint_slots_for_level("bogus") == CHECKPOINT_SLOTS_BY_LEVEL[DEFAULT_CHECKPOINT_LEVEL]
-    assert DEFAULT_CHECKPOINT_LEVEL == "medium"
+    assert DEFAULT_CHECKPOINT_LEVEL == "low"
 
 
 def test_normalize_carver_resolution_fallbacks():
@@ -106,7 +106,7 @@ def test_pick_cell_size_cylindrical_uses_circumference_on_short_puck():
 
 
 def test_pick_cell_size_cylindrical_long_bar_stays_fine_along_x():
-    """A long thin bar at High still targets ~800 cells along X."""
+    """A long thin bar at High still targets cells along X from the cylindrical table."""
     bounds = StockBounds(0, -15, -15, 200, 15, 15)
     high = pick_cell_size_mm(bounds, carver="cylindrical", level="high")
     assert high == pytest.approx(200 / CYLINDRICAL_TARGET_BY_LEVEL["high"])

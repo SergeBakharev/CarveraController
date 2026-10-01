@@ -746,8 +746,8 @@ def test_carver_resolution_pairs_show_actual_cell_size():
 
     bounds = StockBounds(0, 0, 0, 42, 42, 1)
     hm = [lab for lab, _ in _carver_resolution_pairs(BACKEND_HEIGHTMAP, bounds)]
-    assert "0.21 mm/cell" in hm[0]
-    assert "0.084 mm/cell" in hm[1]
+    assert "0.10 mm/cell" in hm[0]
+    assert "0.06 mm/cell" in hm[1]
     assert "0.05 mm/cell" in hm[2]
     assert hm[1] != hm[2]
     assert all("/ axis" not in lab for lab in hm)

@@ -61,7 +61,7 @@ CHECKPOINT_SLOTS_BY_LEVEL = {
 
 
 def normalize_carver_resolution(value: Any) -> str:
-    """Return a known resolution level, defaulting to ``low``."""
+    """Return a known resolution level, defaulting to ``DEFAULT_CARVER_RESOLUTION``."""
     if isinstance(value, str):
         key = value.strip().lower()
         if key in VOXEL_TARGET_BY_LEVEL:
