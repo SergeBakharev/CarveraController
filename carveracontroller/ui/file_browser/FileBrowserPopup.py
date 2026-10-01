@@ -700,6 +700,8 @@ class FileBrowserPopup(ModalView):
         kept = [path for path in self._selected_paths() if path and os.path.normpath(path) not in gone]
         if self._highlight_path and os.path.normpath(self._highlight_path) in gone:
             self._highlight_path = ""
+        if kept and not self._highlight_path:
+            self._highlight_path = kept[-1]
         self._apply_selected_paths(kept)
         if not kept:
             self.multi_select_mode = False
@@ -708,14 +710,28 @@ class FileBrowserPopup(ModalView):
         self._sync_chrome()
 
     def _prune_missing_selection(self) -> None:
-        """Drop a selection whose files are no longer in this directory."""
+        """Drop a selection whose files are no longer in this directory.
+
+        Outside multi-select, only the highlighted file stays selected. A missing
+        highlight moves onto a file that is still listed, so an action cannot
+        target a row that is no longer shown.
+        """
         present = {os.path.normpath(entry.get("path") or "") for entry in self._current_entries() if entry.get("path")}
         paths = self._selected_paths()
         kept = [path for path in paths if path and os.path.normpath(path) in present]
-        highlight = self._highlight_path
+        highlight = self._highlight_path or ""
         if highlight and os.path.normpath(highlight) not in present:
             highlight = ""
-        if kept == paths and highlight == self._highlight_path:
+        if not self.multi_select_mode and len(kept) > 1:
+            highlight_norm = os.path.normpath(highlight) if highlight else ""
+            match = [path for path in kept if os.path.normpath(path) == highlight_norm]
+            kept = [match[0] if match else kept[-1]]
+        kept_norms = {os.path.normpath(path) for path in kept}
+        if kept and (not highlight or os.path.normpath(highlight) not in kept_norms):
+            highlight = kept[-1]
+        if not kept:
+            highlight = ""
+        if kept == paths and highlight == (self._highlight_path or ""):
             return
         self._highlight_path = highlight
         self._apply_selected_paths(kept)
@@ -828,6 +844,12 @@ class FileBrowserPopup(ModalView):
             highlight = self.selected_device_file if self.location == LOCATION_DEVICE else self.selected_machine_file
             paths = self._selected_paths() or ([highlight] if highlight else [])
         return [path for path in paths if path and not self._path_is_dir(path)]
+
+    def selected_folders(self) -> list[str]:
+        """Checked folders. A single highlight never mixes folders into a transfer."""
+        if not self.multi_select_mode:
+            return []
+        return [path for path in self._selected_paths() if path and self._path_is_dir(path)]
 
     def _apply_selected_paths(self, paths: list) -> None:
         paths = list(paths)

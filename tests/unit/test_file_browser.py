@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from carveracontroller.Controller import LOAD_DIR
-from carveracontroller.main import Makera
+from carveracontroller.main import Makera, transfer_confirm_message
 from carveracontroller.ui.file_browser.FileBrowserPopup import FileBrowserPopup
 from carveracontroller.ui.file_browser.sources import (
     ICON_FILE,
@@ -1203,9 +1203,11 @@ def test_deleted_multi_selection_is_dropped_before_the_listing_updates():
         {"path": "/sd/keep.nc", "is_dir": False, "size": 4},
     ]
     popup = _selection_popup(entries=entries, selected=["/sd/a.nc", "/sd/b.nc", "/sd/keep.nc"])
+    popup._highlight_path = "/sd/a.nc"
     popup.forget_selected_paths(["/sd/a.nc", "/sd/b.nc"])
     assert popup.selected_machine_paths == ["/sd/keep.nc"]
     assert popup.selected_machine_file == "/sd/keep.nc"
+    assert popup._highlight_path == "/sd/keep.nc"
     assert popup.multi_select_mode is True
     assert popup.selected_device_paths == ["/tmp/local.nc"]
 
@@ -1226,13 +1228,68 @@ def test_reopen_drops_selection_missing_from_the_listing():
     popup._prune_missing_selection()
     assert popup.selected_machine_paths == ["/sd/keep.nc"]
     assert popup.selected_machine_file == "/sd/keep.nc"
-    assert popup._highlight_path == ""
+    assert popup._highlight_path == "/sd/keep.nc"
     assert popup.selected_device_paths == ["/tmp/local.nc"]
 
     popup._machine_entries = []
     popup._prune_missing_selection()
     assert popup.selected_machine_paths == []
     assert popup.multi_select_mode is False
+
+
+def test_single_select_prune_keeps_only_the_highlighted_file():
+    popup = _selection_popup(
+        entries=[
+            {"path": "/sd/a.nc", "is_dir": False, "size": 10},
+            {"path": "/sd/keep.nc", "is_dir": False, "size": 4},
+        ],
+        selected=["/sd/a.nc", "/sd/keep.nc"],
+    )
+    popup.multi_select_mode = False
+    popup._highlight_path = "/sd/a.nc"
+    popup._prune_missing_selection()
+    assert popup.selected_machine_paths == ["/sd/a.nc"]
+    assert popup.selected_machine_file == "/sd/a.nc"
+    assert popup._highlight_path == "/sd/a.nc"
+    assert popup.multi_select_mode is False
+
+
+def test_multi_select_prune_keeps_every_file_still_listed():
+    popup = _selection_popup(
+        entries=[
+            {"path": "/sd/a.nc", "is_dir": False, "size": 10},
+            {"path": "/sd/keep.nc", "is_dir": False, "size": 4},
+        ],
+        selected=["/sd/a.nc", "/sd/keep.nc", "/sd/missing.nc"],
+    )
+    popup._highlight_path = "/sd/missing.nc"
+    popup._prune_missing_selection()
+    assert popup.selected_machine_paths == ["/sd/a.nc", "/sd/keep.nc"]
+    assert popup.multi_select_mode is True
+    assert popup._highlight_path == "/sd/keep.nc"
+
+
+def test_transfer_confirm_mentions_overwrite_and_skipped_folders():
+    assert transfer_confirm_message(["/tmp/a.nc"], ["a.nc"], [], "upload") == (
+        "File Already Exists",
+        "Confirm to overwrite file: \n 'a.nc'?",
+    )
+    assert transfer_confirm_message(["/tmp/a.nc"], [], [], "download") is None
+    title, body = transfer_confirm_message(
+        ["/tmp/a.nc", "/tmp/b.nc", "/tmp/c.nc"],
+        ["a.nc"],
+        ["jobs"],
+        "upload",
+    )
+    assert title == "File Already Exists"
+    assert "overwrite 1 files that already exist on the machine" in body
+    assert "2 other selected files will also be uploaded" in body
+    assert "1 selected folder will not be uploaded." in body
+    assert "jobs" in body
+    title, body = transfer_confirm_message(["/sd/a.nc"], [], ["clips"], "download")
+    assert title == "Folders are not transferred"
+    assert "1 selected folder will not be downloaded." in body
+    assert "Continue downloading 1 file?" in body
 
 
 def test_video_files_are_not_jobs():

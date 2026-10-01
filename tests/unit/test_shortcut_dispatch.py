@@ -424,6 +424,93 @@ def test_batch_progress_uses_byte_sizes():
     assert format_byte_count(2 * 1024 * 1024) == "2.0 MB"
 
 
+def test_unknown_file_sizes_still_move_the_batch_bar():
+    root, popup = _batch_download_root()
+    root._batch_files = [("a.nc", 0), ("b.nc", 0)]
+    root._batch_total_bytes = 0
+    Makera._apply_batch_file_percent(root, 50)
+    assert popup.file_value == 50
+    assert popup.batch_value == 25
+    assert popup.batch_text == "All files"
+
+    Makera._complete_current_batch_file(root)
+    assert root._batch_index == 1
+    assert popup.batch_value == 50
+
+    Makera._complete_current_batch_file(root)
+    assert popup.batch_value == 100
+
+
+def test_batch_decompress_does_not_rewind_the_overall_bar():
+    root, popup = _batch_download_root()
+    root._batch_kind = "upload"
+    Makera._apply_batch_file_percent(root, 100)
+    assert popup.batch_value == 50
+
+    Makera._apply_batch_decompress_percent(root, 0, 5)
+    assert popup.file_value == 5
+    assert popup.batch_value == 50
+    assert popup.file_text.startswith("Decompressing")
+
+    Makera.progressUpdate(root, 20, "", False)
+    assert popup.file_value == 5
+    assert popup.batch_value == 50
+
+    Makera._complete_current_batch_file(root)
+    Makera._apply_batch_decompress_percent(root, 0, 80)
+    assert root._batch_index == 1
+    assert popup.file_value == 0
+    assert popup.batch_value == 50
+
+
+def test_batch_upload_missing_file_closes_the_popup(monkeypatch):
+    scheduled = []
+
+    def schedule_once(callback, _timeout=0):
+        scheduled.append(callback)
+
+    monkeypatch.setattr("carveracontroller.main.Clock.schedule_once", schedule_once)
+    popup = SimpleNamespace(
+        file_text="",
+        file_value=0,
+        batch_text="",
+        batch_value=0,
+        _is_open=True,
+        open=Mock(),
+        dismiss=Mock(),
+        ids={},
+    )
+    messages = []
+    root = SimpleNamespace(
+        uploading_file="/tmp/does-not-exist-batch.nc",
+        _uploading_firmware=False,
+        _batch_kind="upload",
+        _batch_upload=True,
+        _batch_file_active=True,
+        _batch_files=[("/tmp/does-not-exist-batch.nc", 10), ("/tmp/b.nc", 10)],
+        _batch_index=0,
+        _batch_stop=False,
+        _pending_uploads=["/tmp/b.nc"],
+        uploading=False,
+        batch_progress_popup=popup,
+        file_popup=SimpleNamespace(refresh_machine=Mock()),
+        controller=SimpleNamespace(log=SimpleNamespace(put=Mock())),
+        show_message_popup=lambda text, *_args, **_kwargs: messages.append(text),
+    )
+    root._cleanup_firmware_temp = lambda **_kwargs: None
+    _bind_makera(root, "doUpload", "_fail_batch_transfer", "_end_batch_progress", "_batch_unstarted_note")
+    Makera.doUpload(root, None)
+
+    assert root._batch_file_active is False
+    assert root._pending_uploads == []
+    assert root._batch_stop is True
+    for callback in scheduled:
+        callback(0)
+    assert messages == ["Upload file error!\n\nThe remaining file was not uploaded."]
+    popup.dismiss.assert_called_once()
+    root.file_popup.refresh_machine.assert_called_once()
+
+
 def _bind_makera(root, *names):
     for name in names:
         setattr(root, name, getattr(Makera, name).__get__(root))
@@ -463,6 +550,9 @@ def _batch_download_root():
         "_finish_batch_file_on_ui",
         "_end_batch_progress",
         "_download_files_worker",
+        "_batch_bar_state",
+        "_batch_bytes_caption",
+        "_apply_batch_decompress_percent",
     )
     return root, popup
 
