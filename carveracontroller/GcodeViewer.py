@@ -696,7 +696,7 @@ class GCodeViewer(Widget):
     g_wheel_data = 0
     lines_center = [0, 0, 0]
 
-    display_count = 0
+    display_count = 0.0
     total_line_count = 0
     add_dir = 1
     dynamic_display = BooleanProperty(True)
@@ -1158,7 +1158,7 @@ class GCodeViewer(Widget):
         self.canvas.remove(self.axiszmesh)
         self.axiszmesh.clear()
         self._remove_view_cube_from_canvas()
-        self.display_count = 0
+        self.display_count = 0.0
         self.cur_line_index = 0
         self._sim_carved_vertex = 0
         self._sim_progress_vertex = 0
