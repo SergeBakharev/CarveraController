@@ -1,8 +1,10 @@
 [unreleased]
 - Enhancement: Upload and download multiple selected files from the file browser, with one progress popup for the batch
+- Enhancement: Add a Z1 Record Timelapse toggle on the Config and Run screen, a recording mark on the camera button, and ability to open /sd/videos in the file browser when that folder exists
 - Enhancement: Add a Ghost display option that draws older toolpath faint and recent moves more solid
 - Enhancement: Firmware updater now support Makera Z1. Detects if fw is bundled LPC+ESP, LPC-only, or ESP-only and updates using the correct method
 - Enhancement: Improve update popup UI and retrieve version data from the GitHub API
+- Enhancement: Improve Config and Run popup UI
 - Enhancement: Replace the nested Remote/Local file popup with a single file browser
 - Enhancement: Auto enclosure light on connect and off on disconnect or app close. Controller setting is available to enable/disable this feature, default is disabled.
 - Enhancement: Tool-change flags have tooltip showing time until the change
@@ -18,6 +20,8 @@
 - Enhancement: Use machine limits when available to calculate time estimates
 - Enhancement: Add bed settings and visualization to the G-Code viewer
 - Enhancement: Add keyboard shortcuts settings
+- Enhancement: Auto-correct MDI command case. When a command entered in the MDI matches a known command, its case is corrected to the canonical form before sending (e.g. 'g0 x10' sends as 'G0 X10'). Controlled by a new "Auto-Correct MDI Command Case" setting, enabled by default.
+- Enhancement: The documentation site base URL is changed to the dev version when a non-stable version number is set 
 - Change: Update screen is now accessible when not connected to a machine
 - Change: Facing wizard now supports center WCS origin
 - Change: Hide Auto Vacuum on the Config and Run screen when the machine is not a C1
@@ -29,7 +33,10 @@
 - Change: Add support for iOS 27
 - Change: Stop splitting 3-axis G0/G1 moves every 0.5mm and split A-axis moves using the same tolerance as G2/G3 instead of every 0.5°
 - Change: Missed heartbeats with the machine are treated as comms backpressure, and the machine state is changed to "Waiting on comms". Only if link connection is lost will it be treated as a disconnect
+- Changed: Machine config backup completes when a file's MD5 checksum does not match, and warns that some machines ship with factory MD5 mismatches
+- Changed: Keep the Z1 camera panel open if the stream drops, and reconnect while a spinner is shown in the camera view
 - Fixed: Deleting a multi-selection no longer leaves those files selected after they are gone
+- Fixed: Video downloads from /sd/video and /sd/videos no longer show an MD5 mismatch error. The Makera ESP32 advertises a bad checksum for those files; the download is kept and a warning is logged
 - Fixed: Harden the gcode parser against "zero length" movement, and prevent division by zero in play slider
 - Fixed: Time estimates ignoring speed for some 4th-axis moves
 - Fixed: Allow to select the bottom element of the MDI, Gcode and probing confirmation lists

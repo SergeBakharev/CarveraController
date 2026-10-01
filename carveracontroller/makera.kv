@@ -3,6 +3,8 @@
 #:import digitize_v carveracontroller.Utils.digitize_v
 #:import tr carveracontroller.__main__.tr
 #:import _ carveracontroller.ui.LocalFilePicker
+#:import _ carveracontroller.ui.common
+#:import _ carveracontroller.ui.config_run
 #:import _ carveracontroller.ui.file_browser
 #:import _ carveracontroller.ui.DirectoryView
 #:import _ carveracontroller.ui.DropDownSplitter
@@ -13,6 +15,7 @@
 #:import play_progress_bar carveracontroller.ui.PlayProgressBar
 #:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
 #:import CameraView carveracontroller.addons.camera.CameraView.CameraView
+#:import CameraReconnectSpinner carveracontroller.addons.camera.CameraView.CameraReconnectSpinner
 #:import LASER_TOOL_NUMBER carveracontroller.CNC.LASER_TOOL_NUMBER
 #:import ZPROBE_TOOL_NUMBER carveracontroller.CNC.ZPROBE_TOOL_NUMBER
 #:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
@@ -22,7 +25,9 @@
 #:include ui/LocalFilePicker.kv
 #:include ui/DirectoryView.kv
 #:include ui/DropDownSplitter.kv
+#:include ui/common/action_button.kv
 #:include ui/file_browser/FileBrowserPopup.kv
+#:include ui/config_run/CoordPopup.kv
 #:include ui/CmdPaneTab.kv
 #:include ui/GCodePageBar.kv
 #:include ui/updates/UpgradePopup.kv
@@ -126,6 +131,11 @@
                 source: root.icon
                 pos: self.center_x - dp(root.icon_size / 2), self.center_y - dp(root.icon_size / 2)
                 size: dp(root.icon_size) if root.icon else 0, dp(root.icon_size) if root.icon else 0
+            Color:
+                rgba: (0.86, 0.12, 0.12, 1) if root.recording else (0, 0, 0, 0)
+            Ellipse:
+                pos: self.x + self.width / 2 + dp(root.icon_size / 2) - dp(7), self.y + self.height / 2 - dp(root.icon_size / 2)
+                size: dp(7) if root.recording else 0, dp(7) if root.recording else 0
 
 <TransparentGrayButton>:
     height: '32dp'
@@ -2368,461 +2378,6 @@
                 text: "Select"
                 on_release: root.on_select_pressed(filechooser.path, filechooser.selection)
 
-<CoordPopup>:
-    padding: '10dp'
-    size_hint: 0.8, 0.8
-    pos_hint: {"right": 0.9, "top": 0.9}
-    auto_dismiss: False
-
-    cnc_workspace: cnc_workspace
-    lb_origin: lb_origin
-    lb_zprobe: lb_zprobe
-    lb_leveling: lb_leveling
-    btn_origin: btn_origin
-    btn_zprobe: btn_zprobe
-    btn_leveling: btn_leveling
-    cbx_margin: cbx_margin
-    cbx_zprobe: cbx_zprobe
-    cbx_leveling: cbx_leveling
-    cbx_startline: cbx_startline
-    txt_startline: txt_startline
-
-    BoxLayout:
-        orientation: 'vertical'
-        BoxLayout:
-            size_hint_y: None
-            height: '40dp'
-            TransparentButton:
-                icon: 'data/config_start.png'
-                halign: "left"
-                valign: "middle"
-            Label:
-                text: tr._("Config and Run") if root.mode == 'Run' else tr._(" Config and Do ") + root.mode
-                bold: True
-                halign: "left"
-                valign: "middle"
-                text_size: self.size
-
-        BoxLayout:
-            padding: '5dp'
-            spacing: '5dp'
-            orientation: 'horizontal'
-            AnchorLayout:
-                anchor_x: 'center'
-                anchor_y: 'center'
-                canvas:
-                    Color:
-                        rgba: 35/255, 35/255, 35/255, 1
-                    Rectangle:
-                        pos: self.pos
-                        size: self.size
-                CNCWorkspace:
-                    id: cnc_workspace
-            BoxLayout:
-                size_hint_x: None
-                width: '200dp'
-                orientation: 'vertical'
-                BoxLayout:
-                    padding: '5dp', '0dp', '5dp', '10dp'
-                    spacing: '5dp'
-                    size_hint_y: None
-                    height: '40dp'
-                    Label:
-                        text: tr._("Background:")
-                    Spinner:
-                        id: background_image_spinner
-                        text: "None"
-                        size_hint_x: 1.75
-                        on_text: root.update_background_image(self.text)
-
-                BoxLayout:
-                    padding: '0.5dp'
-                    size_hint_y: None
-                    height: '30dp' if app.model == 'C1' else '0dp'
-                    opacity: 1 if app.model == 'C1' else 0
-                    disabled: app.model != 'C1'
-                    Label:
-                        text: tr._("Auto Vacuum")
-                        halign: "left"
-                        valign: "middle"
-                        font_size: '13sp'
-                        text_size: self.size
-
-                        canvas.before:
-                            Color:
-                                rgba: 50/255, 50/255, 50/255, 1
-                            Rectangle:
-                                pos: self.pos
-                                size: self.size
-                    Switch:
-                        id: vacuum_switch_play
-                        canvas.before:
-                            Color:
-                                rgba: 50/255, 50/255, 50/255, 1
-                            Rectangle:
-                                pos: self.pos
-                                size: self.size
-                        active: True if root.vacuummode == 1 else False
-                        on_active:
-                            app.root.update_control('vacuum_mode', self.active)
-
-                BoxLayout:
-                    padding: '0.5dp'
-                    size_hint_y: None
-                    height: '30dp'
-                    disabled: not (app.is_community_firmware and app.fw_version_digitized >= digitize_v("2.2.0"))
-                    Label:
-                        text: tr._("Auto Ext. Out")
-                        halign: "left"
-                        valign: "middle"
-                        font_size: '13sp'
-                        text_size: self.size
-
-                        canvas.before:
-                            Color:
-                                rgba: 50/255, 50/255, 50/255, 1
-                            Rectangle:
-                                pos: self.pos
-                                size: self.size
-                    ToolTipSwitch:
-                        id: extout_switch_play
-                        tooltip_txt: tr._("Automatically toggles on/off the External Output pin. This can be used to control a vacuum or compressor")
-                        canvas.before:
-                            Color:
-                                rgba: 50/255, 50/255, 50/255, 1
-                            Rectangle:
-                                pos: self.pos
-                                size: self.size
-                        set_flag: False
-                        active: True if root.extoutmode == 1 else False
-                        on_active:
-                            if self.set_flag: self.set_flag = False
-                            else: app.root.update_control('extout_mode', self.active)
-
-                BoxLayout:
-                    padding: '0.5dp'
-                    size_hint_y: None
-                    height: '30dp' if app.model == 'Z1' else '0dp'
-                    opacity: 1 if app.model == 'Z1' else 0
-                    disabled: app.model != 'Z1'
-                    Label:
-                        text: tr._("Auto Blow")
-                        halign: "left"
-                        valign: "middle"
-                        font_size: '13sp'
-                        text_size: self.size
-
-                        canvas.before:
-                            Color:
-                                rgba: 50/255, 50/255, 50/255, 1
-                            Rectangle:
-                                pos: self.pos
-                                size: self.size
-                    ToolTipSwitch:
-                        id: autoblow_switch_play
-                        tooltip_txt: tr._("The spindle fan will always run with this minimum power while the spindle is on.")
-                        canvas.before:
-                            Color:
-                                rgba: 50/255, 50/255, 50/255, 1
-                            Rectangle:
-                                pos: self.pos
-                                size: self.size
-                        set_flag: False
-                        active: True if root.autoblowmode == 1 else False
-                        on_active:
-                            if self.set_flag: self.set_flag = False
-                            else: app.root.update_control('autoblow_mode', self.active)
-
-                BoxLayout:
-                    padding: '0.5dp'
-                    size_hint_y: None
-                    height: '30dp' if app.model == 'Z1' else '0dp'
-                    opacity: 1 if app.model == 'Z1' else 0
-                    disabled: app.model != 'Z1'
-                    Label:
-                        text: tr._("Auto Bed Clean")
-                        halign: "left"
-                        valign: "middle"
-                        font_size: '13sp'
-                        text_size: self.size
-
-                        canvas.before:
-                            Color:
-                                rgba: 50/255, 50/255, 50/255, 1
-                            Rectangle:
-                                pos: self.pos
-                                size: self.size
-                    ToolTipSwitch:
-                        id: autobedclean_switch_play
-                        tooltip_txt: tr._("Runs a cleaning cycle when gcode playback finishes.")
-                        canvas.before:
-                            Color:
-                                rgba: 50/255, 50/255, 50/255, 1
-                            Rectangle:
-                                pos: self.pos
-                                size: self.size
-                        set_flag: False
-                        active: True if root.autobedcleanmode == 1 else False
-                        on_active:
-                            if self.set_flag: self.set_flag = False
-                            else: app.root.update_control('autobedclean_mode', self.active)
-
-                BoxLayout:
-                    padding: '0.5dp'
-                    size_hint_y: None
-                    height: '30dp' if app.model == 'Z1' else '0dp'
-                    opacity: 1 if app.model == 'Z1' else 0
-                    disabled: app.model != 'Z1'
-                    Label:
-                        text: tr._("Ionizer")
-                        halign: "left"
-                        valign: "middle"
-                        font_size: '13sp'
-                        text_size: self.size
-
-                        canvas.before:
-                            Color:
-                                rgba: 50/255, 50/255, 50/255, 1
-                            Rectangle:
-                                pos: self.pos
-                                size: self.size
-                    ToolTipSwitch:
-                        id: ionizer_switch_play
-                        tooltip_txt: tr._("Turn on the static electricity removal unit on Z1.")
-                        canvas.before:
-                            Color:
-                                rgba: 50/255, 50/255, 50/255, 1
-                            Rectangle:
-                                pos: self.pos
-                                size: self.size
-                        set_flag: False
-                        active: True if root.ionizermode == 1 else False
-                        on_active:
-                            if self.set_flag: self.set_flag = False
-                            else: app.root.update_control('ionizer_mode', self.active)
-
-                Label:
-                    size_hint_y: None
-                    height: '15dp'
-
-                BoxLayout:
-                    size_hint_y: None
-                    height: '25dp'
-                    canvas.before:
-                        Color:
-                            rgba: 65/255, 65/255, 65/255, 1
-                        Rectangle:
-                            pos: self.pos
-                            size: self.size
-                    Label:
-                        text: tr._(" Work Origin")
-                        halign: "left"
-                        valign: "middle"
-                        font_size: '13sp'
-                        text_size: self.size
-                    Widget:
-                        size_hint_x: None
-                        width: '25dp'
-                        canvas.before:
-                            Color:
-                                rgba: 52/255, 152/255, 219/255, 1
-                            Ellipse:
-                                pos: self.center_x - dp(2.5), self.center_y - dp(5)
-                                size: dp(10), dp(10)
-                Label:
-                    id: lb_origin
-                    size_hint_y: None
-                    height: '40dp'
-                    text: tr._(" (0, 0) from Anchor1")
-                    halign: "left"
-                    valign: "middle"
-                    font_size: '13sp'
-                    text_size: self.size
-                BoxLayout:
-                    padding: '5dp', '0dp', '5dp', '10dp'
-                    spacing: '5dp'
-                    size_hint_y: None
-                    height: '40dp'
-                    Label:
-                    Button:
-                        id: btn_origin
-                        text: tr._("Config")
-                        font_size: '13sp'
-                        on_release: root.origin_popup.open()
-
-                BoxLayout:
-                    size_hint_y: None
-                    height: '25dp'
-                    disabled:  (root.mode != 'Run' and root.mode != 'Margin') or app.lasering
-                    canvas.before:
-                        Color:
-                            rgba: 65/255, 65/255, 65/255, 1
-                        Rectangle:
-                            pos: self.pos
-                            size: self.size
-                    MCQCheckBox:
-                        id: cbx_margin
-                        on_active:
-                            root.set_config('margin', 'active', self.active)
-                            root.toggle_config()
-                    MCQLabel:
-                        on_press: cbx_margin._do_press()
-                        text: tr._(' Scan Margin')
-                    Widget:
-                        size_hint_x: None
-                        width: '25dp'
-                        canvas.before:
-                            Color:
-                                rgba: 0, 0.8, 0, 1
-                            Ellipse:
-                                pos: self.center_x - dp(2.5), self.center_y - dp(5)
-                                size: dp(10), dp(10)
-                Label:
-                    size_hint_y: None
-                    height: '15dp'
-
-                BoxLayout:
-                    size_hint_y: None
-                    height: '25dp'
-                    disabled:  (root.mode != 'Run' and root.mode != 'ZProbe' and root.mode != 'Leveling') or app.lasering
-                    canvas.before:
-                        Color:
-                            rgba: 65/255, 65/255, 65/255, 1
-                        Rectangle:
-                            pos: self.pos
-                            size: self.size
-                    MCQCheckBox:
-                        id: cbx_zprobe
-                        on_active: root.on_zprobe_checkbox(self.active)
-                    MCQLabel:
-                        on_press: cbx_zprobe._do_press()
-                        text: tr._(' Auto Z Probe')
-                    Widget:
-                        size_hint_x: None
-                        width: '25dp'
-                        canvas.before:
-                            Color:
-                                rgba: 231/255, 76/255, 60/255, 1
-                            Ellipse:
-                                pos: self.center_x - dp(2.5), self.center_y - dp(5)
-                                size: dp(10), dp(10)
-                Label:
-                    id: lb_zprobe
-                    size_hint_y: None
-                    height: '25dp'
-                    disabled:  not cbx_zprobe.active or (root.mode != 'Run' and root.mode != 'ZProbe' and root.mode != 'Leveling') or app.lasering
-                    text: tr._(" (10, 10) from Path Origin")
-                    halign: "left"
-                    valign: "middle"
-                    font_size: '13sp'
-                    text_size: self.size
-                BoxLayout:
-                    padding: '5dp', '0dp', '5dp', '10dp'
-                    spacing: '5dp'
-                    size_hint_y: None
-                    height: '40dp'
-                    Label:
-                    Button:
-                        id: btn_zprobe
-                        text: tr._("Config")
-                        font_size: '13sp'
-                        disabled:  not cbx_zprobe.active or (root.mode != 'Run' and root.mode != 'ZProbe' and root.mode != 'Leveling') or app.has_4axis
-                        on_release: root.zprobe_popup.open()
-
-                BoxLayout:
-                    size_hint_y: None
-                    height: '25dp'
-                    disabled:  (root.mode != 'Run' and root.mode != 'Leveling') or app.has_4axis or app.lasering
-                    canvas.before:
-                        Color:
-                            rgba: 65/255, 65/255, 65/255, 1
-                        Rectangle:
-                            pos: self.pos
-                            size: self.size
-                    MCQCheckBox:
-                        id: cbx_leveling
-                        on_active: root.on_leveling_checkbox(self.active)
-                    MCQLabel:
-                        on_press: cbx_leveling._do_press()
-                        text: tr._(' Auto Leveling')
-                    Widget:
-                        size_hint_x: None
-                        width: '25dp'
-                        canvas.before:
-                            Color:
-                                rgba: 244/255, 208/255, 63/255, 1
-                            Ellipse:
-                                pos: self.center_x - dp(2.5), self.center_y - dp(5)
-                                size: dp(10), dp(10)
-                Label:
-                    id: lb_leveling
-                    size_hint_y: None
-                    height: '50dp'
-                    text: tr._(" X Points: 10, Y Points: 10, Height: 5")
-                    disabled:  (root.mode != 'Run' and root.mode != 'Leveling') or app.has_4axis
-                    halign: "left"
-                    valign: "middle"
-                    font_size: '13sp'
-                    text_size: self.size
-                BoxLayout:
-                    padding: '5dp', '0dp', '5dp', '10dp'
-                    spacing: '5dp'
-                    size_hint_y: None
-                    height: '40dp'
-                    Label:
-                    Button:
-                        id: btn_leveling
-                        text: tr._("Config")
-                        font_size: '13sp'
-                        disabled:  (root.mode != 'Run' and root.mode != 'Leveling') or app.has_4axis
-                        on_release: root.auto_level_popup.init_and_open(False)
-
-                BoxLayout:
-                    size_hint_y: None
-                    height: '25dp'
-                    padding: '5dp', 0, 0, 0
-                    disabled: root.mode != 'Run'
-                    canvas.before:
-                        Color:
-                            rgba: 65/255, 65/255, 65/255, 1
-                        Rectangle:
-                            pos: self.pos
-                            size: self.size
-                    MCQCheckBox:
-                        id: cbx_startline
-                    MCQLabel:
-                        on_press: cbx_startline._do_press()
-                        text: tr._('  Resume at line:')
-                    TextInput:
-                        id: txt_startline
-                        hint_text: tr._('Number')
-                        multiline: False
-                        size_hint_x: None
-                        width: '80dp'  # 10 chars ought to be enough for anybody :)
-                        text: ''
-                        halign: "right"
-                        input_type: 'number'
-                        input_filter: 'int'
-                Label:  # This empty label is needed to keep the right box top aligned
-
-        BoxLayout:
-            spacing: '5dp'
-            padding: '5dp'
-            size_hint_y: None
-            height: '50dp'
-            Button:
-                text: tr._("Close")
-                on_release:
-                    root.dismiss()
-            Button:
-                text: tr._('Run') if root.mode == 'Run' else tr._('Do ') + root.mode
-                on_release: 
-                    root.dismiss()
-                    if root.mode == 'Run': app.root.play(app.selected_remote_filename, txt_startline.text if cbx_startline.active else None)
-                    else: app.root.apply()
-                    app.root.content.transition.direction = 'right'
-                    app.root.content.current = 'File'
-                    app.root.cmd_manager.current = 'gcode_cmd_page'
 
 <SwitchBox@BoxLayout>:
     label: ''
@@ -3781,6 +3336,10 @@
                                             brightness: app.camera_brightness
                                             contrast: app.camera_contrast
                                             gamma: app.camera_gamma
+                                        CameraReconnectSpinner:
+                                            active: app.camera_reconnecting
+                                            pos: self.parent.pos
+                                            size: self.parent.size
                                         CameraControls:
                                             id: camera_controls
                                             pos_hint: {'x': 0, 'top': 1}
@@ -3921,6 +3480,7 @@
                                 icon: 'data/camera.png'
                                 icon_size: 17
                                 active: app.camera_streaming
+                                recording: app.timelapse_recording
                                 opacity: 1 if app.supports_camera else 0
                                 disabled: not app.supports_camera
                                 tooltip_txt: tr._('Hide camera') if app.camera_streaming else tr._('Show camera')

@@ -10,7 +10,6 @@ from kivy.clock import Clock
 from kivy.config import Config
 from kivy.core.window import Window
 from kivy.factory import Factory
-from kivy.graphics import Color, Rectangle
 from kivy.metrics import dp
 from kivy.properties import (
     BooleanProperty,
@@ -26,10 +25,10 @@ from kivy.uix.label import Label
 from kivy.uix.modalview import ModalView
 
 from carveracontroller import Utils
-from carveracontroller.addons.tooltips.Tooltips import ToolTipButton
 from carveracontroller.translation import tr
+from carveracontroller.ui.common.action_button import PopupActionButton
+from carveracontroller.ui.common.compact import COMPACT_WIDTH_DP, is_compact_width
 
-from . import sources
 from .sources import (
     CONFIG_LAST_LOCATION,
     DEFAULT_SORT_REVERSE,
@@ -37,6 +36,7 @@ from .sources import (
     LOCATION_MACHINE,
     MACHINE_BASE_DIR,
     MACHINE_BASE_DIR_WIN,
+    MACHINE_VIDEOS_DIR,
     SORT_DATE,
     SORT_NAME,
     SORT_SIZE,
@@ -47,10 +47,9 @@ from .sources import (
     device_tab_path_display,
     download_dest_tooltip,
     group_and_sort_entries,
-    is_compact_width,
+    is_gcode_machine_dir,
     is_ios_platform,
     is_local_preview,
-    is_under_machine_root,
     list_device_directory,
     local_dir_has_file,
     machine_listing_has,
@@ -80,96 +79,6 @@ class FileBrowserLocationTab(ButtonBehavior, BoxLayout):
 
 class FileBrowserIconButton(ButtonBehavior, BoxLayout):
     icon = StringProperty("")
-
-
-class FileBrowserActionButton(ToolTipButton):
-    """Standard app Button with an optional leading icon and tinted variants."""
-
-    icon = StringProperty("")
-    btn_text = StringProperty("")
-    primary = BooleanProperty(False)
-    destructive = BooleanProperty(False)
-    flat = BooleanProperty(False)
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        # ToolTipButton KV draws a rounded overlay; keep the atlas/tint look.
-        self.canvas.before.clear()
-        self.bind(
-            state=self._sync_colors,
-            primary=self._sync_colors,
-            destructive=self._sync_colors,
-            disabled=self._sync_colors,
-            flat=self._sync_colors,
-            pos=self._redraw_flat,
-            size=self._redraw_flat,
-            texture=self._redraw_flat,
-            texture_size=self._redraw_flat,
-            color=self._redraw_flat,
-            background_color=self._redraw_flat,
-            icon=self._redraw_flat,
-        )
-        self._sync_colors()
-
-    def _sync_colors(self, *_args):
-        down = self.state == "down"
-        if self.disabled:
-            self.color = [160 / 255, 160 / 255, 160 / 255, 1]
-            if self.flat:
-                self.background_normal = ""
-                self.background_down = ""
-                self.background_color = [50 / 255, 50 / 255, 50 / 255, 1]
-            else:
-                self.background_normal = "atlas://data/images/defaulttheme/button_disabled"
-                self.background_down = "atlas://data/images/defaulttheme/button_disabled"
-                self.background_color = [1, 1, 1, 1]
-            self._redraw_flat()
-            return
-        self.color = [1, 1, 1, 1]
-        if self.flat:
-            # Solid fill so primary/destructive colors stay true; used on the footer.
-            self.background_normal = ""
-            self.background_down = ""
-            if self.destructive:
-                self.background_color = (
-                    [150 / 255, 55 / 255, 55 / 255, 1] if down else [186 / 255, 72 / 255, 72 / 255, 1]
-                )
-            elif self.primary:
-                self.background_color = (
-                    [32 / 255, 114 / 255, 148 / 255, 1] if down else [50 / 255, 164 / 255, 206 / 255, 1]
-                )
-            else:
-                self.background_color = [64 / 255, 64 / 255, 64 / 255, 1] if down else [88 / 255, 88 / 255, 88 / 255, 1]
-            self._redraw_flat()
-            return
-        self.background_normal = "atlas://data/images/defaulttheme/button"
-        self.background_down = "atlas://data/images/defaulttheme/button_pressed"
-        self.background_color = [1, 1, 1, 1]
-
-    def _redraw_flat(self, *_args):
-        """Left-align label on flat buttons so gaps match the 10dp icon inset."""
-        if not self.flat:
-            return
-        inset = dp(10)
-        icon_size = dp(20) if self.icon else 0
-        text_x = self.x + inset + (icon_size + inset if self.icon else 0)
-        text_h = self.texture_size[1] if self.texture_size else 0
-        self.canvas.clear()
-        with self.canvas:
-            Color(rgba=self.background_color)
-            Rectangle(pos=self.pos, size=self.size)
-            if self.texture:
-                Color(rgba=self.color)
-                Rectangle(
-                    texture=self.texture,
-                    size=self.texture_size,
-                    pos=(text_x, self.center_y - text_h / 2.0),
-                )
-
-    def on_parent(self, _instance, parent):
-        if parent is None:
-            self.close_tooltip()
-            Window.unbind(mouse_pos=self.on_mouse_pos)
 
 
 class FileBrowserBadge(Label):
@@ -312,6 +221,23 @@ class FileBrowserPopup(ModalView):
         self.open()
         self._apply_location(refresh=True)
 
+    def open_for_videos(self):
+        """Open the browser on the machine tab, listing /sd/videos.
+
+        This visit is not stored as the folder the main file browser restores,
+        so the next jobs open returns to the gcodes directory.
+        """
+        self.firmware_mode = False
+        self.multi_select_mode = False
+        self.search_text = ""
+        self.ios_device_mode = False
+        self.title_text = tr._("File Browser")
+        self.location = LOCATION_MACHINE
+        self.machine_dir = MACHINE_VIDEOS_DIR
+        self._persist_location()
+        self.open()
+        self._apply_location(refresh=True)
+
     def open_for_firmware(self):
         self.firmware_mode = True
         self.multi_select_mode = False
@@ -342,9 +268,9 @@ class FileBrowserPopup(ModalView):
 
     def set_compact_from_window(self):
         try:
-            threshold = dp(sources.COMPACT_WIDTH_DP)
+            threshold = dp(COMPACT_WIDTH_DP)
         except Exception:
-            threshold = float(sources.COMPACT_WIDTH_DP)
+            threshold = float(COMPACT_WIDTH_DP)
         compact = is_compact_width(Window.width, threshold=threshold)
         self.compact = compact
         if compact:
@@ -568,20 +494,20 @@ class FileBrowserPopup(ModalView):
         self.device_dir = default_device_dir()
 
     def _restore_machine_dir(self):
+        """Reopen the last gcodes folder. A videos visit must not win."""
         makera = _makera()
         if makera is None:
-            if not is_under_machine_root(self.machine_dir):
+            if not is_gcode_machine_dir(self.machine_dir):
                 self.machine_dir = MACHINE_BASE_DIR
             return
         if not makera.recent_remote_dir_list:
             makera.fetch_recent_remote_dir_list()
         for folder in makera.recent_remote_dir_list:
             folder = (folder or "").strip()
-            if folder and is_under_machine_root(folder):
+            if is_gcode_machine_dir(folder):
                 self.machine_dir = os.path.normpath(folder)
                 return
-        if not is_under_machine_root(self.machine_dir):
-            self.machine_dir = MACHINE_BASE_DIR
+        self.machine_dir = MACHINE_BASE_DIR
 
     def _remember_device_dir(self):
         if self.firmware_mode:
@@ -595,7 +521,9 @@ class FileBrowserPopup(ModalView):
         if self.firmware_mode:
             return
         makera = _makera()
-        if makera is None or not is_under_machine_root(self.machine_dir):
+        # /sd/videos is opened from the camera. Remembering it would make the
+        # next jobs browse reopen videos instead of gcodes.
+        if makera is None or not is_gcode_machine_dir(self.machine_dir):
             return
         makera.update_recent_remote_dir_list(os.path.normpath(self.machine_dir).replace("\\", "/"))
 
@@ -967,6 +895,7 @@ class FileBrowserPopup(ModalView):
             selected_count=selected_count,
             multi_select_mode=self.multi_select_mode,
             selected_file_count=file_count,
+            selected_name=os.path.basename(highlight or ""),
         )
 
     def _sync_chrome(self):
@@ -1172,7 +1101,7 @@ class FileBrowserPopup(ModalView):
             )
 
     def _footer_btn(self, text, callback, *, icon="", primary=False, destructive=False, tooltip=""):
-        btn = FileBrowserActionButton(
+        btn = PopupActionButton(
             btn_text=text,
             icon=icon,
             primary=primary,
@@ -1238,9 +1167,6 @@ if "FileBrowserLocationTab" not in Factory.classes:
 
 if "FileBrowserIconButton" not in Factory.classes:
     Factory.register("FileBrowserIconButton", cls=FileBrowserIconButton)
-
-if "FileBrowserActionButton" not in Factory.classes:
-    Factory.register("FileBrowserActionButton", cls=FileBrowserActionButton)
 
 if "FileBrowserEmptyOverlay" not in Factory.classes:
     Factory.register("FileBrowserEmptyOverlay", cls=FileBrowserEmptyOverlay)

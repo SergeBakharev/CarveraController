@@ -612,6 +612,14 @@ class Controller:
         else:
             self.executeCommand("M332.4\n")
 
+    def setTimelapseRecord(self, mode):
+        """Enable or disable auto timelapse recording on the Z1. Capture starts once the machine is running."""
+        CNC.vars["tl_requested"] = 1 if mode else 0
+        if mode:
+            self.executeCommand("M951\n")
+        else:
+            self.executeCommand("M952\n")
+
     def setLaserMode(self, mode):
         if mode:
             self.executeCommand("M321\n")
@@ -1501,6 +1509,31 @@ class Controller:
 
         if "H" in d:
             CNC.vars["halt_reason"] = int(d["H"][0])
+
+        # Z1 status suffix: |E:transfer,record-requested,recording,sd-used,sd-total|OTA:phase,progress
+        e_fields = d.get("E")
+        if e_fields is not None and len(e_fields) >= 5:
+            CNC.vars["tl_status"] = 1
+            CNC.vars["tl_transfer"] = int(e_fields[0])
+            CNC.vars["tl_requested"] = int(e_fields[1])
+            CNC.vars["tl_recording"] = int(e_fields[2])
+            CNC.vars["tl_sd_used"] = int(e_fields[3])
+            CNC.vars["tl_sd_total"] = int(e_fields[4])
+        else:
+            CNC.vars["tl_status"] = 0
+            CNC.vars["tl_transfer"] = 0
+            CNC.vars["tl_requested"] = 0
+            CNC.vars["tl_recording"] = 0
+            CNC.vars["tl_sd_used"] = 0
+            CNC.vars["tl_sd_total"] = 0
+
+        ota_fields = d.get("OTA")
+        if ota_fields is not None and len(ota_fields) >= 2:
+            CNC.vars["ota_phase"] = int(ota_fields[0])
+            CNC.vars["ota_progress"] = int(ota_fields[1])
+        else:
+            CNC.vars["ota_phase"] = 0
+            CNC.vars["ota_progress"] = 0
 
         self.posUpdate = True
 

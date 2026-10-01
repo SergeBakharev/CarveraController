@@ -19,8 +19,8 @@ from kivy.uix.recycleview.views import RecycleDataViewBehavior
 from kivy.utils import platform as kivy_platform
 
 from carveracontroller.translation import tr
-from carveracontroller.ui.file_browser.FileBrowserPopup import FileBrowserActionButton
-from carveracontroller.ui.file_browser.sources import COMPACT_WIDTH_DP, is_compact_width
+from carveracontroller.ui.common.action_button import PopupActionButton
+from carveracontroller.ui.common.compact import COMPACT_WIDTH_DP, is_compact_width
 from carveracontroller.updater import (
     ChannelStatus,
     UpdateSnapshot,
@@ -451,7 +451,7 @@ class UpgradePopup(ModalView):
 
     def _footer_btn(self, text, callback, *, icon="", primary=False, disabled=False):
         extra = dp(50) if icon else dp(20)
-        btn = FileBrowserActionButton(
+        btn = PopupActionButton(
             btn_text=text,
             icon=icon,
             primary=primary,

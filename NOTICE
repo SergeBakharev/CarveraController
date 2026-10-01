@@ -241,5 +241,23 @@ This product includes the following third-party icons:
    - URL: https://pictogrammers.com/library/mdi/icon/ghost-outline/
    - Used in: carveracontroller/data/GcodeViewer/ghost.png
 
+28. format-list-numbered.png
+   - Author: Google
+   - License: Apache 2.0 License
+   - URL: https://pictogrammers.com/library/mdi/icon/format-list-numbered/
+   - Used in: carveracontroller/data/format-list-numbered.png
+
+29. cog.png
+   - Author: Google
+   - License: Apache 2.0 License
+   - URL: https://pictogrammers.com/library/mdi/icon/cog/
+   - Used in: carveracontroller/data/cog.png
+
+30. update.png
+   - Author: Google
+   - License: Apache 2.0 License
+   - URL: https://pictogrammers.com/library/mdi/icon/update/
+   - Used in: carveracontroller/data/update.png
+
 ===============================================================================
 Please see the respective license files for detailed information.

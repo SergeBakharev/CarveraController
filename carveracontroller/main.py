@@ -157,15 +157,23 @@ from carveracontroller.addons.stock.stock_defaults import (
 )
 from carveracontroller.addons.stock.stock_estimate import auto_stock_for_loaded_file, header_stock_usable
 from carveracontroller.addons.stock.ui.StockSettingsPopup import StockSettingsPopup
+from carveracontroller.documentation import resolve_documentation_url
 from carveracontroller.serial_listeners import dispatch_serial_line
+from carveracontroller.timelapse import format_timelapse_status, timelapse_is_recording
+from carveracontroller.ui.config_run import CoordPopup
 from carveracontroller.ui.file_browser import FileBrowserPopup
 from carveracontroller.ui.file_browser.sources import (
     LOCATION_DEVICE,
+    is_job_file,
+    is_machine_video_path,
+    listing_has_directory,
     local_child_path,
     local_sibling_path,
     machine_child_entry_path,
     machine_listing_callback_matches,
+    machine_location_places,
     machine_ls_is_superseded,
+    machine_path_key,
     mkdir_local,
     remove_local_path,
     rename_local_path,
@@ -266,7 +274,7 @@ from .addons.camera.Z1Camera import (
     has_camera,
     set_resolution,
 )
-from .addons.intellisense.engine import highlight_mdi_line
+from .addons.intellisense.engine import correct_command_case, highlight_mdi_line
 from .addons.intellisense.ui import (
     IntellisenseExplainRowMixin,
     handle_mdi_intellisense_key,
@@ -1247,337 +1255,6 @@ class AutoLevelPopup(ModalView):
             Clock.schedule_once(partial(app.root.show_message_popup, error_message, False), 0)
 
 
-def background_image_model(name):
-    """Return the machine model a built-in background belongs to, or None if unknown."""
-    if name.startswith("CA1") or name.startswith("Air "):
-        return "CA1"
-    if name.startswith("C1"):
-        return "C1"
-    if name.startswith("Z1"):
-        return "Z1"
-    return None
-
-
-def filter_background_images(builtin_names, custom_names, model):
-    """Built-ins matching `model`, then unprefixed custom images (always shown)."""
-    matching = [name for name in builtin_names if background_image_model(name) == model]
-    matching.sort(key=str.casefold)
-    custom = sorted(custom_names, key=str.casefold)
-    return matching + custom
-
-
-def select_background_image(saved, matching):
-    """Pick a spinner value. persist is False when falling back so a mismatched saved setting is kept."""
-    values = ["None"] + list(matching)
-    if saved in values:
-        return saved, True
-    if matching:
-        return matching[0], False
-    return "None", False
-
-
-class CoordPopup(ModalView):
-    config = {}
-    mode = StringProperty()
-    vacuummode = ObjectProperty()
-    extoutmode = ObjectProperty()
-    autoblowmode = ObjectProperty()
-    autobedcleanmode = ObjectProperty()
-    ionizermode = ObjectProperty()
-    origin_popup = ObjectProperty()
-    zprobe_popup = ObjectProperty()
-    auto_level_popup = ObjectProperty()
-    setx_popup = ObjectProperty()
-    sety_popup = ObjectProperty()
-    setz_popup = ObjectProperty()
-    seta_popup = ObjectProperty()
-    settool_popup = ObjectProperty()
-    change_tool_popup = ObjectProperty()
-    MoveA_popup = ObjectProperty()
-
-    def __init__(self, config, **kwargs):
-        self.config = config
-        self.origin_popup = OriginPopup(self)
-        self.zprobe_popup = ZProbePopup(self)
-        self.auto_level_popup = AutoLevelPopup(self)
-        self.setx_popup = SetXPopup(self)
-        self.sety_popup = SetYPopup(self)
-        self.setz_popup = SetZPopup(self)
-        self.seta_popup = SetAPopup(self)
-        self.settool_popup = SetToolPopup(self)
-        self.change_tool_popup = ChangeToolPopup(self)
-        self.MoveA_popup = MoveAPopup(self)
-        self.mode = "Run"  # 'Margin' / 'ZProbe' / 'Leveling'
-        super().__init__(**kwargs)
-        self.user_play_file_image_dir = Config.get("carvera", "custom_bkg_img_dir")
-        self.custom_background_image_files = []
-        self.builtin_background_image_files = []
-        self._suppress_background_image_config_write = False
-
-        default_bkg_images = os.path.join(os.path.dirname(__file__), "data/play_file_image_backgrounds")
-
-        if os.path.exists(self.user_play_file_image_dir):
-            self.custom_background_image_files = [
-                f.replace(".png", "") for f in os.listdir(self.user_play_file_image_dir) if f.endswith(".png")
-            ]
-
-        for f in os.listdir(default_bkg_images):
-            if f.endswith(".png"):
-                self.builtin_background_image_files.append(f.replace(".png", ""))
-
-        Clock.schedule_once(self.populate_spinner, 0)
-        app = App.get_running_app()
-        if app is not None:
-            app.bind(model=self._on_machine_model_changed)
-
-    def _on_machine_model_changed(self, _instance, _value):
-        self.populate_spinner()
-
-    def populate_spinner(self, dt=None):
-        if "background_image_spinner" not in self.ids:
-            return
-        app = App.get_running_app()
-        model = app.model if app is not None else ""
-        matching = filter_background_images(
-            self.builtin_background_image_files, self.custom_background_image_files, model
-        )
-        saved_image = Config.get("carvera", "background_image")
-        selected, persist = select_background_image(saved_image, matching)
-        spinner = self.ids.background_image_spinner
-        self._suppress_background_image_config_write = not persist
-        try:
-            spinner.values = ["None"] + matching
-            if spinner.text != selected:
-                spinner.text = selected
-            else:
-                self.update_background_image(selected)
-        finally:
-            self._suppress_background_image_config_write = False
-
-    def update_background_image(self, filename):
-        if not self._suppress_background_image_config_write:
-            Config.set("carvera", "background_image", filename)
-            Config.write()
-
-        if filename != "None":
-            old_source = os.path.join(os.path.dirname(__file__), "data/play_file_image_backgrounds", filename)
-            new_source = os.path.join(self.user_play_file_image_dir, filename)
-            cnc_workspace = self.ids.cnc_workspace
-            if os.path.isfile(new_source + ".png"):
-                cnc_workspace.update_background_image(new_source + ".png")
-            elif os.path.isfile(old_source + ".png"):
-                cnc_workspace.update_background_image(old_source + ".png")
-            else:
-                cnc_workspace.update_background_image("None")
-        else:
-            cnc_workspace = self.ids.cnc_workspace
-            cnc_workspace.update_background_image("None")
-
-    def open_bkg_img_dir(self):
-        app = App.get_running_app()
-        folder_path = app.ids.coord_popup.user_play_file_image_dir
-
-        # Ensure the folder exists
-        if not os.path.exists(folder_path):
-            logger.warning(f"Folder '{folder_path}' does not exist!")
-            return
-
-        # Open based on OS
-        if platform.system() == "Windows":
-            os.startfile(folder_path)
-        elif platform.system() == "Darwin":  # macOS
-            subprocess.Popen(["open", folder_path])
-        else:  # Linux
-            subprocess.Popen(["xdg-open", folder_path])
-
-        folder_path = os.path.join(os.path.dirname(__file__), "data/play_file_image_backgrounds")
-
-        # Ensure the folder exists
-        if not os.path.exists(folder_path):
-            logger.warning(f"Folder '{folder_path}' does not exist!")
-            return
-
-        # Open based on OS
-        if platform.system() == "Windows":
-            os.startfile(folder_path)
-        elif platform.system() == "Darwin":  # macOS
-            subprocess.Popen(["open", folder_path])
-        else:  # Linux
-            subprocess.Popen(["xdg-open", folder_path])
-
-    def set_config(self, key1, key2, value):
-        self.config[key1][key2] = value
-        self.cnc_workspace.draw()
-
-    def load_config(self):
-        self.cnc_workspace.load_config(self.config)
-        Clock.schedule_once(self.cnc_workspace.draw, 0)
-
-        # init origin popup
-        origin_anchor = self.config["origin"]["anchor"]
-        if origin_anchor == 2 and not App.get_running_app().has_anchor2:
-            origin_anchor = 1
-            self.config["origin"]["anchor"] = 1
-        self.origin_popup.cbx_anchor1.active = origin_anchor == 1
-        self.origin_popup.cbx_anchor2.active = origin_anchor == 2
-        self.origin_popup.cbx_4axis_origin.active = origin_anchor == 3
-        self.origin_popup.cbx_current_position.active = origin_anchor == 4
-        self.origin_popup.txt_x_offset.text = str(self.config["origin"]["x_offset"])
-        self.origin_popup.txt_y_offset.text = str(self.config["origin"]["y_offset"])
-
-        self.load_origin_label()
-
-        if CNC.vars["vacuummode"] == 1:
-            self.vacuummode = True
-        else:
-            self.vacuummode = False
-
-        if CNC.vars["extoutmode"] == 1:
-            self.extoutmode = True
-        else:
-            self.extoutmode = False
-
-        if CNC.vars["autoblowmode"] == 1:
-            self.autoblowmode = True
-        else:
-            self.autoblowmode = False
-
-        if CNC.vars["autobedcleanmode"] == 1:
-            self.autobedcleanmode = True
-        else:
-            self.autobedcleanmode = False
-
-        if CNC.vars["ionizermode"] == 1:
-            self.ionizermode = True
-        else:
-            self.ionizermode = False
-
-        # Apply leveling before Z probe so turning both off does not warn.
-        self.cbx_margin.active = self.config["margin"]["active"]
-        self.cbx_leveling.active = self.config["leveling"]["active"]
-        self.cbx_zprobe.active = self.config["zprobe"]["active"]
-        # init zprobe popup
-        self.zprobe_popup.cbx_origin1.active = self.config["zprobe"]["origin"] == 1
-        self.zprobe_popup.cbx_origin2.active = self.config["zprobe"]["origin"] == 2
-        self.zprobe_popup.txt_x_offset.text = str(self.config["zprobe"]["x_offset"])
-        self.zprobe_popup.txt_y_offset.text = str(self.config["zprobe"]["y_offset"])
-
-        self.load_zprobe_label()
-
-        self.auto_level_popup.sp_x_points.text = str(self.config["leveling"]["x_points"])
-        self.auto_level_popup.sp_y_points.text = str(self.config["leveling"]["y_points"])
-        self.auto_level_popup.sp_height.text = str(self.config["leveling"]["height"])
-
-        self.load_leveling_label()
-
-    def load_origin_label(self):
-        app = App.get_running_app()
-        if app.has_4axis:
-            self.lb_origin.text = "(%g, %g) " % (
-                round(CNC.vars["wcox"] - CNC.vars["anchor1_x"] - CNC.vars["rotation_offset_x"], 4),
-                round(CNC.vars["wcoy"] - CNC.vars["anchor1_y"] - CNC.vars["rotation_offset_y"], 4),
-            ) + tr._("from Headstock")
-        else:
-            laser_x = CNC.vars["laser_module_offset_x"] if CNC.vars["lasermode"] else 0.0
-            laser_y = CNC.vars["laser_module_offset_y"] if CNC.vars["lasermode"] else 0.0
-            if self.config["origin"]["anchor"] == 2 and app.has_anchor2:
-                self.lb_origin.text = "(%g, %g) " % (
-                    round(CNC.vars["wcox"] + laser_x - CNC.vars["anchor1_x"] - CNC.vars["anchor2_offset_x"], 4),
-                    round(CNC.vars["wcoy"] + laser_y - CNC.vars["anchor1_y"] - CNC.vars["anchor2_offset_y"], 4),
-                ) + tr._("from Anchor2")
-            else:
-                self.lb_origin.text = "(%g, %g) " % (
-                    round(CNC.vars["wcox"] + laser_x - CNC.vars["anchor1_x"], 4),
-                    round(CNC.vars["wcoy"] + laser_y - CNC.vars["anchor1_y"], 4),
-                ) + tr._("from Anchor1")
-        self.lb_origin.text = CNC.wcs_names[CNC.vars["active_coord_system"]] + ": " + self.lb_origin.text
-
-    def load_zprobe_label(self):
-        app = App.get_running_app()
-        if app.has_4axis:
-            self.lb_zprobe.text = "(%g, %g) " % (
-                round(CNC.vars["anchor1_x"] + CNC.vars["rotation_offset_x"] - 3, 4),
-                round(CNC.vars["anchor1_y"] + CNC.vars["rotation_offset_y"], 4),
-            ) + tr._("Fixed Pos")
-        else:
-            self.lb_zprobe.text = (
-                "(%g, %g) " % (round(self.config["zprobe"]["x_offset"], 4), round(self.config["zprobe"]["y_offset"], 4))
-                + tr._("from")
-                + " %s" % (tr._("Work Origin") if self.config["zprobe"]["origin"] == 1 else tr._("Path Origin"))
-            )
-
-    def load_leveling_label(self):
-        self.lb_leveling.text = (
-            tr._("X Points: ")
-            + "%d " % (self.config["leveling"]["x_points"])
-            + tr._("Y Points: ")
-            + "%d " % (self.config["leveling"]["y_points"])
-            + tr._("Height: ")
-            + "%d" % (self.config["leveling"]["height"])
-        )
-
-        any_offsets_set = False
-        for offset_type in ["xn_offset", "xp_offset", "yn_offset", "yp_offset"]:
-            if self.config["leveling"][offset_type] != 0:
-                any_offsets_set = True
-
-        if any_offsets_set:
-            self.lb_leveling.text += (
-                tr._(" Offsets: ")
-                + tr._(" -X: ")
-                + "%g " % (round(self.config["leveling"]["xn_offset"], 4))
-                + tr._(" +X: ")
-                + "%g " % (round(self.config["leveling"]["xp_offset"], 4))
-                + tr._(" -Y: ")
-                + "%g " % (round(self.config["leveling"]["yn_offset"], 4))
-                + tr._(" +Y: ")
-                + "%g " % (round(self.config["leveling"]["yp_offset"], 4))
-            )
-
-    def _zprobe_controls_allowed(self):
-        app = App.get_running_app()
-        lasering = bool(app and getattr(app, "lasering", False))
-        return self.mode in ("Run", "ZProbe", "Leveling") and not lasering
-
-    def on_zprobe_checkbox(self, active):
-        app = App.get_running_app()
-        has_4axis = bool(app and getattr(app, "has_4axis", False))
-        allowed = self._zprobe_controls_allowed()
-        self.lb_zprobe.disabled = not active or not allowed
-        self.btn_zprobe.disabled = not active or has_4axis or not allowed
-        self.set_config("zprobe", "active", active)
-        if not active and self.cbx_leveling.active:
-            self._warn_zprobe_disabled_during_leveling()
-        self.toggle_config()
-
-    def on_leveling_checkbox(self, active):
-        app = App.get_running_app()
-        has_4axis = bool(app and getattr(app, "has_4axis", False))
-        leveling_allowed = self.mode in ("Run", "Leveling") and not has_4axis
-        self.lb_leveling.disabled = not active or not leveling_allowed
-        self.btn_leveling.disabled = not active or not leveling_allowed
-        self.set_config("leveling", "active", active)
-        if active:
-            self.cbx_zprobe.active = True
-            self.set_config("zprobe", "active", True)
-        self.toggle_config()
-
-    def _warn_zprobe_disabled_during_leveling(self):
-        app = App.get_running_app()
-        if app is None or getattr(app, "root", None) is None:
-            return
-        message = tr._(
-            "Auto Leveling without Auto Z Probe will use the current Z zero. "
-            "Probe Z first or leave Auto Z Probe enabled, or job height may be wrong."
-        )
-        Clock.schedule_once(partial(app.root.show_message_popup, message, False), 0)
-
-    def toggle_config(self):
-        # upldate main status
-        app = App.get_running_app()
-        app.root.update_coord_config()
-
-
 class DiagnosePopup(ModalView):
     showing = False
 
@@ -2175,6 +1852,7 @@ class IconButton(BoxLayout, ToolTipButton):
 class TransparentButton(BoxLayout, ToolTipButton):
     icon = StringProperty("fresk.png")
     active = BooleanProperty(False)
+    recording = BooleanProperty(False)
 
 
 class TransparentGrayButton(BoxLayout, ToolTipButton):
@@ -2230,7 +1908,9 @@ class CNCWorkspace(Widget):
         self._sync_workspace_aspect()
         if abs(old_aspect - self.workspace_aspect) > 1e-4:
             return
-        if self.x <= 100:
+        # Skip until the preview has a real size and load_config has run.
+        # Screen x is not a signal: a centered dialog can sit near the left edge.
+        if self.width < 2 or self.height < 2 or "origin" not in self.config:
             return
         self.canvas.clear()
         zoom = self.width / CNC.vars["worksize_x"]
@@ -2938,6 +2618,11 @@ class Makera(RelativeLayout):
     common_local_dir_list = []
     recent_local_dir_list = []
     recent_remote_dir_list = []
+    sd_videos_available = False
+    _sd_videos_probe_inflight = False
+    # Folder the UI was waiting on when a background /sd probe started.
+    # None means the probe is the listing itself, so finish treats it normally.
+    _sd_videos_probe_keep = None
 
     lines = []
 
@@ -2952,6 +2637,7 @@ class Makera(RelativeLayout):
         "autoblow_mode": [0.0, 0],
         "autobedclean_mode": [0.0, 0],
         "ionizer_mode": [0.0, 0],
+        "timelapse_record": [0.0, 0],
         "laser_mode": [0.0, 0],
         "laser_scale": [0.0, 100],
         "laser_test": [0.0, 0],
@@ -2970,6 +2656,7 @@ class Makera(RelativeLayout):
 
     status_index = 0
     past_machine_addr = None
+    mdi_auto_correct_case = True
     allow_mdi_while_machine_running = "0"
     allow_jogging_while_machine_running = "1"
     allow_jogging_while_spindle_on = "0"
@@ -3113,7 +2800,7 @@ class Makera(RelativeLayout):
         self.camera_stream = Z1Camera(
             on_frame=self._show_camera_frame,
             on_streaming=self._set_camera_streaming,
-            on_error=partial(self.show_message_popup, btn_disabled=False),
+            on_reconnecting=self._set_camera_reconnecting,
         )
         self.ids.camera_splitter.bind(collapsed=self._on_camera_splitter_collapsed)
         self.ids.camera_splitter.collapse()
@@ -3161,6 +2848,9 @@ class Makera(RelativeLayout):
 
         if Config.has_option("carvera", "address"):
             self.past_machine_addr = Config.get("carvera", "address")
+
+        if Config.has_option("carvera", "mdi_auto_correct_case"):
+            self.mdi_auto_correct_case = Config.get("carvera", "mdi_auto_correct_case") == "1"
 
         if Config.has_option("carvera", "allow_mdi_while_machine_running"):
             self.allow_mdi_while_machine_running = Config.get("carvera", "allow_mdi_while_machine_running")
@@ -3307,6 +2997,12 @@ class Makera(RelativeLayout):
         for setting in controller_config_definition:
             if "default" in setting:
                 Config.setdefault(setting["section"], setting["key"], setting["default"])
+                # The bool switch only recognises "0" and "1". An earlier default
+                # of "true" draws the switch off while the feature stays on.
+                if setting["key"] == "mdi_auto_correct_case":
+                    stored = Config.get(setting["section"], setting["key"])
+                    if str(stored).lower() == "true":
+                        Config.set(setting["section"], setting["key"], "1")
                 setting.pop("default", None)
             controller_config.append(setting)
 
@@ -3413,7 +3109,7 @@ class Makera(RelativeLayout):
         self.file_popup.open_for_firmware()
 
     def open_online_docs(self):
-        webbrowser.open("https://carvera-community.gitbook.io/docs/controller/")
+        webbrowser.open(resolve_documentation_url("https://carvera-community.gitbook.io/docs/controller/"))
 
     def open_file_browser(self):
         app = App.get_running_app()
@@ -3421,6 +3117,15 @@ class Makera(RelativeLayout):
         if unavailable or self._is_popup_open():
             return False
         self.file_popup.open_for_jobs()
+        return True
+
+    def open_videos_browser(self):
+        """Open the file browser on the machine Videos folder."""
+        app = App.get_running_app()
+        unavailable = app.state not in ("Idle", NOT_CONNECTED) and not app.playing
+        if unavailable or self._is_popup_open() or not self.sd_videos_available:
+            return False
+        self.file_popup.open_for_videos()
         return True
 
     def open_mdi(self):
@@ -4106,6 +3811,19 @@ class Makera(RelativeLayout):
 
         self.remote_dir_drop_down.clear_widgets()
 
+        places = machine_location_places(videos_available=self.sd_videos_available)
+        if places:
+            self.remote_dir_drop_down.add_widget(DropDownSplitter(text="       " + tr._("Locations")))
+            for path, label in places:
+                btn = DirectoryView(
+                    full_path=path,
+                    data_text=tr._(label),
+                    size_hint_y=None,
+                    height="30dp",
+                )
+                btn.bind(on_release=lambda _btn, place=path: self.remote_dir_drop_down.select(place))
+                self.remote_dir_drop_down.add_widget(btn)
+
         splitter = DropDownSplitter(text="       " + tr._("Recent Places"))
         self.remote_dir_drop_down.add_widget(splitter)
 
@@ -4121,6 +3839,47 @@ class Makera(RelativeLayout):
             self.remote_dir_drop_down.add_widget(btn)
 
         self.remote_dir_drop_down.open(button)
+        self.probe_sd_videos_dir()
+
+    def probe_sd_videos_dir(self):
+        """List /sd once it is idle, so Videos can be offered if that folder exists."""
+        app = App.get_running_app()
+        if app is None or app.state != "Idle":
+            return
+        if self.sd_videos_available or self.backing_up_config or self.downloading_config:
+            return
+        if machine_path_key(getattr(self.file_popup, "machine_dir", "")) == "/sd":
+            return
+        threading.Thread(target=self._run_sd_videos_probe, daemon=True).start()
+
+    def _run_sd_videos_probe(self):
+        """List /sd without taking the folder the file browser is waiting on.
+
+        ``_machine_ls_wanted_path`` stays whatever the UI asked for. Finish
+        still chains a newer request, and a probe that nobody interrupted
+        does not list that folder a second time.
+        """
+        with self._machine_ls_lock:
+            if self.controller.loadNUM == LOAD_DIR or self._sd_videos_probe_inflight or self.sd_videos_available:
+                return
+            self._sd_videos_probe_inflight = True
+            wanted = self._machine_ls_wanted_path
+            if wanted and machine_path_key(wanted) != "/sd":
+                self._sd_videos_probe_keep = wanted
+            else:
+                self._sd_videos_probe_keep = None
+            self._start_machine_ls("/sd")
+
+    def _note_sd_videos_listing(self, listed_path, file_list):
+        if machine_path_key(listed_path or "") != "/sd":
+            return
+        self._sd_videos_probe_inflight = False
+        if not file_list:
+            return
+        self.sd_videos_available = listing_has_directory(file_list, "videos")
+        app = App.get_running_app()
+        if app is not None:
+            app.sd_videos_available = self.sd_videos_available
 
     # -----------------------------------------------------------------------
     def _remember_connection_method(self, method):
@@ -4975,6 +4734,8 @@ class Makera(RelativeLayout):
         if not filepath or os.path.isdir(filepath):
             return
         filename = os.path.basename(os.path.normpath(filepath))
+        if not is_job_file(filename):
+            return
         if self.file_popup.machine_listing_has(filename):
             # show message popup
             self.confirm_popup.lb_title.text = tr._("File Already Exists")
@@ -4989,6 +4750,8 @@ class Makera(RelativeLayout):
     def view_local_file(self):
         filepath = self.file_popup.selected_device_file
         if not filepath or os.path.isdir(filepath):
+            return
+        if not is_job_file(os.path.basename(filepath)):
             return
         app = App.get_running_app()
         app.selected_local_filename = filepath
@@ -5007,7 +4770,7 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def check_and_download(self):
         remote_path = self.file_popup.selected_machine_file
-        if not remote_path:
+        if not remote_path or not is_job_file(os.path.basename(remote_path)):
             return
         remote_size = self.file_popup.selected_machine_filesize
         remote_post_path = remote_path.replace("/sd/", "").replace("\\sd\\", "")
@@ -5130,6 +4893,7 @@ class Makera(RelativeLayout):
 
         self.backing_up_config = True
         self.downloading_config = False
+        self._backup_md5_mismatches = []
         Clock.schedule_once(partial(self.progressStart, tr._("Downloading config files..."), None), 0)
 
         self.fill_remote_dir_callback = self.download_config_files
@@ -5196,8 +4960,42 @@ class Makera(RelativeLayout):
         self.progressFinish()
         self.backing_up_config = False
         self.downloading_config = False
+        self._backup_md5_mismatches = []
         self.fill_remote_dir_callback = None
         self.file_popup.restore_machine_root()
+
+    def _warn_video_download_md5(self, remote_path):
+        logger.warning(
+            "Kept %s despite an MD5 mismatch. This is a known issue with video file downloads from the Makera ESP32.",
+            remote_path,
+        )
+
+    def _note_config_backup_md5_mismatch(self, filename):
+        name = str(filename or "").strip()
+        if not name:
+            return
+        mismatches = getattr(self, "_backup_md5_mismatches", None)
+        if mismatches is None:
+            mismatches = []
+            self._backup_md5_mismatches = mismatches
+        if name not in mismatches:
+            mismatches.append(name)
+        logger.warning(
+            "Config backup kept %s despite an MD5 mismatch. Some machines ship with factory checksum mismatches.",
+            name,
+        )
+
+    def _config_backup_md5_warning_message(self, filenames):
+        files = [str(name) for name in filenames if str(name).strip()]
+        note = tr._(
+            "It has been observed that some machines have been shipped with mismatching "
+            "MD5 checksums from the factory, so this might be normal. It's recommended to manually verify the downloaded file."
+        )
+        if len(files) == 1:
+            detail = tr._("The MD5 checksum for '%s' did not match the MD5 of the downloaded file.") % files[0]
+        else:
+            detail = tr._("The MD5 checksum failed for:\n%s") % "\n".join(files)
+        return tr._("Configuration files backed up successfully.") + "\n\n" + detail + "\n\n" + note
 
     # -----------------------------------------------------------------------
     def finish_backing_up_config(self, downloaded_file_paths, selected_dir, _selected_file):
@@ -5228,9 +5026,20 @@ class Makera(RelativeLayout):
         self.backing_up_config = False
         self.downloading_config = False
         self.file_popup.restore_machine_root()
-        if not failed:
+        md5_mismatches = list(getattr(self, "_backup_md5_mismatches", None) or [])
+        self._backup_md5_mismatches = []
+        if not failed and md5_mismatches:
             Clock.schedule_once(
-                partial(self.show_message_popup, tr._("Configuration files backed up successfully"), False), 0
+                partial(
+                    self.show_message_popup,
+                    self._config_backup_md5_warning_message(md5_mismatches),
+                    False,
+                ),
+                0,
+            )
+        elif not failed:
+            Clock.schedule_once(
+                partial(self.show_message_popup, tr._("Configuration files backed up successfully."), False), 0
             )
 
     # -----------------------------------------------------------------------
@@ -5327,6 +5136,7 @@ class Makera(RelativeLayout):
             self.clear_selection()
             self.apply_bed_settings()
         self.updateStatus()
+        Clock.schedule_once(lambda _dt: self.probe_sd_videos_dir(), 0.5)
 
     def _get_current_machine_connection_key(self):
         """Return a stable identifier for the current machine connection."""
@@ -5446,6 +5256,7 @@ class Makera(RelativeLayout):
         self.downloading = True
         # None = error/abort; never use False — `False >= 0` is True in Python.
         download_result = None
+        md5_failed = False
         try:
             md5 = Utils.md5(tmp_filename) if os.path.exists(tmp_filename) else ""
             # Makera framed transfer: pause RX before the download command so
@@ -5460,9 +5271,13 @@ class Makera(RelativeLayout):
                 self.controller.pauseStream(0.2)
                 progress_cb = partial(self.downloadCallback, remote_path) if show_progress else None
             download_result = self.controller.stream.download(tmp_filename, md5, progress_cb)
+            md5_failed = bool(
+                getattr(getattr(getattr(self.controller, "stream", None), "modem", None), "download_md5_failed", False)
+            )
         except Exception:
             logger.error(sys.exc_info()[1])
             download_result = None
+            md5_failed = False
             self.controller.resumeStream()
             self.downloading = False
 
@@ -5471,13 +5286,34 @@ class Makera(RelativeLayout):
 
         self.heartbeat_time = time.time()
 
+        # The Makera ESP32 advertises a digest for /sd/video and /sd/videos files
+        # that does not match the bytes. The file is fine; keep it and warn.
+        if (
+            download_result is None
+            and md5_failed
+            and is_machine_video_path(remote_path)
+            and os.path.exists(tmp_filename)
+        ):
+            self._warn_video_download_md5(remote_path)
+            try:
+                kept_size = os.path.getsize(tmp_filename)
+            except OSError:
+                kept_size = 1
+            download_result = kept_size if kept_size > 0 else 1
+        # Factory images sometimes advertise an MD5 that does not match the file.
+        # Keep the received bytes and let the backup finish; warn after it completes.
+        elif download_result is None and was_backup and md5_failed and os.path.exists(tmp_filename):
+            self._note_config_backup_md5_mismatch(remote_path)
+            try:
+                kept_size = os.path.getsize(tmp_filename)
+            except OSError:
+                kept_size = 1
+            download_result = kept_size if kept_size > 0 else 1
+
         if download_result is None:
             if os.path.exists(tmp_filename):
                 os.remove(tmp_filename)
             # show message popup
-            md5_failed = bool(
-                getattr(getattr(getattr(self.controller, "stream", None), "modem", None), "download_md5_failed", False)
-            )
             if apply_config:
                 Clock.schedule_once(partial(self.finishLoadConfig, False), 0.1)
                 error_msg = (
@@ -5547,7 +5383,10 @@ class Makera(RelativeLayout):
                 self.load_gcode_file(local_path)
                 self._ingest_machine_gcode_thumbnail(remote_path, local_path)
             else:
-                if self._decompress_downloaded_file_in_place(local_path):
+                if self._decompress_downloaded_file_in_place(
+                    local_path,
+                    integrity_label=remote_path if was_backup or is_machine_video_path(remote_path) else None,
+                ):
                     self._ingest_machine_gcode_thumbnail(remote_path, local_path)
 
             if not was_config_download and not was_backup:
@@ -5586,7 +5425,9 @@ class Makera(RelativeLayout):
             btn_information = Button(text=tr._("More Information"))
             btn_information.bind(
                 on_release=lambda *a: (
-                    webbrowser.open("https://carvera-community.gitbook.io/docs/compatibility"),
+                    webbrowser.open(
+                        resolve_documentation_url("https://carvera-community.gitbook.io/docs/compatibility")
+                    ),
                     popup.dismiss(),
                 )
             )
@@ -5935,8 +5776,18 @@ class Makera(RelativeLayout):
             timed_out = now - self.short_load_time > SHORT_LOAD_TIMEOUT
             sent_path = self._machine_ls_sent_path
             wanted_path = self._machine_ls_wanted_path
+            keep = self._sd_videos_probe_keep
+            self._sd_videos_probe_keep = None
             superseded = machine_ls_is_superseded(sent_path, wanted_path)
-            if not superseded:
+            # A background /sd probe is not the folder the UI asked for. Leave
+            # that folder alone unless a newer request arrived while probing.
+            background_probe = keep is not None and machine_path_key(sent_path or "") == "/sd"
+            if background_probe and machine_path_key(wanted_path or "") == machine_path_key(keep):
+                superseded = False
+                report_failure = False
+            else:
+                report_failure = not superseded
+            if report_failure:
                 if self.controller.loadERR:
                     Clock.schedule_once(partial(self.loadError, tr._("Error loading dir") + " '%s'!" % (sent_path,)), 0)
                 elif timed_out:
@@ -6212,7 +6063,7 @@ class Makera(RelativeLayout):
             return None
 
     # -----------------------------------------------------------------------
-    def _decompress_downloaded_file_in_place(self, filepath):
+    def _decompress_downloaded_file_in_place(self, filepath, integrity_label=None):
         """Decompress a QuickLZ download in place without a `.lz/` sidecar folder."""
         try:
             with open(filepath, "rb") as f:
@@ -6245,10 +6096,10 @@ class Makera(RelativeLayout):
             os.remove(lz_tmp)
         except OSError:
             pass
-        return self._verify_deferred_download_md5(filepath)
+        return self._verify_deferred_download_md5(filepath, label=integrity_label)
 
     # -----------------------------------------------------------------------
-    def _verify_deferred_download_md5(self, filepath):
+    def _verify_deferred_download_md5(self, filepath, label=None):
         """Verify a machine-advertised MD5 after .lz decompress. Returns False on mismatch."""
         modem = getattr(getattr(self.controller, "stream", None), "modem", None)
         expected = getattr(modem, "deferred_download_md5", None) if modem is not None else None
@@ -6262,11 +6113,18 @@ class Makera(RelativeLayout):
             logger.info("Download MD5 matched after decompress: %s", actual)
             return True
 
+        if is_machine_video_path(label or ""):
+            self._warn_video_download_md5(label or filepath)
+            return True
+
         logger.error(
             "Download error: MD5 mismatch after decompress (expected=%s, actual=%s)",
             expected,
             actual,
         )
+        if self.backing_up_config:
+            self._note_config_backup_md5_mismatch(label or filepath)
+            return True
         try:
             if os.path.exists(filepath):
                 os.remove(filepath)
@@ -6790,6 +6648,7 @@ class Makera(RelativeLayout):
                         }
                     )
 
+        self._note_sd_videos_listing(listed_path, file_list)
         Clock.schedule_once(partial(self.fill_remote_dir, file_list, listed_path), 0)
 
     # -----------------------------------------------------------------------
@@ -7117,6 +6976,18 @@ class Makera(RelativeLayout):
                     app.is_community_firmware = False
                     app.supports_auto_ext_out = False
                     app.supports_camera = False
+                    self.sd_videos_available = False
+                    self._sd_videos_probe_inflight = False
+                    self._sd_videos_probe_keep = None
+                    app.sd_videos_available = False
+                    CNC.vars["tl_status"] = 0
+                    CNC.vars["tl_transfer"] = 0
+                    CNC.vars["tl_requested"] = 0
+                    CNC.vars["tl_recording"] = 0
+                    CNC.vars["tl_sd_used"] = 0
+                    CNC.vars["tl_sd_total"] = 0
+                    CNC.vars["ota_phase"] = 0
+                    CNC.vars["ota_progress"] = 0
                     self.camera_checked = False
                     self.camera_probe += 1  # discard the result of a probe still in flight
                     self.camera_stream.stop()
@@ -7345,6 +7216,7 @@ class Makera(RelativeLayout):
                     "autobedclean_switch_play",
                 ),
                 ("ionizer_mode", self.controller.setIonizerMode, "ionizermode", "ionizer_switch_play"),
+                ("timelapse_record", self.controller.setTimelapseRecord, "tl_requested", "timelapse_switch_play"),
             ):
                 elapsed = now - self.control_list[control_name][0]
                 if elapsed < 2:
@@ -7565,8 +7437,35 @@ class Makera(RelativeLayout):
                 elif self.wpb_leveling.value > 0:
                     self.wpb_leveling.value = 84
 
+            self._refresh_timelapse_indicator(app)
+
         except:
             logger.error(sys.exc_info()[1])
+
+    def _refresh_timelapse_indicator(self, app):
+        """Red recording mark while the firmware reports that it is recording."""
+        has_status = bool(CNC.vars.get("tl_status")) and app.state not in (NOT_CONNECTED, "N/A")
+        requested = int(CNC.vars.get("tl_requested") or 0)
+        recording = int(CNC.vars.get("tl_recording") or 0)
+        active = has_status and timelapse_is_recording(recording)
+        if app.timelapse_recording != active:
+            app.timelapse_recording = active
+        if app.timelapse_status != has_status:
+            app.timelapse_status = has_status
+        if not has_status:
+            if app.timelapse_status_text:
+                app.timelapse_status_text = ""
+            return
+        text = format_timelapse_status(
+            transfer=int(CNC.vars.get("tl_transfer") or 0),
+            requested=requested,
+            recording=recording,
+            sd_used=int(CNC.vars.get("tl_sd_used") or 0),
+            sd_total=int(CNC.vars.get("tl_sd_total") or 0),
+            translate=tr._,
+        )
+        if app.timelapse_status_text != text:
+            app.timelapse_status_text = text
 
     # -----------------------------------------------------------------------
     def updateDiagnose(self, *args):
@@ -8396,6 +8295,9 @@ class Makera(RelativeLayout):
             self.message_popup.lb_content.text = tr._("UI Density changed, restart application to apply.")
             self.message_popup.open()
 
+        if "mdi_auto_correct_case" in self.controller_setting_change_list:
+            self.mdi_auto_correct_case = self.controller_setting_change_list["mdi_auto_correct_case"] == "1"
+
         if "allow_mdi_while_machine_running" in self.controller_setting_change_list:
             self.allow_mdi_while_machine_running = self.controller_setting_change_list[
                 "allow_mdi_while_machine_running"
@@ -8795,10 +8697,19 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def _set_camera_streaming(self, streaming):
+        """Collapse the panel when the camera session actually ends.
+
+        A dropped socket stays streaming and reports reconnecting instead, so a
+        blip does not come through here.
+        """
         App.get_running_app().camera_streaming = streaming
         splitter = self.ids.get("camera_splitter")
         if splitter is not None and not streaming and not splitter.collapsed:
             splitter.collapse()
+
+    # -----------------------------------------------------------------------
+    def _set_camera_reconnecting(self, reconnecting):
+        App.get_running_app().camera_reconnecting = reconnecting
 
     # -----------------------------------------------------------------------
     def clear_selection(self):
@@ -9364,6 +9275,8 @@ class Makera(RelativeLayout):
                             }
                         )
                     )
+                if self.mdi_auto_correct_case:
+                    sanitized_to_send = "\n".join(correct_command_case(line) for line in sanitized_to_send.split("\n"))
                 self.controller.executeCommand(sanitized_to_send)
         self.manual_cmd.text = ""
         hide_mdi_intellisense()
@@ -9407,6 +9320,11 @@ class MakeraApp(App):
     is_community_firmware = BooleanProperty(False)
     supports_camera = BooleanProperty(False)
     camera_streaming = BooleanProperty(False)
+    camera_reconnecting = BooleanProperty(False)
+    sd_videos_available = BooleanProperty(False)
+    timelapse_recording = BooleanProperty(False)
+    timelapse_status = BooleanProperty(False)
+    timelapse_status_text = StringProperty("")
     camera_brightness = NumericProperty(ADJUST_DEFAULT)
     camera_contrast = NumericProperty(ADJUST_DEFAULT)
     camera_gamma = NumericProperty(ADJUST_DEFAULT)

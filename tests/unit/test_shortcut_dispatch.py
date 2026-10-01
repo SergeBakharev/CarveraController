@@ -567,6 +567,38 @@ def test_batch_download_worker_counts_a_file_only_after_its_progress_is_applied(
     assert popup.batch_value == 100
 
 
+def test_open_videos_browser_uses_the_machine_videos_folder():
+    popup = SimpleNamespace(open_for_videos=Mock())
+    root = SimpleNamespace(file_popup=popup, _is_popup_open=Mock(return_value=False), sd_videos_available=True)
+
+    with patch("carveracontroller.main.App.get_running_app", return_value=SimpleNamespace(state="Idle", playing=False)):
+        assert Makera.open_videos_browser(root) is True
+
+    popup.open_for_videos.assert_called_once_with()
+
+
+def test_open_videos_browser_is_blocked_until_the_videos_folder_is_seen():
+    popup = SimpleNamespace(open_for_videos=Mock())
+    root = SimpleNamespace(file_popup=popup, _is_popup_open=Mock(return_value=False), sd_videos_available=False)
+
+    with patch("carveracontroller.main.App.get_running_app", return_value=SimpleNamespace(state="Idle", playing=False)):
+        assert Makera.open_videos_browser(root) is False
+
+    popup.open_for_videos.assert_not_called()
+
+
+def test_open_videos_browser_is_blocked_while_the_machine_is_busy():
+    popup = SimpleNamespace(open_for_videos=Mock())
+    root = SimpleNamespace(file_popup=popup, _is_popup_open=Mock(return_value=False), sd_videos_available=True)
+
+    with patch(
+        "carveracontroller.main.App.get_running_app", return_value=SimpleNamespace(state="Pause", playing=False)
+    ):
+        assert Makera.open_videos_browser(root) is False
+
+    popup.open_for_videos.assert_not_called()
+
+
 def test_start_job_applicability_and_opening():
     app = SimpleNamespace(state="Idle", selected_remote_filename="job.nc", playing=False)
     popup = SimpleNamespace(mode="", load_config=Mock(), open=Mock())
