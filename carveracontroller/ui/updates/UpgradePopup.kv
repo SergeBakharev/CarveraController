@@ -72,6 +72,13 @@
             size_hint_y: None
             height: dp(36)
             spacing: dp(8)
+            Image:
+                source: 'data/update.png'
+                size_hint: None, None
+                size: dp(22), dp(22)
+                pos_hint: {'center_y': 0.5}
+                allow_stretch: True
+                keep_ratio: True
             Label:
                 text: tr._('Updates')
                 size_hint_x: None
@@ -304,7 +311,7 @@
                     size_hint_x: None
                     width: self.minimum_width
                     spacing: dp(8)
-            FileBrowserActionButton:
+            PopupActionButton:
                 id: btn_close
                 size_hint_x: None
                 size_hint_y: None

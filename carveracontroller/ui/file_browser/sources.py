@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable
 
 from carveracontroller import Utils
+from carveracontroller.ui.common.compact import COMPACT_WIDTH_DP, is_compact_width
 
 MACHINE_BASE_DIR = "/sd/gcodes"
 MACHINE_BASE_DIR_WIN = "\\sd\\gcodes"
@@ -21,7 +22,6 @@ _MACHINE_ROOT_NAMES = ("gcodes", "videos")
 LOCATION_DEVICE = "device"
 LOCATION_MACHINE = "machine"
 CONFIG_LAST_LOCATION = "file_browser_location"
-COMPACT_WIDTH_DP = 720
 
 KIND_FOLDER = "folder"
 KIND_FILE = "file"
@@ -55,10 +55,6 @@ Translate = Callable[[str], str]
 
 def is_ios_platform() -> bool:
     return os.environ.get("KIVY_BUILD") == "ios" or sys.platform == "ios"
-
-
-def is_compact_width(window_width: float, *, threshold: float = COMPACT_WIDTH_DP) -> bool:
-    return float(window_width) < float(threshold)
 
 
 def default_device_dir() -> str:
