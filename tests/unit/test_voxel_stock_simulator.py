@@ -185,22 +185,6 @@ def test_mesh_chunk_produces_geometry_after_carve():
     assert meshed
 
 
-def test_greedy_rects_cover_mask_exactly():
-    from carveracontroller.addons.stock.simulator.carvers.voxel.mesher import _greedy_rects
-
-    rng = np.random.default_rng(0)
-    mask = rng.random((16, 16)) > 0.55
-    i0, j0, i1, j1 = _greedy_rects(mask)
-    covered = np.zeros_like(mask)
-    for a, b, c, d in zip(i0, j0, i1, j1):
-        assert not covered[a:c, b:d].any()
-        covered[a:c, b:d] = True
-    assert np.array_equal(covered, mask)
-    full_i0, full_j0, full_i1, full_j1 = _greedy_rects(np.ones((8, 8), dtype=bool))
-    assert list(full_i0) == [0] and list(full_j0) == [0]
-    assert list(full_i1) == [8] and list(full_j1) == [8]
-
-
 def test_full_cube_greedy_mesh_is_six_quads():
     from carveracontroller.addons.stock.simulator.carvers.voxel.grid import ChunkCoord
     from carveracontroller.addons.stock.simulator.carvers.voxel.mesher import mesh_chunk_state

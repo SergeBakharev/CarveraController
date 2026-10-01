@@ -15,9 +15,6 @@ from carveracontroller.addons.stock.simulator.carvers.array_mesh import (
     compress_array,
     decompress_array,
     keyed_packed_meshes,
-    pack_quad_meshes,
-    pick_outward_quads,
-    quad_normals,
     tile_keys_from_window_mask,
 )
 from carveracontroller.addons.stock.simulator.carvers.backend import DEFAULT_TILE_SIZE, TileKey
@@ -452,109 +449,22 @@ class CylindricalBackend(LaserDecalMixin):
 
 
 def _mesh_cylindrical_field(backend: CylindricalBackend) -> list[tuple[list[float], list[int], list]]:
-    """Regular (x, θ) grid — no greedy X-merge (that left T-junction holes on slopes)."""
+    """Welded (x, θ) shell via the native extension (cut simulation requires it)."""
     from carveracontroller.addons.stock.simulator import native as native_mod
     from carveracontroller.addons.stock.simulator.mesh_format import DEFAULT_COLOR
 
-    if native_mod.native_enabled() and hasattr(native_mod._impl, "mesh_cylinder") and backend.radii.size:
-        return native_mod.mesh_cylinder_arrays(
-            backend.radii,
-            ix0=int(backend._ox),
-            nx_total=int(backend.nx),
-            min_x=float(backend.bounds.min_x),
-            cell=float(backend.cell_size),
-            axis_y=float(backend.axis_y),
-            axis_z=float(backend.axis_z),
-            sin_t=backend._sin_t,
-            cos_t=backend._cos_t,
-            floor_r=shell_floor_radius_mm(backend.cell_size),
-            color=DEFAULT_COLOR,
-        )
-    return _mesh_cylindrical_field_python(backend)
-
-
-def _mesh_cylindrical_field_python(backend: CylindricalBackend) -> list[tuple[list[float], list[int], list]]:
-    """Python fallback: unshared quads plus a diagonal pick."""
-    ox = backend._ox
-    radii = backend.radii
-    nx_win, n_theta = int(radii.shape[0]), int(radii.shape[1])
-    if nx_win < 1 or n_theta < 1:
+    if not backend.radii.size:
         return []
-
-    ay, az = float(backend.axis_y), float(backend.axis_z)
-    vs = float(backend.cell_size)
-    wx0 = float(backend.bounds.min_x)
-    sin_t = backend._sin_t.astype(np.float64, copy=False)
-    cos_t = backend._cos_t.astype(np.float64, copy=False)
-    gx0 = ox
-    xs = wx0 + (np.arange(gx0, gx0 + nx_win, dtype=np.float64) + 0.5) * vs
-    r_occ = radii.astype(np.float64, copy=False)
-    floor = shell_floor_radius_mm(vs)
-    # Occupancy may be r=0 (past the axis). Draw a hairline tube so the skin
-    # stays closed without collapsing every θ onto the axis.
-    r = np.where(r_occ >= 0.0, np.maximum(r_occ, floor), r_occ)
-
-    parts_c: list[np.ndarray] = []
-    parts_n: list[np.ndarray] = []
-
-    if nx_win >= 2:
-        pts = np.empty((nx_win, n_theta, 3), dtype=np.float32)
-        pts[:, :, 0] = xs[:, None]
-        pts[:, :, 1] = (ay + r * sin_t[None, :]).astype(np.float32)
-        pts[:, :, 2] = (az + r * cos_t[None, :]).astype(np.float32)
-        r0, r1 = r_occ[:-1], r_occ[1:]
-        r0n = np.roll(r0, -1, axis=1)
-        r1n = np.roll(r1, -1, axis=1)
-        ok = (r0 >= 0.0) & (r1 >= 0.0) & (r0n >= 0.0) & (r1n >= 0.0)
-        p00 = pts[:-1][ok]
-        p10 = pts[1:][ok]
-        p01 = np.roll(pts[:-1], -1, axis=1)[ok]
-        p11 = np.roll(pts[1:], -1, axis=1)[ok]
-        if p00.size:
-            mid = 0.25 * (p00 + p10 + p11 + p01)
-            hint = np.empty_like(mid)
-            hint[:, 0] = 0.0
-            hint[:, 1] = mid[:, 1] - ay
-            hint[:, 2] = mid[:, 2] - az
-            shell = pick_outward_quads(p00, p10, p11, p01, hint)
-            parts_c.append(shell)
-            parts_n.append(quad_normals(shell))
-
-    def _cap(ix: int, x_sign: float) -> None:
-        li = ix - ox
-        if li < 0 or li >= nx_win:
-            return
-        ring = r[li]
-        occ = r_occ[li]
-        rn = np.roll(ring, -1)
-        occ_n = np.roll(occ, -1)
-        ok = (occ >= 0.0) & (occ_n >= 0.0)
-        if not ok.any():
-            return
-        x = wx0 + (ix + 0.5) * vs
-        p_it = np.stack((np.full(n_theta, x), ay + ring * sin_t, az + ring * cos_t), axis=1).astype(np.float32)
-        p_n = np.stack(
-            (np.full(n_theta, x), ay + rn * np.roll(sin_t, -1), az + rn * np.roll(cos_t, -1)),
-            axis=1,
-        ).astype(np.float32)
-        center = np.array((x, ay, az), dtype=np.float32)
-        ctr = np.broadcast_to(center, (n_theta, 3))
-        if x_sign < 0.0:
-            cap = np.stack((ctr, p_it, p_n, ctr), axis=1)
-        else:
-            cap = np.stack((ctr, p_n, p_it, ctr), axis=1)
-        nrm = np.zeros((n_theta, 3), dtype=np.float32)
-        nrm[:, 0] = x_sign
-        parts_c.append(cap[ok])
-        parts_n.append(nrm[ok])
-
-    if gx0 <= 0:
-        _cap(0, -1.0)
-    if gx0 + nx_win >= backend.nx:
-        _cap(backend.nx - 1, 1.0)
-
-    if not parts_c:
-        return []
-    corners = np.concatenate(parts_c, axis=0)
-    normals = np.concatenate(parts_n, axis=0)
-    return pack_quad_meshes(corners, normals, DEFAULT_COLOR)
+    return native_mod.mesh_cylinder_arrays(
+        backend.radii,
+        ix0=int(backend._ox),
+        nx_total=int(backend.nx),
+        min_x=float(backend.bounds.min_x),
+        cell=float(backend.cell_size),
+        axis_y=float(backend.axis_y),
+        axis_z=float(backend.axis_z),
+        sin_t=backend._sin_t,
+        cos_t=backend._cos_t,
+        floor_r=shell_floor_radius_mm(backend.cell_size),
+        color=DEFAULT_COLOR,
+    )

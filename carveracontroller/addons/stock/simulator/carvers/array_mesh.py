@@ -86,51 +86,6 @@ def compressed_nbytes(payload: object) -> int:
     return 64
 
 
-def quad_normals(corners: np.ndarray) -> np.ndarray:
-    """Unit normals from ``(N, 4, 3)`` quads using edges 0→1 and 0→3."""
-    e1 = corners[:, 1] - corners[:, 0]
-    e2 = corners[:, 3] - corners[:, 0]
-    n = np.cross(e1, e2)
-    lens = np.linalg.norm(n, axis=1, keepdims=True)
-    return (n / np.maximum(lens, 1e-12)).astype(np.float32)
-
-
-def pick_outward_quads(
-    p00: np.ndarray,
-    p10: np.ndarray,
-    p11: np.ndarray,
-    p01: np.ndarray,
-    hint: np.ndarray,
-) -> np.ndarray:
-    """Pack ``(N, 4, 3)`` quads, choosing the diagonal whose triangles face ``hint``.
-
-    Kivy triangulates ``(0,1,2)`` and ``(0,2,3)``. On a sloped cylindrical graph the
-    two diagonals are not equivalent: the wrong one folds a triangle inward and
-    back-face culling punches a hole.
-    """
-    n = int(p00.shape[0])
-    if n == 0:
-        return np.empty((0, 4, 3), dtype=np.float32)
-
-    def _tri_n(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> np.ndarray:
-        return np.cross(b - a, c - a)
-
-    n_a1 = _tri_n(p00, p10, p11)
-    n_a2 = _tri_n(p00, p11, p01)
-    n_b1 = _tri_n(p10, p11, p01)
-    n_b2 = _tri_n(p10, p01, p00)
-    score_a = np.minimum((n_a1 * hint).sum(axis=1), (n_a2 * hint).sum(axis=1))
-    score_b = np.minimum((n_b1 * hint).sum(axis=1), (n_b2 * hint).sum(axis=1))
-    use_b = score_b > score_a
-    shell = np.empty((n, 4, 3), dtype=np.float32)
-    wb = use_b[:, None]
-    shell[:, 0] = np.where(wb, p10, p00)
-    shell[:, 1] = np.where(wb, p11, p10)
-    shell[:, 2] = np.where(wb, p01, p11)
-    shell[:, 3] = np.where(wb, p00, p01)
-    return shell
-
-
 def pack_quad_mesh(
     corners: np.ndarray,
     normals: np.ndarray,

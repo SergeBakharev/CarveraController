@@ -139,19 +139,24 @@ def test_heightmap_mesh_tiles_follow_spatial_bins():
     assert (0, 1, 0) not in meshes
 
 
-def test_heightmap_varied_field_one_top_per_cell():
+def test_heightmap_flat_steps_share_corners():
     bounds = StockBounds(0, 0, 0, 8, 8, 4)
     hm = HeightmapBackend(bounds, 1.0, RectangularStock(8, 8, 4))
-    hm.heights[:, :] = 2.0 + np.arange(64, dtype=np.float32).reshape(8, 8) * 0.01
+    hm.heights[:, :] = np.float32(4.0)
+    hm.heights[4:, :] = np.float32(1.0)
     meshes = hm.mesh_tiles(hm.initial_surface_keys())
-    n_top = 0
+    n_flat = 0
+    n_lip = 0
     for packed in meshes.values():
         if not packed:
             continue
         verts = np.asarray(packed[0], dtype=np.float32).reshape(-1, 12)
-        n_top += int(np.sum(verts[:, 5] > 0.5))
-    # Welded corners of an 8×8 field, not four unique vertices per cell.
-    assert n_top == 9 * 9
+        n_flat += int(np.sum(verts[:, 5] > 0.9))
+        n_lip += int(np.sum((verts[:, 5] > 0.4) & (verts[:, 5] < 0.6)))
+    # Welded corners inside each flat half (36 + 36), not four vertices per cell.
+    assert n_flat == 72
+    # One sloped strip each side of the wall, at the clamped slope normal.
+    assert n_lip == 32
 
 
 def _mesh_verts(hm: HeightmapBackend) -> np.ndarray:
@@ -164,17 +169,12 @@ def _mesh_verts(hm: HeightmapBackend) -> np.ndarray:
     return np.concatenate(chunks, axis=0)
 
 
-def _corner_z(heights: np.ndarray, i: int) -> float:
-    """Height of a welded corner between cells i-1 and i on a smooth field."""
-    n = int(heights.shape[0])
-    if i <= 0:
-        return float(heights[0, 0])
-    if i >= n:
-        return float(heights[n - 1, 0])
-    return 0.5 * (float(heights[i - 1, 0]) + float(heights[i, 0]))
-
-
 def _top_normal_at(verts: np.ndarray, x: float, z: float) -> np.ndarray:
+    """Shading normal of the top verts at ``(x, z)``.
+
+    Steps keep crisp per-cell tops at exact cell heights, so callers pass the
+    owning cell's height (not an averaged corner height).
+    """
     pos = verts[:, 0:3]
     nrm = verts[:, 3:6]
     hit = (np.abs(pos[:, 0] - x) < 1e-4) & (np.abs(pos[:, 2] - z) < 1e-3) & (nrm[:, 2] > 0.4)
@@ -201,7 +201,7 @@ def test_heightmap_ramp_tops_tilt_downhill():
     verts = _mesh_verts(hm)
     # Interior column, both X neighbors on the ramp. Height grows toward +X,
     # so the shading normal leans toward -X. Y is constant, so ny stays ~0.
-    nrm = _top_normal_at(verts, x=3.0, z=_corner_z(hm.heights, 3))
+    nrm = _top_normal_at(verts, x=3.0, z=float(hm.heights[2, 0]))
     assert nrm[0] < -0.4
     assert abs(float(nrm[1])) < 0.05
     assert nrm[2] > 0.7
@@ -213,7 +213,7 @@ def test_heightmap_steep_ramp_normal_stays_upward():
     hm = HeightmapBackend(bounds, 1.0, RectangularStock(8, 8, 4), tile_size=8)
     hm.heights[:, :] = np.float32(0.5) + np.arange(8, dtype=np.float32)[:, None] * np.float32(2.0)
     verts = _mesh_verts(hm)
-    nrm = _top_normal_at(verts, x=3.0, z=_corner_z(hm.heights, 3))
+    nrm = _top_normal_at(verts, x=3.0, z=float(hm.heights[2, 0]))
     assert nrm[0] < 0.0
     assert abs(float(nrm[2]) - 0.5) < 0.02
     assert abs(float(np.linalg.norm(nrm)) - 1.0) < 1e-4
@@ -226,8 +226,8 @@ def test_heightmap_wall_does_not_tilt_adjacent_tread():
     hm.heights[:, :] = np.float32(5.0) + np.arange(8, dtype=np.float32)[:, None] * slope
     hm.heights[5, :] = np.float32(0.2)
     verts = _mesh_verts(hm)
-    interior = _top_normal_at(verts, x=2.0, z=_corner_z(hm.heights, 2))
-    lip = _top_normal_at(verts, x=4.0, z=_corner_z(hm.heights, 4))
+    interior = _top_normal_at(verts, x=2.0, z=float(hm.heights[2, 0]))
+    lip = _top_normal_at(verts, x=4.0, z=float(hm.heights[4, 0]))
     assert lip[2] > 0.7
     assert abs(float(lip[0] - interior[0])) < 0.05
     floor = _top_normal_at(verts, x=5.0, z=0.2)
@@ -255,6 +255,132 @@ def test_heightmap_small_dip_in_flat_tile_is_shaded():
     assert abs(float(flat[2]) - 1.0) < 0.05
     assert rim.shape[0] > 0
     assert float(rim[0, 5]) > 0.5
+
+
+def _mismatch_heights() -> HeightmapBackend:
+    """Bumpy field around one corner that used to crack the welded mesher."""
+    bounds = StockBounds(0, 0, 0, 8, 8, 8)
+    hm = HeightmapBackend(bounds, 0.5, RectangularStock(8, 8, 8), tile_size=16)
+    hm.heights[:, :] = np.float32(4.0)
+    hm.heights[8, 7] = np.float32(2.5)
+    hm.heights[7, 8] = np.float32(6.0)
+    hm.heights[8, 8] = np.float32(2.5)
+    return hm
+
+
+def test_heightmap_step_tops_use_exact_cell_heights():
+    """Tops must sit at exact cell heights, never averaged corner heights.
+
+    The welded mesher used to average neighbor heights per corner, so adjacent
+    cells disagreed on shared edges and left open slits on walls.
+    """
+    verts = _mesh_verts(_mismatch_heights())
+    tops = verts[verts[:, 5] > 0.5]
+    assert tops.size
+    legit = np.unique(np.asarray(_mismatch_heights().heights).reshape(-1))
+    dist = np.abs(tops[:, 2, None] - legit[None, :]).min(axis=1)
+    assert np.all(dist < 1e-6)
+
+
+def test_heightmap_shallow_step_gets_vertical_skirt():
+    """Every height step gets a crisp vertical wall, however shallow.
+
+    Steps below the old cliff threshold used to be smoothed into light-shaded
+    ramps instead of dark walls.
+    """
+    bounds = StockBounds(0, 0, 0, 8, 8, 4)
+    hm = HeightmapBackend(bounds, 0.5, RectangularStock(8, 8, 4), tile_size=16)
+    hm.heights[:, :] = np.float32(4.0)
+    hm.heights[8:, :] = np.float32(3.5)
+    verts = _mesh_verts(hm)
+    wall = verts[(np.abs(verts[:, 0] - 4.0) < 1e-4) & (np.abs(verts[:, 3]) > 0.9)]
+    assert wall.shape[0] > 0
+    assert np.all(wall[:, 2] <= 4.0 + 1e-6)
+    assert np.all(wall[:, 2] >= 3.5 - 1e-6)
+
+
+def _open_mesh_edges(packed_meshes: dict) -> list:
+    """Triangle edges whose midpoint lies on no other face (mesh holes).
+
+    Edges are split at T-junction vertices first, so merged quads meeting
+    finer neighbors do not report false gaps.
+    """
+    tris = []
+    for packed in packed_meshes.values():
+        if not packed:
+            continue
+        v = np.asarray(packed[0], dtype=np.float32).reshape(-1, 12)
+        idx = np.asarray(packed[1], dtype=np.uint16).reshape(-1, 3)
+        pos = v[:, 0:3].astype(np.float64)
+        for tri in idx:
+            tris.append((pos[tri[0]], pos[tri[1]], pos[tri[2]]))
+    assert tris
+    uniq: dict = {}
+    for a, b, c in tris:
+        for p in (a, b, c):
+            uniq[(round(float(p[0]), 4), round(float(p[1]), 4), round(float(p[2]), 4))] = p
+    pts = np.array(list(uniq.values()))
+    seg_count: dict = {}
+    seg_mid: dict = {}
+    seg_owners: dict = {}
+    for k, (a, b, c) in enumerate(tris):
+        for u, v in ((a, b), (b, c), (c, a)):
+            ab = v - u
+            denom = float(ab @ ab)
+            if denom < 1e-18:
+                continue
+            t = ((pts - u) @ ab) / denom
+            close = (t > 1e-6) & (t < 1 - 1e-6) & (np.linalg.norm(u + t[:, None] * ab - pts, axis=1) < 1e-3)
+            ts = sorted({0.0, 1.0} | {round(float(x), 4) for x in t[close]})
+            for m in range(len(ts) - 1):
+                p0 = u + ts[m] * ab
+                p1 = u + ts[m + 1] * ab
+                if float((p1 - p0) @ (p1 - p0)) < 1e-18:
+                    continue
+                e0 = (round(float(p0[0]), 3), round(float(p0[1]), 3), round(float(p0[2]), 3))
+                e1 = (round(float(p1[0]), 3), round(float(p1[1]), 3), round(float(p1[2]), 3))
+                key = (e0, e1) if e0 <= e1 else (e1, e0)
+                seg_count[key] = seg_count.get(key, 0) + 1
+                seg_mid[key] = (p0 + p1) / 2.0
+                seg_owners.setdefault(key, []).append(k)
+    A = np.array([t[0] for t in tris])
+    B = np.array([t[1] for t in tris])
+    C = np.array([t[2] for t in tris])
+    holes = []
+    for key, count in seg_count.items():
+        if count != 1:
+            continue
+        mid = seg_mid[key]
+        owners = seg_owners[key]
+        covered = False
+        for k in range(len(tris)):
+            if k in owners:
+                continue
+            n = np.cross(B[k] - A[k], C[k] - A[k])
+            nl = float(np.linalg.norm(n))
+            if nl < 1e-18 or abs(float((mid - A[k]) @ n)) / nl > 1e-3:
+                continue
+            v0, v1 = C[k] - A[k], B[k] - A[k]
+            d00, d01, d11 = float(v0 @ v0), float(v0 @ v1), float(v1 @ v1)
+            den = d00 * d11 - d01 * d01
+            if abs(den) < 1e-18:
+                continue
+            v2 = mid - A[k]
+            vv = (d11 * float(v2 @ v0) - d01 * float(v2 @ v1)) / den
+            w = (d00 * float(v2 @ v1) - d01 * float(v2 @ v0)) / den
+            if vv > -1e-3 and w > -1e-3 and vv + w < 1 + 1e-3:
+                covered = True
+                break
+        if not covered:
+            holes.append(key)
+    return holes
+
+
+def test_heightmap_bumpy_field_has_no_holes():
+    """The welded corner averaging left open slits on walls; every boundary
+    edge midpoint must lie on another face (or be a T-junction)."""
+    hm = _mismatch_heights()
+    assert _open_mesh_edges(hm.mesh_tiles(hm.initial_surface_keys())) == []
 
 
 def test_heightmap_checkpoint_roundtrip():

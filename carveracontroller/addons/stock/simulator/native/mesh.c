@@ -241,78 +241,6 @@ static void hm_cell_normal(
     hm_slope_normal(dzdx, dzdy, nx, ny, nz);
 }
 
-static void hm_corner_normal(
-    const float *cz,
-    const uint8_t *share,
-    int cstride,
-    int gw,
-    int gh,
-    int ci,
-    int cj,
-    float cell,
-    float *nx,
-    float *ny,
-    float *nz) {
-    int here = share[ci * cstride + cj];
-    int left = ci > 0 && share[(ci - 1) * cstride + cj];
-    int right = ci < gw && share[(ci + 1) * cstride + cj];
-    int down = cj > 0 && share[ci * cstride + (cj - 1)];
-    int up = cj < gh && share[ci * cstride + (cj + 1)];
-    float z = cz[ci * cstride + cj];
-    float dzdx = 0.f;
-    float dzdy = 0.f;
-    if (!here) {
-        *nx = 0.f;
-        *ny = 0.f;
-        *nz = 1.f;
-        return;
-    }
-    if (left && right) {
-        dzdx = (cz[(ci + 1) * cstride + cj] - cz[(ci - 1) * cstride + cj]) / (2.f * cell);
-    } else if (right) {
-        dzdx = (cz[(ci + 1) * cstride + cj] - z) / cell;
-    } else if (left) {
-        dzdx = (z - cz[(ci - 1) * cstride + cj]) / cell;
-    }
-    if (down && up) {
-        dzdy = (cz[ci * cstride + (cj + 1)] - cz[ci * cstride + (cj - 1)]) / (2.f * cell);
-    } else if (up) {
-        dzdy = (cz[ci * cstride + (cj + 1)] - z) / cell;
-    } else if (down) {
-        dzdy = (z - cz[ci * cstride + (cj - 1)]) / cell;
-    }
-    hm_slope_normal(dzdx, dzdy, nx, ny, nz);
-}
-
-static float hm_cell_corner_z(
-    const float *patch,
-    int stride,
-    int i,
-    int j,
-    int cxi,
-    int cyj,
-    float cell_h,
-    float min_z,
-    float cliff) {
-    float sum = 0.f;
-    int n = 0;
-    int ax, ay;
-    for (ax = i + cxi - 1; ax <= i + cxi; ax++) {
-        for (ay = j + cyj - 1; ay <= j + cyj; ay++) {
-            float h = hm_at(patch, stride, ax, ay);
-            if (!hm_valid(h, min_z) || fabsf(h - cell_h) > cliff) {
-                continue;
-            }
-            sum += h;
-            n++;
-        }
-    }
-    if (n == 0) {
-        return cell_h;
-    }
-    return sum / (float)n;
-}
-
 static int hm_corner_vert(
     ScBuf *b,
     int *ids,
@@ -322,8 +250,6 @@ static int hm_corner_vert(
     int cstride,
     const float *patch,
     int stride,
-    int gw,
-    int gh,
     int i,
     int j,
     int cxi,
@@ -345,14 +271,21 @@ static int hm_corner_vert(
     float z, nx, ny, nz, x, y;
     int id;
     if (share[g]) {
+        /* Welded flat corner: every incident cell has the same height, so the
+         * averaged height is exact and the shading normal stays +Z. */
         if (ids[slot] >= 0) {
             return ids[slot];
         }
         z = cz[g];
-        hm_corner_normal(cz, share, cstride, gw, gh, ci, cj, cell, &nx, &ny, &nz);
+        nx = 0.f;
+        ny = 0.f;
+        nz = 1.f;
     } else {
+        /* Steps keep crisp per-cell tops at the cell's own height. Averaging
+         * neighbor heights here let adjacent cells disagree on a shared edge
+         * while staying under the skirt threshold (open slits on walls). */
         float h = hm_at(patch, stride, i, j);
-        z = hm_cell_corner_z(patch, stride, i, j, cxi, cyj, h, min_z, cliff);
+        z = h;
         hm_cell_normal(patch, stride, i, j, h, min_z, cliff, cell, &nx, &ny, &nz);
     }
     x = origin_x + (float)ci * cell;
@@ -408,29 +341,22 @@ static int hm_emit_axis_quad(
     return sc_buf_quad(b, i0, i1, i2, i3);
 }
 
-static int hm_skirt_z(
+static float hm_skirt_z(
     const float *patch,
     int stride,
     int ni,
     int nj,
-    int cxi,
-    int cyj,
     int at_grid,
-    float min_z,
-    float cliff,
-    float *out_z) {
+    float min_z) {
     float nh;
     if (at_grid) {
-        *out_z = min_z;
-        return 1;
+        return min_z;
     }
     nh = hm_at(patch, stride, ni, nj);
     if (!hm_valid(nh, min_z)) {
-        *out_z = min_z;
-        return 1;
+        return min_z;
     }
-    *out_z = hm_cell_corner_z(patch, stride, ni, nj, cxi, cyj, nh, min_z, cliff);
-    return 0;
+    return nh;
 }
 
 static int hm_emit_skirts_cell(
@@ -447,7 +373,6 @@ static int hm_emit_skirts_cell(
     float origin_y,
     float cell,
     float min_z,
-    float cliff,
     float cr,
     float cg,
     float cb,
@@ -457,11 +382,11 @@ static int hm_emit_skirts_cell(
     h = hm_at(patch, stride, i, j);
     /* Left (-X). */
     nh = hm_at(patch, stride, i - 1, j);
-    if ((x0 + i == 0) || !hm_valid(nh, min_z) || (h - nh) > cliff) {
-        zt0 = hm_cell_corner_z(patch, stride, i, j, 0, 0, h, min_z, cliff);
-        zt1 = hm_cell_corner_z(patch, stride, i, j, 0, 1, h, min_z, cliff);
-        hm_skirt_z(patch, stride, i - 1, j, 1, 0, x0 + i == 0, min_z, cliff, &zb0);
-        hm_skirt_z(patch, stride, i - 1, j, 1, 1, x0 + i == 0, min_z, cliff, &zb1);
+    if ((x0 + i == 0) || !hm_valid(nh, min_z) || (h - nh) > HM_MERGE) {
+        zt0 = h;
+        zt1 = h;
+        zb0 = hm_skirt_z(patch, stride, i - 1, j, x0 + i == 0, min_z);
+        zb1 = hm_skirt_z(patch, stride, i - 1, j, x0 + i == 0, min_z);
         if (0.5f * (zt0 + zt1) > 0.5f * (zb0 + zb1) + HM_MERGE) {
             x = origin_x + (float)i * cell;
             y = origin_y + (float)j * cell;
@@ -474,11 +399,11 @@ static int hm_emit_skirts_cell(
     }
     /* Right (+X). */
     nh = hm_at(patch, stride, i + 1, j);
-    if ((x0 + i + 1 >= grid_nx) || !hm_valid(nh, min_z) || (h - nh) > cliff) {
-        zt0 = hm_cell_corner_z(patch, stride, i, j, 1, 1, h, min_z, cliff);
-        zt1 = hm_cell_corner_z(patch, stride, i, j, 1, 0, h, min_z, cliff);
-        hm_skirt_z(patch, stride, i + 1, j, 0, 1, x0 + i + 1 >= grid_nx, min_z, cliff, &zb0);
-        hm_skirt_z(patch, stride, i + 1, j, 0, 0, x0 + i + 1 >= grid_nx, min_z, cliff, &zb1);
+    if ((x0 + i + 1 >= grid_nx) || !hm_valid(nh, min_z) || (h - nh) > HM_MERGE) {
+        zt0 = h;
+        zt1 = h;
+        zb0 = hm_skirt_z(patch, stride, i + 1, j, x0 + i + 1 >= grid_nx, min_z);
+        zb1 = hm_skirt_z(patch, stride, i + 1, j, x0 + i + 1 >= grid_nx, min_z);
         if (0.5f * (zt0 + zt1) > 0.5f * (zb0 + zb1) + HM_MERGE) {
             x = origin_x + (float)(i + 1) * cell;
             y = origin_y + (float)j * cell;
@@ -510,11 +435,11 @@ static int hm_emit_skirts_cell(
     }
     /* Down (-Y). */
     nh = hm_at(patch, stride, i, j - 1);
-    if ((y0 + j == 0) || !hm_valid(nh, min_z) || (h - nh) > cliff) {
-        zt0 = hm_cell_corner_z(patch, stride, i, j, 1, 0, h, min_z, cliff);
-        zt1 = hm_cell_corner_z(patch, stride, i, j, 0, 0, h, min_z, cliff);
-        hm_skirt_z(patch, stride, i, j - 1, 1, 1, y0 + j == 0, min_z, cliff, &zb0);
-        hm_skirt_z(patch, stride, i, j - 1, 0, 1, y0 + j == 0, min_z, cliff, &zb1);
+    if ((y0 + j == 0) || !hm_valid(nh, min_z) || (h - nh) > HM_MERGE) {
+        zt0 = h;
+        zt1 = h;
+        zb0 = hm_skirt_z(patch, stride, i, j - 1, y0 + j == 0, min_z);
+        zb1 = hm_skirt_z(patch, stride, i, j - 1, y0 + j == 0, min_z);
         if (0.5f * (zt0 + zt1) > 0.5f * (zb0 + zb1) + HM_MERGE) {
             x = origin_x + (float)i * cell;
             y = origin_y + (float)j * cell;
@@ -546,11 +471,11 @@ static int hm_emit_skirts_cell(
     }
     /* Up (+Y). */
     nh = hm_at(patch, stride, i, j + 1);
-    if ((y0 + j + 1 >= grid_ny) || !hm_valid(nh, min_z) || (h - nh) > cliff) {
-        zt0 = hm_cell_corner_z(patch, stride, i, j, 0, 1, h, min_z, cliff);
-        zt1 = hm_cell_corner_z(patch, stride, i, j, 1, 1, h, min_z, cliff);
-        hm_skirt_z(patch, stride, i, j + 1, 0, 0, y0 + j + 1 >= grid_ny, min_z, cliff, &zb0);
-        hm_skirt_z(patch, stride, i, j + 1, 1, 0, y0 + j + 1 >= grid_ny, min_z, cliff, &zb1);
+    if ((y0 + j + 1 >= grid_ny) || !hm_valid(nh, min_z) || (h - nh) > HM_MERGE) {
+        zt0 = h;
+        zt1 = h;
+        zb0 = hm_skirt_z(patch, stride, i, j + 1, y0 + j + 1 >= grid_ny, min_z);
+        zb1 = hm_skirt_z(patch, stride, i, j + 1, y0 + j + 1 >= grid_ny, min_z);
         if (0.5f * (zt0 + zt1) > 0.5f * (zb0 + zb1) + HM_MERGE) {
             x = origin_x + (float)i * cell;
             y = origin_y + (float)(j + 1) * cell;
@@ -710,16 +635,16 @@ static int hm_emit_rows(
                 continue;
             }
             i00 = hm_corner_vert(
-                b, ids, nrows, cz, share, cstride, patch, stride, gw, gh, i, j, 0, 0, j0, origin_x, origin_y, cell,
+                b, ids, nrows, cz, share, cstride, patch, stride, i, j, 0, 0, j0, origin_x, origin_y, cell,
                 min_z, cliff, cr, cg, cb, ca);
             i10 = hm_corner_vert(
-                b, ids, nrows, cz, share, cstride, patch, stride, gw, gh, i, j, 1, 0, j0, origin_x, origin_y, cell,
+                b, ids, nrows, cz, share, cstride, patch, stride, i, j, 1, 0, j0, origin_x, origin_y, cell,
                 min_z, cliff, cr, cg, cb, ca);
             i11 = hm_corner_vert(
-                b, ids, nrows, cz, share, cstride, patch, stride, gw, gh, i, j, 1, 1, j0, origin_x, origin_y, cell,
+                b, ids, nrows, cz, share, cstride, patch, stride, i, j, 1, 1, j0, origin_x, origin_y, cell,
                 min_z, cliff, cr, cg, cb, ca);
             i01 = hm_corner_vert(
-                b, ids, nrows, cz, share, cstride, patch, stride, gw, gh, i, j, 0, 1, j0, origin_x, origin_y, cell,
+                b, ids, nrows, cz, share, cstride, patch, stride, i, j, 0, 1, j0, origin_x, origin_y, cell,
                 min_z, cliff, cr, cg, cb, ca);
             if (i00 < 0 || i10 < 0 || i11 < 0 || i01 < 0) {
                 free(ids);
@@ -731,7 +656,7 @@ static int hm_emit_rows(
                 return rc;
             }
             rc = hm_emit_skirts_cell(
-                b, patch, stride, i, j, x0, y0, grid_nx, grid_ny, origin_x, origin_y, cell, min_z, cliff, cr, cg, cb, ca);
+                b, patch, stride, i, j, x0, y0, grid_nx, grid_ny, origin_x, origin_y, cell, min_z, cr, cg, cb, ca);
             if (rc != 0) {
                 free(ids);
                 return rc;
@@ -815,6 +740,7 @@ static int hm_emit_uniform(
     float x1 = origin_x + (float)gw * cell;
     float y1 = origin_y + (float)gh * cell;
     int side, rc;
+    (void)cliff;
     sc_buf_init(&buf);
     rc = hm_emit_axis_quad(&buf, origin_x, origin_y, h, x1, origin_y, h, x1, y1, h, origin_x, y1, h, 0.f, 0.f, 1.f, cr, cg, cb, ca);
     if (rc != 0) {
@@ -849,7 +775,7 @@ static int hm_emit_uniform(
                 at_grid = y0 + gh >= grid_ny;
                 nh = hm_at(patch, stride, j, gh);
             }
-            need = at_grid || !hm_valid(nh, min_z) || (h - nh) > cliff;
+            need = at_grid || !hm_valid(nh, min_z) || (h - nh) > HM_MERGE;
             zbot = (at_grid || !hm_valid(nh, min_z)) ? min_z : nh;
             if (!need || h <= zbot + HM_MERGE) {
                 j++;
@@ -872,7 +798,7 @@ static int hm_emit_uniform(
                     ag = y0 + gh >= grid_ny;
                     nh2 = hm_at(patch, stride, j + w, gh);
                 }
-                if (!(ag || !hm_valid(nh2, min_z) || (h - nh2) > cliff)) {
+                if (!(ag || !hm_valid(nh2, min_z) || (h - nh2) > HM_MERGE)) {
                     break;
                 }
                 zb2 = (ag || !hm_valid(nh2, min_z)) ? min_z : nh2;
@@ -1022,7 +948,11 @@ int sc_mesh_heightmap(
                     n++;
                 }
             }
-            if (n > 0 && (mx - mn) <= cliff) {
+            if (n > 0 && (mx - mn) <= HM_MERGE) {
+                /* Welded flat corner. Steps stay per-cell at their own height:
+                 * averaging neighbor heights here let adjacent cells disagree
+                 * on a shared edge while staying under the skirt threshold,
+                 * leaving open slits on walls (see hm_corner_vert). */
                 share[slot] = 1;
                 cz[slot] = sum / (float)n;
             } else {

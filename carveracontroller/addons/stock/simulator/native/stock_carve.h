@@ -209,8 +209,9 @@ typedef struct ScMeshBatch {
 void sc_mesh_batch_free(ScMeshBatch *batch);
 
 /* Weld a heightmap window. `patch` is the (gw+2) by (gh+2) halo around cells
- * [0, gw) x [0, gh), row-major, matching NumPy C order. Vertical skirts are
- * emitted only for cliffs and for the stock boundary, not for gentle steps.
+ * [0, gw) x [0, gh), row-major, matching NumPy C order. Flat corners share
+ * vertices; steps keep crisp per-cell tops with a vertical skirt for every
+ * height difference, so the shell is watertight.
  * Returns 0, or -1 on allocation failure.
  */
 int sc_mesh_heightmap(
