@@ -428,3 +428,81 @@ def test_set_stock_resolution_change_restarts_simulation():
     )
 
     viewer._restart_stock_simulation.assert_called_once()
+
+
+def test_carved_stock_hidden_when_sim_mesh_hidden():
+    viewer = _viewer(sim_mesh_visible=False, dynamic_display=False, _defer_carved_stock=False)
+    assert viewer._carved_stock_visible() is False
+
+
+def test_set_sim_mesh_visible_hides_without_restarting():
+    viewer = _viewer(simulate_cut=True, sim_mesh_visible=True)
+    viewer._rebuild_stock_mesh = MagicMock()
+    viewer._ensure_stock_on_canvas = MagicMock()
+    viewer._restart_stock_simulation = MagicMock()
+
+    GCodeViewer.set_sim_mesh_visible(viewer, False)
+
+    assert viewer.simulate_cut is True
+    assert viewer.sim_mesh_visible is False
+    viewer._rebuild_stock_mesh.assert_called_once()
+    viewer._ensure_stock_on_canvas.assert_called_once()
+    viewer._restart_stock_simulation.assert_not_called()
+    viewer._stock_simulator.disable.assert_not_called()
+    viewer._stock_simulator.reset.assert_not_called()
+    assert viewer._scene_dirty is True
+
+
+def test_set_sim_mesh_visible_show_rebuilds_without_restarting():
+    viewer = _viewer(simulate_cut=True, sim_mesh_visible=False)
+    viewer._rebuild_stock_mesh = MagicMock()
+    viewer._ensure_stock_on_canvas = MagicMock()
+    viewer._restart_stock_simulation = MagicMock()
+
+    GCodeViewer.set_sim_mesh_visible(viewer, True)
+
+    assert viewer.simulate_cut is True
+    assert viewer.sim_mesh_visible is True
+    viewer._rebuild_stock_mesh.assert_called_once()
+    viewer._ensure_stock_on_canvas.assert_called_once()
+    viewer._restart_stock_simulation.assert_not_called()
+    viewer._stock_simulator.disable.assert_not_called()
+
+
+def test_ensure_stock_on_canvas_hide_keeps_carved_meshes():
+    viewer = _viewer(
+        simulate_cut=True,
+        sim_mesh_visible=False,
+        stock_visible=True,
+        _viewer_meshes_active=True,
+    )
+    viewer.stockmesh = object()
+    viewer.carvedmesh = object()
+    viewer.gridmesh = object()
+    viewer.canvas = MagicMock()
+    viewer.canvas.children = [viewer.gridmesh]
+    viewer._clear_carved_meshes = MagicMock()
+    viewer._raise_view_cube_to_top = MagicMock()
+
+    GCodeViewer._ensure_stock_on_canvas(viewer)
+
+    viewer._clear_carved_meshes.assert_not_called()
+    viewer.canvas.insert.assert_called_once_with(1, viewer.stockmesh)
+
+
+def test_set_activity_emits_only_on_change():
+    import threading
+
+    from carveracontroller.addons.stock.simulator.worker import StockSimulator
+
+    events = []
+    sim = StockSimulator.__new__(StockSimulator)
+    sim._lock = threading.RLock()
+    sim._activity = False
+    sim._on_activity = events.append
+
+    StockSimulator._set_activity(sim, True)
+    StockSimulator._set_activity(sim, True)
+    StockSimulator._set_activity(sim, False)
+
+    assert events == [True, False]

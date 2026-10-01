@@ -278,6 +278,7 @@ VERTEX_FLOAT_NUM = 11
 # Marks a touch this widget took on touch_down, so drags belonging to the
 # controls floating over it are not also treated as orbit or pan.
 TOUCH_CLAIMED = "gcode_viewer_claimed"
+SIM_CARVING_HOLD_S = 0.2
 
 COLOR_SCHEME_BY_TYPE = 0
 COLOR_SCHEME_BY_TOOL = 1
@@ -713,6 +714,9 @@ class GCodeViewer(Widget):
     sim_progress = NumericProperty(0.0)
     sim_checkpoints = ListProperty([])
     sim_hud_text = StringProperty("")
+    sim_hud_visible = BooleanProperty(False)
+    sim_carving = BooleanProperty(False)
+    sim_mesh_visible = BooleanProperty(True)
     stock_visible = BooleanProperty(False)
     bed_visible = BooleanProperty(False)
 
@@ -904,6 +908,7 @@ class GCodeViewer(Widget):
         self.stock_visible = False
         self.simulate_cut = False
         self.stock_mesh_while_playing = True
+        self.sim_mesh_visible = True
         # Keep the translucent AABB up after pause until the worker flush
         # patches GPU chunks; otherwise the last meshed shell (often uncut)
         # is shown for a frame.
@@ -917,10 +922,12 @@ class GCodeViewer(Widget):
         self._sim_progress_trigger = Clock.create_trigger(self._flush_sim_progress, 0)
         self._sim_checkpoints_trigger = Clock.create_trigger(self._flush_sim_checkpoints, 0)
         self._pending_checkpoint_vertices: list[int] = []
+        self._sim_carving_hold = None
         self._stock_simulator = StockSimulator(
             on_meshes_ready=self._on_stock_meshes_ready,
             on_progress=self._on_stock_progress,
             on_checkpoints=self._on_stock_checkpoints,
+            on_activity=self._on_stock_activity,
         )
         self.bind(dynamic_display=self._on_dynamic_display_changed)
 
@@ -1158,12 +1165,16 @@ class GCodeViewer(Widget):
         self.sim_progress = 0.0
         self.sim_checkpoints = []
         self.sim_hud_text = ""
+        self.sim_hud_visible = False
+        self.sim_carving = False
+        self.sim_mesh_visible = True
         self.stock_visible = False
         self.bed_visible = False
         self.simulate_cut = False
         self._defer_carved_stock = False
         self._viewer_meshes_active = False
         self._stock_rotation_mat = self._identity_mat
+        self._cancel_sim_carving_hold()
         if self._stock_simulator is not None:
             # Keep bounds/shape/quality, but pause carving until the new file finishes loading.
             self._stock_simulator.clear_toolpath()
@@ -2046,6 +2057,10 @@ class GCodeViewer(Widget):
         self.stock_shape = new_shape
         self.stock_visible = stock_visible
         self.simulate_cut = want_sim
+        if not want_sim:
+            self.sim_mesh_visible = True
+            self._cancel_sim_carving_hold()
+            self.sim_carving = False
         self.stock_mesh_while_playing = mesh_while
         self.stock_carver_resolution = carver_res
         self.stock_checkpoint_level = ckpt
@@ -2113,6 +2128,51 @@ class GCodeViewer(Widget):
 
     def _refresh_sim_hud(self, *_args) -> None:
         self.sim_hud_text = self._format_sim_hud_text()
+        self.sim_hud_visible = bool(self.simulate_cut)
+
+    def _cancel_sim_carving_hold(self) -> None:
+        ev = getattr(self, "_sim_carving_hold", None)
+        if ev is not None:
+            ev.cancel()
+            self._sim_carving_hold = None
+
+    def _end_sim_carving(self, *_args) -> None:
+        self._sim_carving_hold = None
+        self.sim_carving = False
+
+    def _on_stock_activity(self, active: bool) -> None:
+        """Worker/UI busy flag — hop onto the Kivy clock with a generation stamp."""
+        sim = self._stock_simulator
+        gen = sim.generation if sim else -1
+
+        def _apply(_dt, active=active, gen=gen):
+            if self._stock_simulator is None or self._stock_simulator.generation != gen:
+                return
+            if active:
+                self._cancel_sim_carving_hold()
+                self.sim_carving = True
+            elif bool(self.simulate_cut) and self._sim_carving_hold is None:
+                self._sim_carving_hold = Clock.schedule_once(self._end_sim_carving, SIM_CARVING_HOLD_S)
+            else:
+                self._cancel_sim_carving_hold()
+                self.sim_carving = False
+
+        Clock.schedule_once(_apply, 0)
+
+    def set_sim_mesh_visible(self, visible: bool) -> None:
+        """Show or hide the carved stock without resetting occupancy.
+
+        Hiding leaves the same preview shell used when stock is shown and
+        simulation is off. Showing rebuilds that shell as edge lines over the
+        carved mesh.
+        """
+        visible = bool(visible)
+        if visible == bool(getattr(self, "sim_mesh_visible", True)):
+            return
+        self.sim_mesh_visible = visible
+        self._rebuild_stock_mesh()
+        self._ensure_stock_on_canvas()
+        self._scene_dirty = True
 
     def _vertex_to_path_percent(self, vertex: int) -> float:
         total = self.get_total_distance() if self.lengths else 0.0
@@ -2303,6 +2363,8 @@ class GCodeViewer(Widget):
         pause, ``_defer_carved_stock`` keeps that AABB until the flush
         patches GPU chunks so the stale uncut shell is not flashed.
         """
+        if not bool(getattr(self, "sim_mesh_visible", True)):
+            return False
         if self._defer_carved_stock:
             return False
         return bool(self.simulate_cut) and ((not self.dynamic_display) or bool(self.stock_mesh_while_playing))
@@ -2578,6 +2640,8 @@ class GCodeViewer(Widget):
         self._clear_carved_meshes()
         if not self.simulate_cut or self.stock_bounds_mm is None:
             self._stock_simulator.disable()
+            self._cancel_sim_carving_hold()
+            self.sim_carving = False
             self._sim_hud_trigger()
             return
         self._publish_toolpath_to_simulator()

@@ -2740,7 +2740,13 @@ class Makera(RelativeLayout):
         self.gcode_viewer.bind(sim_progress=self._on_viewer_sim_progress)
         self.gcode_viewer.bind(sim_checkpoints=self._on_viewer_sim_checkpoints)
         self.gcode_viewer.bind(sim_hud_text=self._on_viewer_sim_hud_text)
+        self.gcode_viewer.bind(sim_hud_visible=self._on_viewer_sim_hud_visible)
+        self.gcode_viewer.bind(sim_carving=self._on_viewer_sim_carving)
+        self.gcode_viewer.bind(sim_mesh_visible=self._on_viewer_sim_mesh_visible)
         self._on_viewer_sim_hud_text(self.gcode_viewer, self.gcode_viewer.sim_hud_text)
+        self._on_viewer_sim_hud_visible(self.gcode_viewer, self.gcode_viewer.sim_hud_visible)
+        self._on_viewer_sim_carving(self.gcode_viewer, self.gcode_viewer.sim_carving)
+        self._on_viewer_sim_mesh_visible(self.gcode_viewer, self.gcode_viewer.sim_mesh_visible)
         self.gcode_viewer_display_drop_down.show_grid = self.gcode_viewer.is_grid_visible()
         self.gcode_viewer_display_drop_down.show_ghost = self.gcode_viewer.is_path_ghosted()
         self.gcode_viewer.bind(stock_visible=self._on_viewer_stock_visible)
@@ -8149,10 +8155,25 @@ class Makera(RelativeLayout):
             slider.sim_checkpoints = list(value or [])
 
     def _on_viewer_sim_hud_text(self, _instance, value):
-        """Mirror cut-simulation stats onto the viewer overlay label."""
-        label = getattr(self, "sim_stats_hud", None)
-        if label is not None:
-            label.text = value or ""
+        """Mirror cut-simulation stats onto the viewer overlay."""
+        hud = getattr(self, "sim_stats_hud", None)
+        if hud is not None:
+            hud.stats_text = value or ""
+
+    def _on_viewer_sim_hud_visible(self, _instance, visible):
+        hud = getattr(self, "sim_stats_hud", None)
+        if hud is not None:
+            hud.hud_visible = bool(visible)
+
+    def _on_viewer_sim_carving(self, _instance, carving):
+        hud = getattr(self, "sim_stats_hud", None)
+        if hud is not None:
+            hud.carving = bool(carving)
+
+    def _on_viewer_sim_mesh_visible(self, _instance, visible):
+        hud = getattr(self, "sim_stats_hud", None)
+        if hud is not None:
+            hud.mesh_visible = bool(visible)
 
     def _on_viewer_stock_visible(self, _instance, visible):
         """Keep the Stock menu item highlight in sync with viewer visibility."""

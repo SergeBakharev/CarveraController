@@ -63,6 +63,7 @@ def _native_chunk_mesh(grid, coord, occupancy, valid, color):
     from carveracontroller.addons.stock.simulator import native as native_mod
 
     from .grid import ChunkCoord as CC
+
     specs = (
         (CC(coord.cx + 1, coord.cy, coord.cz), ("x", 0)),
         (CC(coord.cx - 1, coord.cy, coord.cz), ("x", -1)),

@@ -451,7 +451,6 @@ class CylindricalBackend(LaserDecalMixin):
 def _mesh_cylindrical_field(backend: CylindricalBackend) -> list[tuple[list[float], list[int], list]]:
     """Welded (x, θ) shell via the native extension (cut simulation requires it)."""
     from carveracontroller.addons.stock.simulator import native as native_mod
-    from carveracontroller.addons.stock.simulator.mesh_format import DEFAULT_COLOR
 
     if not backend.radii.size:
         return []

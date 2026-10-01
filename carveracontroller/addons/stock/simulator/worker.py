@@ -406,6 +406,7 @@ class PathSnapshot:
 MeshReadyCallback = Callable[[dict[tuple[int, int, int], tuple | None]], None]
 ProgressCallback = Callable[[int], None]
 CheckpointsCallback = Callable[[list[int]], None]
+ActivityCallback = Callable[[bool], None]
 
 
 def _create_carver_backend(
@@ -462,11 +463,13 @@ class StockSimulator:
         on_meshes_ready: MeshReadyCallback | None = None,
         on_progress: ProgressCallback | None = None,
         on_checkpoints: CheckpointsCallback | None = None,
+        on_activity: ActivityCallback | None = None,
         mesh_throttle_s: float = DEFAULT_MESH_THROTTLE_S,
     ):
         self._on_meshes_ready = on_meshes_ready
         self._on_progress = on_progress
         self._on_checkpoints = on_checkpoints
+        self._on_activity = on_activity
         self._mesh_throttle_s = mesh_throttle_s
         self._backend = None
         self._bake_backend = None
@@ -481,6 +484,7 @@ class StockSimulator:
         self._lock = threading.RLock()
         self._generation = 0
         self._resimulating = False
+        self._activity = False
         self._enabled = False
         # Cancel in-flight idle without bumping generation (preserves CP jump).
         self._idle_cancel = threading.Event()
@@ -724,6 +728,8 @@ class StockSimulator:
         self._emit_checkpoints()
         if enable:
             self._emit_initial_surface()
+        else:
+            self._set_activity(False)
 
     def disable(self) -> None:
         with self._lock:
@@ -751,6 +757,7 @@ class StockSimulator:
             self._on_meshes_ready({"__clear_all__": None})
         self._emit_progress(0)
         self._emit_checkpoints()
+        self._set_activity(False)
 
     def _emit_progress(self, vertex: int) -> None:
         if not self._on_progress:
@@ -770,6 +777,40 @@ class StockSimulator:
             self._on_checkpoints(vertices)
         except Exception:
             logger.exception("stock checkpoints callback failed")
+
+    def _set_activity(self, active: bool) -> None:
+        """Fire ``on_activity`` when the busy flag changes."""
+        active = bool(active)
+        with self._lock:
+            if self._activity == active:
+                return
+            self._activity = active
+        if not self._on_activity:
+            return
+        try:
+            self._on_activity(active)
+        except Exception:
+            logger.exception("stock activity callback failed")
+
+    def _has_outstanding_work(self, pending_dirty: set, laser_pending: bool) -> bool:
+        """True when carve, seek, remesh, or a queued job is still in flight."""
+        with self._lock:
+            if not self._enabled or self._backend is None:
+                return False
+            if self._resimulating or self._display_poke_pending or self._mesh_flush:
+                return True
+            if not self._playhead_caught_up_locked():
+                return True
+            mesh_updates = self._mesh_updates_enabled
+        if mesh_updates and (pending_dirty or laser_pending):
+            return True
+        return not self._queue.empty()
+
+    def _sync_activity(self, pending_dirty: set) -> None:
+        with self._lock:
+            backend = self._backend
+        laser_pending = bool(getattr(backend, "_laser_dirty", False)) if backend is not None else False
+        self._set_activity(self._has_outstanding_work(pending_dirty, laser_pending))
 
     def _maybe_record_checkpoint(
         self,
@@ -873,6 +914,7 @@ class StockSimulator:
         self._idle_cancel.set()
         if not already:
             self._queue.put(_DISPLAY_FOLLOW)
+        self._set_activity(True)
 
     def _clear_open_segment_locked(self) -> None:
         """Drop open-segment bookkeeping. Caller must hold ``_lock``."""
@@ -903,6 +945,7 @@ class StockSimulator:
         with self._lock:
             self._mesh_flush = True
         self._queue.put(_MESH_FLUSH)
+        self._set_activity(True)
 
     def submit_range(self, from_vertex: int, to_vertex: int) -> None:
         """Queue carving for ``(from_vertex, to_vertex]`` (expanded on the worker)."""
@@ -916,6 +959,7 @@ class StockSimulator:
         with self._lock:
             self._display_vertex = to
         self._queue.put(CarveRangeJob(from_vertex=frm, to_vertex=to))
+        self._set_activity(True)
 
     def submit_idle_precompute(self, from_vertex: int) -> None:
         """Queue low-priority bake-grid carving to record ahead checkpoints.
@@ -934,6 +978,7 @@ class StockSimulator:
             return
         self._idle_cancel.clear()
         self._queue.put(CarveRangeJob(from_vertex=hint, to_vertex=to, low_priority=True))
+        self._set_activity(True)
 
     def _maybe_rearm_idle_bake(self) -> None:
         """Resume bake after display follow preempted it (paused scrub)."""
@@ -987,6 +1032,7 @@ class StockSimulator:
             except Exception:
                 logger.exception("stock mesh clear callback failed")
         self._queue.put(RecarveJob(target_vertex=max(0, int(target_vertex))))
+        self._set_activity(True)
 
     def _emit_initial_surface(self) -> None:
         """Queue an empty recarve so the worker meshes the solid exterior shell."""
@@ -996,6 +1042,7 @@ class StockSimulator:
             self._resimulating = True
             self._force_mesh_replace = True
         self._queue.put(RecarveJob(target_vertex=0))
+        self._set_activity(True)
 
     def _prepare_bake_grid(self, gen: int, hint_vertex: int):
         """Create/restore the bake occupancy to the latest bookmark ≤ the bake head.
@@ -1698,6 +1745,7 @@ class StockSimulator:
                 item = None
 
             if item is _STOP:
+                self._set_activity(False)
                 break
 
             with self._lock:
@@ -1726,12 +1774,14 @@ class StockSimulator:
                 pending_dirty.clear()
                 display_changed_since_cp.clear()
                 bake_changed_since_cp.clear()
+                self._set_activity(False)
                 continue
 
             # During seek/reset, only RecarveJob may mutate the display grid.
             if resimulating and not isinstance(item, RecarveJob):
                 pending_dirty.clear()
                 display_changed_since_cp.clear()
+                self._sync_activity(pending_dirty)
                 continue
 
             finished_recarve = False
@@ -1753,8 +1803,10 @@ class StockSimulator:
             elif isinstance(item, RecarveJob):
                 with self._lock:
                     if self._generation != gen:
+                        self._sync_activity(pending_dirty)
                         continue
                     if live is not self._backend:
+                        self._sync_activity(pending_dirty)
                         continue
                     self._resimulating = True
                     start_vertex, restored_keys = self._restore_checkpoint_at_or_before(live, item.target_vertex)
@@ -1788,11 +1840,13 @@ class StockSimulator:
                         recarve_finished = True
                     else:
                         pending_dirty.clear()
+                        self._sync_activity(pending_dirty)
                         continue
                 last_emit = 0.0
 
             elif isinstance(item, CarveRangeJob) and item.low_priority:
                 if self._generation != gen or self._resimulating:
+                    self._sync_activity(pending_dirty)
                     continue
                 # Idle bake ``continue``s past the shared remesh step. Flush any
                 # leftover display-dirty tiles first or paused scrub stays stale.
@@ -1803,13 +1857,16 @@ class StockSimulator:
                     else:
                         pending_dirty.update(batch)
                 if self._idle_cancel.is_set():
+                    self._sync_activity(pending_dirty)
                     continue
                 prepared = self._prepare_bake_grid(gen, item.from_vertex)
                 if prepared is None:
+                    self._sync_activity(pending_dirty)
                     continue
                 bake, start_vertex = prepared
                 bake_changed_since_cp.clear()
                 if start_vertex >= item.to_vertex:
+                    self._sync_activity(pending_dirty)
                     continue
                 bake_dirty: set[tuple[int, int, int]] = set()
                 self._carve_segments_to(
@@ -1822,12 +1879,14 @@ class StockSimulator:
                     bake_changed_since_cp,
                     idle=True,
                 )
+                self._sync_activity(pending_dirty)
                 continue
 
             elif isinstance(item, CarveRangeJob):
                 if self._generation != gen or self._resimulating:
                     pending_dirty.clear()
                     display_changed_since_cp.clear()
+                    self._sync_activity(pending_dirty)
                     continue
 
                 start_vertex = item.from_vertex
@@ -1835,6 +1894,7 @@ class StockSimulator:
                 if self._grid_carved_vertex > item.from_vertex:
                     rewound = self._rewind_grid_to(live, gen, item.from_vertex)
                     if rewound is None:
+                        self._sync_activity(pending_dirty)
                         continue
                     start_vertex, dirty_keys = rewound
                     pending_dirty.update(dirty_keys)
@@ -1949,6 +2009,8 @@ class StockSimulator:
                     self._queue.put(_DISPLAY_FOLLOW)
                 elif not still_behind and not pending_dirty:
                     self._maybe_rearm_idle_bake()
+
+            self._sync_activity(pending_dirty)
 
         if pending_dirty or bool(getattr(self._backend, "_laser_dirty", False)):
             with self._lock:
