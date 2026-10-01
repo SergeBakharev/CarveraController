@@ -14,8 +14,8 @@ RESOLUTION_LEVELS = ("low", "medium", "high")
 # 3D voxels are memory-heavy — keep targets modest.
 VOXEL_TARGET_BY_LEVEL = {
     "low": 200,
-    "medium": 600,
-    "high": 1000,
+    "medium": 400,
+    "high": 800,
 }
 
 # Heightmaps are 2D float arrays — can run denser for the same memory budget.
@@ -41,7 +41,7 @@ _TARGET_BY_CARVER = {
 
 # Minimum cell size (mm).
 MIN_CELL_SIZE_MM = {
-    "voxel": 0.08,
+    "voxel": 0.1,
     "heightmap": 0.05,
     "cylindrical": 0.1,
 }

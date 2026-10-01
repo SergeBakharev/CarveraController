@@ -2094,29 +2094,32 @@ class GCodeViewer(Widget):
 
         carver = str(stats.get("carver") or "voxel")
         if carver == "heightmap":
-            grid_line = tr._("Heightmap: %dx%d - %smm/cell") % (
+            grid_line = tr._("Heightmap: %dx%d") % (
                 int(stats.get("grid_nx", 0)),
                 int(stats.get("grid_ny", 0)),
-                cell_txt,
             )
+            resolution_line = tr._("Resolution: %smm/cell") % cell_txt
         elif carver == "cylindrical":
-            grid_line = tr._("Cylindrical: %dx%d - %s mm along X and at Ø%s") % (
+            grid_line = tr._("Cylindrical: %dx%d") % (
                 int(stats.get("grid_nx", 0)),
                 int(stats.get("grid_ny", 0)),
+            )
+            resolution_line = tr._("Resolution: %s mm along X and at Ø%s") % (
                 cell_txt,
                 format_diameter_mm(float(stats["stock_diameter_mm"])),
             )
         else:
-            grid_line = tr._("Grid: %dx%dx%d - %smm/voxel") % (
+            grid_line = tr._("Grid: %dx%dx%d") % (
                 int(stats["grid_nx"]),
                 int(stats["grid_ny"]),
                 int(stats["grid_nz"]),
-                cell_txt,
             )
+            resolution_line = tr._("Resolution: %smm/voxel") % cell_txt
 
         return "\n".join(
             [
                 grid_line,
+                resolution_line,
                 tr._("Checkpoints: %.0f%% - %d/%d slots")
                 % (
                     head_pct,

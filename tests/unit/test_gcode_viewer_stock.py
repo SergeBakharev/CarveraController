@@ -280,7 +280,7 @@ def test_format_sim_hud_cylindrical_names_od():
     }
     text = viewer._format_sim_hud_text()
     assert "Cylindrical: 800x472" in text
-    assert "0.38 mm along X and at Ø50" in text
+    assert "Resolution: 0.38 mm along X and at Ø50" in text
     assert "mm/cell" not in text
 
 
@@ -297,7 +297,7 @@ def test_format_sim_hud_heightmap_keeps_mm_per_cell():
         "checkpoint_head_vertex": 0,
     }
     text = viewer._format_sim_hud_text()
-    assert "Heightmap: 200x200 - 0.21mm/cell" in text
+    assert "Heightmap: 200x200\nResolution: 0.21mm/cell" in text
 
 
 def test_simulation_available_with_cam_tool_table():

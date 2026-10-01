@@ -25,9 +25,10 @@
             pos: self.pos
             size: self.size
     BoxLayout:
-        size_hint: None, None
+        size_hint_y: None
         height: dp(36)
-        width: max(self.minimum_width, root.width)
+        # Fill the panel, but let the panel width come from content minimums.
+        size_hint_min_x: self.minimum_width
         spacing: dp(8)
         padding: dp(8), dp(4)
         canvas.before:
