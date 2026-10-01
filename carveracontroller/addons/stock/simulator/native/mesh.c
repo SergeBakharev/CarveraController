@@ -11,11 +11,44 @@
 #include <string.h>
 
 #define SC_MESH_MAX_VERTS 65000
-#define HM_CLIFF 4.0f
-#define HM_MERGE 1.0e-4f
-#define HM_EXAG 3.0f
-#define HM_MAX_SLOPE 1.73205080757f
+#define SC_VERT_FLOATS 12 /* position (3), normal (3), color (4), uv (2) */
 
+/* Heightmap shading and welding tuning. */
+#define HM_CLIFF 4.0f              /* neighbors more than this many cells higher/lower don't shape the normal */
+#define HM_MERGE 1.0e-4f           /* heights closer than this count as equal */
+#define HM_EXAG 3.0f               /* exaggerate slopes in the shading normal so relief is easier to see */
+#define HM_MAX_SLOPE 1.73205080757f /* cap on the exaggerated slope (60 degrees) so the normal never goes flat */
+
+typedef struct ScV3 {
+    float x, y, z;
+} ScV3;
+
+typedef struct ScColor {
+    float r, g, b, a;
+} ScColor;
+
+static ScColor sc_color(double r, double g, double b, double a) {
+    ScColor c;
+    c.r = (float)r;
+    c.g = (float)g;
+    c.b = (float)b;
+    c.a = (float)a;
+    return c;
+}
+
+static ScV3 sc_v3(float x, float y, float z) {
+    ScV3 v;
+    v.x = x;
+    v.y = y;
+    v.z = z;
+    return v;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Growing vertex / index buffers                                            */
+/* ------------------------------------------------------------------------- */
+
+/* The mesh part being built. A part is closed when it would exceed SC_MESH_MAX_VERTS vertices. */
 typedef struct ScBuf {
     float *v;
     uint16_t *idx;
@@ -50,6 +83,9 @@ static void sc_buf_free(ScBuf *b) {
     sc_buf_init(b);
 }
 
+/* Move a finished buffer into the batch (the batch now owns its memory). Empty buffers are dropped.
+ * Returns 0, or -1 if memory ran out (the buffer is left untouched).
+ */
 static int sc_batch_add(ScMeshBatch *batch, ScBuf *b) {
     ScMeshPart *parts;
     int ncap;
@@ -75,6 +111,7 @@ static int sc_batch_add(ScMeshBatch *batch, ScBuf *b) {
     return 0;
 }
 
+/* Make room for `add_v` more vertices and `add_i` more indices. Returns 0, or -1 on failure. */
 static int sc_buf_reserve(ScBuf *b, int add_v, int add_i) {
     int ncap;
     float *nv;
@@ -87,7 +124,7 @@ static int sc_buf_reserve(ScBuf *b, int add_v, int add_i) {
             }
             ncap *= 2;
         }
-        nv = (float *)realloc(b->v, (size_t)ncap * 12u * sizeof(float));
+        nv = (float *)realloc(b->v, (size_t)ncap * SC_VERT_FLOATS * sizeof(float));
         if (nv == NULL) {
             return -1;
         }
@@ -112,18 +149,10 @@ static int sc_buf_reserve(ScBuf *b, int add_v, int add_i) {
     return 0;
 }
 
-static int sc_buf_vert(
-    ScBuf *b,
-    float x,
-    float y,
-    float z,
-    float nx,
-    float ny,
-    float nz,
-    float cr,
-    float cg,
-    float cb,
-    float ca) {
+/* Append a vertex. Returns its index, -2 if the part is full (the caller can split and retry),
+ * or -1 if memory ran out.
+ */
+static int sc_buf_vert(ScBuf *b, ScV3 pos, ScV3 normal, const ScColor *color) {
     float *p;
     if (b->nv >= SC_MESH_MAX_VERTS) {
         return -2;
@@ -131,18 +160,18 @@ static int sc_buf_vert(
     if (sc_buf_reserve(b, 1, 0) != 0) {
         return -1;
     }
-    p = b->v + b->nv * 12;
-    p[0] = x;
-    p[1] = y;
-    p[2] = z;
-    p[3] = nx;
-    p[4] = ny;
-    p[5] = nz;
-    p[6] = cr;
-    p[7] = cg;
-    p[8] = cb;
-    p[9] = ca;
-    p[10] = 0.f;
+    p = b->v + b->nv * SC_VERT_FLOATS;
+    p[0] = pos.x;
+    p[1] = pos.y;
+    p[2] = pos.z;
+    p[3] = normal.x;
+    p[4] = normal.y;
+    p[5] = normal.z;
+    p[6] = color->r;
+    p[7] = color->g;
+    p[8] = color->b;
+    p[9] = color->a;
+    p[10] = 0.f; /* no texture coordinates */
     p[11] = 0.f;
     return b->nv++;
 }
@@ -163,6 +192,7 @@ static int sc_buf_tri(ScBuf *b, int a, int c, int d) {
     return 0;
 }
 
+/* Two triangles covering the quad a-c-d-e. */
 static int sc_buf_quad(ScBuf *b, int a, int c, int d, int e) {
     if (sc_buf_tri(b, a, c, d) != 0) {
         return -1;
@@ -170,15 +200,126 @@ static int sc_buf_quad(ScBuf *b, int a, int c, int d, int e) {
     return sc_buf_tri(b, a, d, e);
 }
 
+/* Add a flat quad with four new vertices that all share one normal. Returns 0, -2 (part full), or -1. */
+static int sc_buf_flat_quad(ScBuf *b, const ScV3 corners[4], ScV3 normal, const ScColor *color) {
+    int ids[4];
+    int k;
+    if (b->nv + 4 > SC_MESH_MAX_VERTS) {
+        return -2;
+    }
+    for (k = 0; k < 4; k++) {
+        ids[k] = sc_buf_vert(b, corners[k], normal, color);
+    }
+    for (k = 0; k < 4; k++) {
+        if (ids[k] < 0) {
+            return ids[k];
+        }
+    }
+    return sc_buf_quad(b, ids[0], ids[1], ids[2], ids[3]);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Greedy rectangle merging                                                  */
+/* ------------------------------------------------------------------------- */
+
+/* Called for each merged rectangle covering rows [i0, i1) and columns [j0, j1). Returns 0 on success. */
+typedef int (*ScRectFn)(void *ctx, int i0, int j0, int i1, int j1);
+
+/* Cover every free cell of a rows x stride grid with as few rectangles as a simple greedy scan finds.
+ * `used` marks cells that are already taken (it is updated as rectangles are emitted). Only columns
+ * [j_begin, j_end) are scanned. Stops at the first non-zero return of `emit` and passes it on.
+ */
+static int sc_greedy_rects(
+    uint8_t *used, int rows, int stride, int j_begin, int j_end, ScRectFn emit, void *ctx) {
+    int i, j;
+    for (i = 0; i < rows; i++) {
+        j = j_begin;
+        while (j < j_end) {
+            int w, d, k, rc;
+            if (used[i * stride + j]) {
+                j++;
+                continue;
+            }
+            /* Grow right along the row as far as cells are free... */
+            w = 1;
+            while (j + w < j_end && !used[i * stride + (j + w)]) {
+                w++;
+            }
+            /* ...then down, as long as the whole width stays free. */
+            d = 1;
+            while (i + d < rows) {
+                int ok = 1;
+                for (k = 0; k < w; k++) {
+                    if (used[(i + d) * stride + (j + k)]) {
+                        ok = 0;
+                        break;
+                    }
+                }
+                if (!ok) {
+                    break;
+                }
+                d++;
+            }
+            for (k = 0; k < d; k++) {
+                int t;
+                for (t = 0; t < w; t++) {
+                    used[(i + k) * stride + (j + t)] = 1;
+                }
+            }
+            rc = emit(ctx, i, j, i + d, j + w);
+            if (rc != 0) {
+                return rc;
+            }
+            j += w;
+        }
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Heightmap mesh                                                            */
+/* ------------------------------------------------------------------------- */
+
+/* The mesh is a "terrain": one flat top per cell, welded to neighbors at the same height, plus vertical walls
+ * ("skirts") wherever a cell is higher than its neighbor, and a flat underside. Side indices used below:
+ * 0 = -X, 1 = +X, 2 = -Y, 3 = +Y.
+ */
+typedef struct HmMesh {
+    const float *patch; /* cell heights with a one-cell halo, (gw + 2) x (gh + 2) */
+    int stride;         /* gh + 2 */
+    int gw, gh;         /* window size in cells */
+    int x0, y0;         /* window position in the full grid */
+    int grid_nx, grid_ny;
+    float origin_x, origin_y;
+    float min_z;        /* bottom of the stock; also the "no stock" threshold */
+    float cell;
+    float cliff;        /* height difference above which a neighbor is ignored when shading */
+    ScColor color;
+    /* Filled in by sc_mesh_heightmap: */
+    uint8_t *valid;     /* [gw * gh] cell has stock */
+    int cstride;        /* gh + 1 */
+    uint8_t *share;     /* [(gw + 1) * (gh + 1)] corner is welded: all cells around it have the same height */
+    float *corner_z;    /* [(gw + 1) * (gh + 1)] height of welded corners */
+} HmMesh;
+
+/* A horizontal band of rows being meshed, and the vertex ids already created for its welded corners. */
+typedef struct HmStrip {
+    int *ids;
+    int j0;
+    int nrows; /* corner rows in the strip (cells + 1) */
+} HmStrip;
+
 static int hm_valid(float h, float min_z) {
     return h > (float)(SC_OUTSIDE * 0.5) && h > min_z + HM_MERGE;
 }
 
-static float hm_at(const float *patch, int stride, int cx, int cy) {
-    return patch[(cx + 1) * stride + (cy + 1)];
+/* Height of cell (cx, cy) in window coordinates. The halo makes -1 and gw / gh valid too. */
+static float hm_at(const HmMesh *m, int cx, int cy) {
+    return m->patch[(cx + 1) * m->stride + (cy + 1)];
 }
 
-static void hm_slope_normal(float dzdx, float dzdy, float *nx, float *ny, float *nz) {
+/* Unit normal for a surface with the given slope, with the slope exaggerated and capped. */
+static ScV3 hm_slope_normal(float dzdx, float dzdy) {
     float gx = HM_EXAG * dzdx;
     float gy = HM_EXAG * dzdy;
     float slope = sqrtf(gx * gx + gy * gy);
@@ -192,512 +333,276 @@ static void hm_slope_normal(float dzdx, float dzdy, float *nx, float *ny, float 
     z = 1.f;
     len = sqrtf(x * x + y * y + z * z);
     if (len < 1e-12f) {
-        *nx = 0.f;
-        *ny = 0.f;
-        *nz = 1.f;
-        return;
+        return sc_v3(0.f, 0.f, 1.f);
     }
-    *nx = x / len;
-    *ny = y / len;
-    *nz = z / len;
+    return sc_v3(x / len, y / len, z / len);
 }
 
-static void hm_cell_normal(
-    const float *patch,
-    int stride,
-    int i,
-    int j,
-    float h,
-    float min_z,
-    float cliff,
-    float cell,
-    float *nx,
-    float *ny,
-    float *nz) {
-    float hl = hm_at(patch, stride, i - 1, j);
-    float hr = hm_at(patch, stride, i + 1, j);
-    float hd = hm_at(patch, stride, i, j - 1);
-    float hu = hm_at(patch, stride, i, j + 1);
-    int ul = hm_valid(hl, min_z) && fabsf(hl - h) <= cliff;
-    int ur = hm_valid(hr, min_z) && fabsf(hr - h) <= cliff;
-    int ud = hm_valid(hd, min_z) && fabsf(hd - h) <= cliff;
-    int uu = hm_valid(hu, min_z) && fabsf(hu - h) <= cliff;
+/* Shading normal of cell (i, j), from its height differences with neighbors that aren't across a cliff. */
+static ScV3 hm_cell_normal(const HmMesh *m, int i, int j, float h) {
+    float hl = hm_at(m, i - 1, j);
+    float hr = hm_at(m, i + 1, j);
+    float hd = hm_at(m, i, j - 1);
+    float hu = hm_at(m, i, j + 1);
+    int ul = hm_valid(hl, m->min_z) && fabsf(hl - h) <= m->cliff;
+    int ur = hm_valid(hr, m->min_z) && fabsf(hr - h) <= m->cliff;
+    int ud = hm_valid(hd, m->min_z) && fabsf(hd - h) <= m->cliff;
+    int uu = hm_valid(hu, m->min_z) && fabsf(hu - h) <= m->cliff;
     float dzdx = 0.f;
     float dzdy = 0.f;
     if (ul && ur) {
-        dzdx = (hr - hl) / (2.f * cell);
+        dzdx = (hr - hl) / (2.f * m->cell);
     } else if (ur) {
-        dzdx = (hr - h) / cell;
+        dzdx = (hr - h) / m->cell;
     } else if (ul) {
-        dzdx = (h - hl) / cell;
+        dzdx = (h - hl) / m->cell;
     }
     if (ud && uu) {
-        dzdy = (hu - hd) / (2.f * cell);
+        dzdy = (hu - hd) / (2.f * m->cell);
     } else if (uu) {
-        dzdy = (hu - h) / cell;
+        dzdy = (hu - h) / m->cell;
     } else if (ud) {
-        dzdy = (h - hd) / cell;
+        dzdy = (h - hd) / m->cell;
     }
-    hm_slope_normal(dzdx, dzdy, nx, ny, nz);
+    return hm_slope_normal(dzdx, dzdy);
 }
 
-static int hm_corner_vert(
-    ScBuf *b,
-    int *ids,
-    int nrows,
-    const float *cz,
-    const uint8_t *share,
-    int cstride,
-    const float *patch,
-    int stride,
-    int i,
-    int j,
-    int cxi,
-    int cyj,
-    int j0,
-    float origin_x,
-    float origin_y,
-    float cell,
-    float min_z,
-    float cliff,
-    float cr,
-    float cg,
-    float cb,
-    float ca) {
-    int ci = i + cxi;
-    int cj = j + cyj;
-    int g = ci * cstride + cj;
-    int slot = ci * nrows + (cj - j0);
-    float z, nx, ny, nz, x, y;
+/* Vertex at corner (i + di, j + dj) of cell (i, j)'s top face. Returns its id, or a negative sc_buf_vert error. */
+static int hm_corner_vert(ScBuf *b, const HmMesh *m, const HmStrip *strip, int i, int j, int di, int dj) {
+    int ci = i + di;
+    int cj = j + dj;
+    int g = ci * m->cstride + cj;
+    int slot = ci * strip->nrows + (cj - strip->j0);
+    float z;
+    ScV3 normal;
     int id;
-    if (share[g]) {
-        /* Welded flat corner: every incident cell has the same height, so the
-         * averaged height is exact and the shading normal stays +Z. */
-        if (ids[slot] >= 0) {
-            return ids[slot];
+    if (m->share[g]) {
+        /* Welded flat corner: every incident cell has the same height, so the averaged height is exact
+         * and the shading normal stays +Z. The vertex is shared with the neighboring cells. */
+        if (strip->ids[slot] >= 0) {
+            return strip->ids[slot];
         }
-        z = cz[g];
-        nx = 0.f;
-        ny = 0.f;
-        nz = 1.f;
+        z = m->corner_z[g];
+        normal = sc_v3(0.f, 0.f, 1.f);
     } else {
-        /* Steps keep crisp per-cell tops at the cell's own height. Averaging
-         * neighbor heights here let adjacent cells disagree on a shared edge
-         * while staying under the skirt threshold (open slits on walls). */
-        float h = hm_at(patch, stride, i, j);
+        /* Steps keep crisp per-cell tops at the cell's own height. Averaging neighbor heights here let
+         * adjacent cells disagree on a shared edge while staying under the skirt threshold (open slits
+         * on walls). */
+        float h = hm_at(m, i, j);
         z = h;
-        hm_cell_normal(patch, stride, i, j, h, min_z, cliff, cell, &nx, &ny, &nz);
+        normal = hm_cell_normal(m, i, j, h);
     }
-    x = origin_x + (float)ci * cell;
-    y = origin_y + (float)cj * cell;
-    id = sc_buf_vert(b, x, y, z, nx, ny, nz, cr, cg, cb, ca);
-    if (id >= 0 && share[g]) {
-        ids[slot] = id;
+    id = sc_buf_vert(
+        b, sc_v3(m->origin_x + (float)ci * m->cell, m->origin_y + (float)cj * m->cell, z), normal, &m->color);
+    if (id >= 0 && m->share[g]) {
+        strip->ids[slot] = id;
     }
     return id;
 }
 
-static int hm_emit_axis_quad(
-    ScBuf *b,
-    float x0,
-    float y0,
-    float z0,
-    float x1,
-    float y1,
-    float z1,
-    float x2,
-    float y2,
-    float z2,
-    float x3,
-    float y3,
-    float z3,
-    float nx,
-    float ny,
-    float nz,
-    float cr,
-    float cg,
-    float cb,
-    float ca) {
-    int i0, i1, i2, i3;
-    if (b->nv + 4 > SC_MESH_MAX_VERTS) {
-        return -2;
+/* Where a wall below cell (i, j) is needed on one side.
+ * A wall is needed at the edge of the whole grid, next to a cell with no stock, or next to a lower cell.
+ * It goes down to the neighbor's top, or all the way to the bottom if there is no neighbor stock.
+ */
+static void hm_wall_info(const HmMesh *m, int side, int i, int j, float h, int *needed, float *z_bottom) {
+    static const int di[4] = {-1, 1, 0, 0};
+    static const int dj[4] = {0, 0, -1, 1};
+    float nh = hm_at(m, i + di[side], j + dj[side]);
+    int at_grid_edge;
+    switch (side) {
+    case 0:
+        at_grid_edge = m->x0 + i == 0;
+        break;
+    case 1:
+        at_grid_edge = m->x0 + i + 1 >= m->grid_nx;
+        break;
+    case 2:
+        at_grid_edge = m->y0 + j == 0;
+        break;
+    default:
+        at_grid_edge = m->y0 + j + 1 >= m->grid_ny;
+        break;
     }
-    i0 = sc_buf_vert(b, x0, y0, z0, nx, ny, nz, cr, cg, cb, ca);
-    i1 = sc_buf_vert(b, x1, y1, z1, nx, ny, nz, cr, cg, cb, ca);
-    i2 = sc_buf_vert(b, x2, y2, z2, nx, ny, nz, cr, cg, cb, ca);
-    i3 = sc_buf_vert(b, x3, y3, z3, nx, ny, nz, cr, cg, cb, ca);
-    if (i0 < 0) {
-        return i0;
-    }
-    if (i1 < 0) {
-        return i1;
-    }
-    if (i2 < 0) {
-        return i2;
-    }
-    if (i3 < 0) {
-        return i3;
-    }
-    return sc_buf_quad(b, i0, i1, i2, i3);
+    *needed = at_grid_edge || !hm_valid(nh, m->min_z) || (h - nh) > HM_MERGE;
+    *z_bottom = (at_grid_edge || !hm_valid(nh, m->min_z)) ? m->min_z : nh;
 }
 
-static float hm_skirt_z(
-    const float *patch,
-    int stride,
-    int ni,
-    int nj,
-    int at_grid,
-    float min_z) {
-    float nh;
-    if (at_grid) {
-        return min_z;
+/* Vertical wall on one side of the window or a cell, from z_top down to z_bottom.
+ * `fixed` is the wall's X (sides 0, 1) or Y (sides 2, 3); `lo`..`hi` is its extent along the other axis.
+ */
+static int hm_emit_wall(
+    ScBuf *b, const HmMesh *m, int side, float fixed, float lo, float hi, float z_top, float z_bottom) {
+    ScV3 c[4];
+    ScV3 normal;
+    switch (side) {
+    case 0:
+        c[0] = sc_v3(fixed, lo, z_top);
+        c[1] = sc_v3(fixed, hi, z_top);
+        c[2] = sc_v3(fixed, hi, z_bottom);
+        c[3] = sc_v3(fixed, lo, z_bottom);
+        normal = sc_v3(-1.f, 0.f, 0.f);
+        break;
+    case 1:
+        c[0] = sc_v3(fixed, hi, z_top);
+        c[1] = sc_v3(fixed, lo, z_top);
+        c[2] = sc_v3(fixed, lo, z_bottom);
+        c[3] = sc_v3(fixed, hi, z_bottom);
+        normal = sc_v3(1.f, 0.f, 0.f);
+        break;
+    case 2:
+        c[0] = sc_v3(hi, fixed, z_top);
+        c[1] = sc_v3(lo, fixed, z_top);
+        c[2] = sc_v3(lo, fixed, z_bottom);
+        c[3] = sc_v3(hi, fixed, z_bottom);
+        normal = sc_v3(0.f, -1.f, 0.f);
+        break;
+    default:
+        c[0] = sc_v3(lo, fixed, z_top);
+        c[1] = sc_v3(hi, fixed, z_top);
+        c[2] = sc_v3(hi, fixed, z_bottom);
+        c[3] = sc_v3(lo, fixed, z_bottom);
+        normal = sc_v3(0.f, 1.f, 0.f);
+        break;
     }
-    nh = hm_at(patch, stride, ni, nj);
-    if (!hm_valid(nh, min_z)) {
-        return min_z;
-    }
-    return nh;
+    return sc_buf_flat_quad(b, c, normal, &m->color);
 }
 
-static int hm_emit_skirts_cell(
-    ScBuf *b,
-    const float *patch,
-    int stride,
-    int i,
-    int j,
-    int x0,
-    int y0,
-    int grid_nx,
-    int grid_ny,
-    float origin_x,
-    float origin_y,
-    float cell,
-    float min_z,
-    float cr,
-    float cg,
-    float cb,
-    float ca) {
-    float h, x, y, zt0, zt1, zb0, zb1, nh;
-    int rc;
-    h = hm_at(patch, stride, i, j);
-    /* Left (-X). */
-    nh = hm_at(patch, stride, i - 1, j);
-    if ((x0 + i == 0) || !hm_valid(nh, min_z) || (h - nh) > HM_MERGE) {
-        zt0 = h;
-        zt1 = h;
-        zb0 = hm_skirt_z(patch, stride, i - 1, j, x0 + i == 0, min_z);
-        zb1 = hm_skirt_z(patch, stride, i - 1, j, x0 + i == 0, min_z);
-        if (0.5f * (zt0 + zt1) > 0.5f * (zb0 + zb1) + HM_MERGE) {
-            x = origin_x + (float)i * cell;
-            y = origin_y + (float)j * cell;
-            rc = hm_emit_axis_quad(
-                b, x, y, zt0, x, y + cell, zt1, x, y + cell, zb1, x, y, zb0, -1.f, 0.f, 0.f, cr, cg, cb, ca);
-            if (rc != 0) {
-                return rc;
-            }
+/* Walls on all sides of cell (i, j) that stand taller than what is next to them. */
+static int hm_emit_skirts_cell(ScBuf *b, const HmMesh *m, int i, int j) {
+    float h = hm_at(m, i, j);
+    float x = m->origin_x + (float)i * m->cell;
+    float y = m->origin_y + (float)j * m->cell;
+    int side;
+    for (side = 0; side < 4; side++) {
+        float z_bottom, fixed, lo, hi;
+        int needed, rc;
+        hm_wall_info(m, side, i, j, h, &needed, &z_bottom);
+        if (!needed || !(h > z_bottom + HM_MERGE)) {
+            continue;
         }
-    }
-    /* Right (+X). */
-    nh = hm_at(patch, stride, i + 1, j);
-    if ((x0 + i + 1 >= grid_nx) || !hm_valid(nh, min_z) || (h - nh) > HM_MERGE) {
-        zt0 = h;
-        zt1 = h;
-        zb0 = hm_skirt_z(patch, stride, i + 1, j, x0 + i + 1 >= grid_nx, min_z);
-        zb1 = hm_skirt_z(patch, stride, i + 1, j, x0 + i + 1 >= grid_nx, min_z);
-        if (0.5f * (zt0 + zt1) > 0.5f * (zb0 + zb1) + HM_MERGE) {
-            x = origin_x + (float)(i + 1) * cell;
-            y = origin_y + (float)j * cell;
-            rc = hm_emit_axis_quad(
-                b,
-                x,
-                y + cell,
-                zt0,
-                x,
-                y,
-                zt1,
-                x,
-                y,
-                zb1,
-                x,
-                y + cell,
-                zb0,
-                1.f,
-                0.f,
-                0.f,
-                cr,
-                cg,
-                cb,
-                ca);
-            if (rc != 0) {
-                return rc;
-            }
+        switch (side) {
+        case 0:
+            fixed = x;
+            lo = y;
+            hi = y + m->cell;
+            break;
+        case 1:
+            fixed = m->origin_x + (float)(i + 1) * m->cell;
+            lo = y;
+            hi = y + m->cell;
+            break;
+        case 2:
+            fixed = y;
+            lo = x;
+            hi = x + m->cell;
+            break;
+        default:
+            fixed = m->origin_y + (float)(j + 1) * m->cell;
+            lo = x;
+            hi = x + m->cell;
+            break;
         }
-    }
-    /* Down (-Y). */
-    nh = hm_at(patch, stride, i, j - 1);
-    if ((y0 + j == 0) || !hm_valid(nh, min_z) || (h - nh) > HM_MERGE) {
-        zt0 = h;
-        zt1 = h;
-        zb0 = hm_skirt_z(patch, stride, i, j - 1, y0 + j == 0, min_z);
-        zb1 = hm_skirt_z(patch, stride, i, j - 1, y0 + j == 0, min_z);
-        if (0.5f * (zt0 + zt1) > 0.5f * (zb0 + zb1) + HM_MERGE) {
-            x = origin_x + (float)i * cell;
-            y = origin_y + (float)j * cell;
-            rc = hm_emit_axis_quad(
-                b,
-                x + cell,
-                y,
-                zt0,
-                x,
-                y,
-                zt1,
-                x,
-                y,
-                zb1,
-                x + cell,
-                y,
-                zb0,
-                0.f,
-                -1.f,
-                0.f,
-                cr,
-                cg,
-                cb,
-                ca);
-            if (rc != 0) {
-                return rc;
-            }
-        }
-    }
-    /* Up (+Y). */
-    nh = hm_at(patch, stride, i, j + 1);
-    if ((y0 + j + 1 >= grid_ny) || !hm_valid(nh, min_z) || (h - nh) > HM_MERGE) {
-        zt0 = h;
-        zt1 = h;
-        zb0 = hm_skirt_z(patch, stride, i, j + 1, y0 + j + 1 >= grid_ny, min_z);
-        zb1 = hm_skirt_z(patch, stride, i, j + 1, y0 + j + 1 >= grid_ny, min_z);
-        if (0.5f * (zt0 + zt1) > 0.5f * (zb0 + zb1) + HM_MERGE) {
-            x = origin_x + (float)i * cell;
-            y = origin_y + (float)(j + 1) * cell;
-            rc = hm_emit_axis_quad(
-                b,
-                x,
-                y,
-                zt0,
-                x + cell,
-                y,
-                zt1,
-                x + cell,
-                y,
-                zb1,
-                x,
-                y,
-                zb0,
-                0.f,
-                1.f,
-                0.f,
-                cr,
-                cg,
-                cb,
-                ca);
-            if (rc != 0) {
-                return rc;
-            }
+        rc = hm_emit_wall(b, m, side, fixed, lo, hi, h, z_bottom);
+        if (rc != 0) {
+            return rc;
         }
     }
     return 0;
 }
 
-static int hm_emit_bottom(
-    ScBuf *b,
-    const uint8_t *valid,
-    int gw,
-    int gh,
-    int j0,
-    int j1,
-    float origin_x,
-    float origin_y,
-    float min_z,
-    float cell,
-    float cr,
-    float cg,
-    float cb,
-    float ca) {
-    int rows = j1 - j0;
-    int cols = gh;
+/* The underside: flat quads at min_z over every cell with stock, merged into big rectangles. */
+typedef struct HmBottomCtx {
+    ScBuf *b;
+    const HmMesh *m;
+} HmBottomCtx;
+
+static int hm_bottom_rect(void *vctx, int i0, int j0, int i1, int j1) {
+    HmBottomCtx *ctx = (HmBottomCtx *)vctx;
+    const HmMesh *m = ctx->m;
+    float x0 = m->origin_x + (float)i0 * m->cell;
+    float y0 = m->origin_y + (float)j0 * m->cell;
+    float x1 = m->origin_x + (float)i1 * m->cell;
+    float y1 = m->origin_y + (float)j1 * m->cell;
+    ScV3 c[4];
+    c[0] = sc_v3(x0, y0, m->min_z);
+    c[1] = sc_v3(x0, y1, m->min_z);
+    c[2] = sc_v3(x1, y1, m->min_z);
+    c[3] = sc_v3(x1, y0, m->min_z);
+    return sc_buf_flat_quad(ctx->b, c, sc_v3(0.f, 0.f, -1.f), &m->color);
+}
+
+/* Underside for the columns [j0, j1) of the window. */
+static int hm_emit_bottom(ScBuf *b, const HmMesh *m, int j0, int j1) {
+    HmBottomCtx ctx;
     uint8_t *used;
     int i, j, rc;
-    (void)cols;
-    used = (uint8_t *)malloc((size_t)gw * (size_t)gh);
+    used = (uint8_t *)malloc((size_t)m->gw * (size_t)m->gh);
     if (used == NULL) {
         return -1;
     }
-    memset(used, 0, (size_t)gw * (size_t)gh);
-    for (i = 0; i < gw; i++) {
-        for (j = 0; j < gh; j++) {
-            if (!valid[i * gh + j]) {
-                used[i * gh + j] = 1;
-            }
+    for (i = 0; i < m->gw; i++) {
+        for (j = 0; j < m->gh; j++) {
+            used[i * m->gh + j] = m->valid[i * m->gh + j] ? 0 : 1;
         }
     }
-    for (i = 0; i < gw; i++) {
-        j = j0;
-        while (j < j1) {
-            int w, d, k, ok;
-            float x0, y0, x1, y1;
-            if (used[i * gh + j]) {
-                j++;
-                continue;
-            }
-            w = 1;
-            while (j + w < j1 && !used[i * gh + (j + w)]) {
-                w++;
-            }
-            d = 1;
-            while (i + d < gw) {
-                ok = 1;
-                for (k = 0; k < w; k++) {
-                    if (used[(i + d) * gh + (j + k)]) {
-                        ok = 0;
-                        break;
-                    }
-                }
-                if (!ok) {
-                    break;
-                }
-                d++;
-            }
-            for (k = 0; k < d; k++) {
-                int t;
-                for (t = 0; t < w; t++) {
-                    used[(i + k) * gh + (j + t)] = 1;
-                }
-            }
-            x0 = origin_x + (float)i * cell;
-            y0 = origin_y + (float)j * cell;
-            x1 = origin_x + (float)(i + d) * cell;
-            y1 = origin_y + (float)(j + w) * cell;
-            rc = hm_emit_axis_quad(
-                b, x0, y0, min_z, x0, y1, min_z, x1, y1, min_z, x1, y0, min_z, 0.f, 0.f, -1.f, cr, cg, cb, ca);
-            if (rc != 0) {
-                free(used);
-                return rc;
-            }
-            j += w;
-        }
-    }
+    ctx.b = b;
+    ctx.m = m;
+    rc = sc_greedy_rects(used, m->gw, m->gh, j0, j1, hm_bottom_rect, &ctx);
     free(used);
-    (void)rows;
-    return 0;
+    return rc;
 }
 
-static int hm_emit_rows(
-    ScBuf *b,
-    const float *patch,
-    int stride,
-    const uint8_t *valid,
-    const float *cz,
-    const uint8_t *share,
-    int cstride,
-    int gw,
-    int gh,
-    int j0,
-    int j1,
-    int x0,
-    int y0,
-    int grid_nx,
-    int grid_ny,
-    float origin_x,
-    float origin_y,
-    float cell,
-    float min_z,
-    float cliff,
-    float cr,
-    float cg,
-    float cb,
-    float ca) {
-    int nrows = j1 - j0 + 1;
-    int *ids;
-    int i, j, nids;
-    ids = NULL;
-    nids = (gw + 1) * nrows;
-    ids = (int *)malloc((size_t)nids * sizeof(int));
-    if (ids == NULL) {
+/* Mesh the cells in columns [j0, j1) into `b`: tops, walls, and underside. */
+static int hm_emit_rows(ScBuf *b, const HmMesh *m, int j0, int j1) {
+    HmStrip strip;
+    int nids;
+    int i, j, rc;
+    strip.j0 = j0;
+    strip.nrows = j1 - j0 + 1;
+    nids = (m->gw + 1) * strip.nrows;
+    strip.ids = (int *)malloc((size_t)nids * sizeof(int));
+    if (strip.ids == NULL) {
         return -1;
     }
     for (i = 0; i < nids; i++) {
-        ids[i] = -1;
+        strip.ids[i] = -1;
     }
-    for (i = 0; i < gw; i++) {
+    for (i = 0; i < m->gw; i++) {
         for (j = j0; j < j1; j++) {
-            int i00, i10, i11, i01, rc;
-            if (!valid[i * gh + j]) {
+            int i00, i10, i11, i01;
+            if (!m->valid[i * m->gh + j]) {
                 continue;
             }
-            i00 = hm_corner_vert(
-                b, ids, nrows, cz, share, cstride, patch, stride, i, j, 0, 0, j0, origin_x, origin_y, cell,
-                min_z, cliff, cr, cg, cb, ca);
-            i10 = hm_corner_vert(
-                b, ids, nrows, cz, share, cstride, patch, stride, i, j, 1, 0, j0, origin_x, origin_y, cell,
-                min_z, cliff, cr, cg, cb, ca);
-            i11 = hm_corner_vert(
-                b, ids, nrows, cz, share, cstride, patch, stride, i, j, 1, 1, j0, origin_x, origin_y, cell,
-                min_z, cliff, cr, cg, cb, ca);
-            i01 = hm_corner_vert(
-                b, ids, nrows, cz, share, cstride, patch, stride, i, j, 0, 1, j0, origin_x, origin_y, cell,
-                min_z, cliff, cr, cg, cb, ca);
+            i00 = hm_corner_vert(b, m, &strip, i, j, 0, 0);
+            i10 = hm_corner_vert(b, m, &strip, i, j, 1, 0);
+            i11 = hm_corner_vert(b, m, &strip, i, j, 1, 1);
+            i01 = hm_corner_vert(b, m, &strip, i, j, 0, 1);
             if (i00 < 0 || i10 < 0 || i11 < 0 || i01 < 0) {
-                free(ids);
+                free(strip.ids);
                 return i00 < 0 ? i00 : (i10 < 0 ? i10 : (i11 < 0 ? i11 : i01));
             }
             rc = sc_buf_quad(b, i00, i10, i11, i01);
-            if (rc != 0) {
-                free(ids);
-                return rc;
+            if (rc == 0) {
+                rc = hm_emit_skirts_cell(b, m, i, j);
             }
-            rc = hm_emit_skirts_cell(
-                b, patch, stride, i, j, x0, y0, grid_nx, grid_ny, origin_x, origin_y, cell, min_z, cr, cg, cb, ca);
             if (rc != 0) {
-                free(ids);
+                free(strip.ids);
                 return rc;
             }
         }
     }
-    free(ids);
-    return hm_emit_bottom(b, valid, gw, gh, j0, j1, origin_x, origin_y, min_z, cell, cr, cg, cb, ca);
+    free(strip.ids);
+    return hm_emit_bottom(b, m, j0, j1);
 }
 
-static int hm_emit_split(
-    ScMeshBatch *out,
-    const float *patch,
-    int stride,
-    const uint8_t *valid,
-    const float *cz,
-    const uint8_t *share,
-    int cstride,
-    int gw,
-    int gh,
-    int j0,
-    int j1,
-    int x0,
-    int y0,
-    int grid_nx,
-    int grid_ny,
-    float origin_x,
-    float origin_y,
-    float cell,
-    float min_z,
-    float cliff,
-    float cr,
-    float cg,
-    float cb,
-    float ca) {
+/* Mesh columns [j0, j1) into one part. If that needs more vertices than a part can hold (-2), split the
+ * range in half and try each half.
+ */
+static int hm_emit_split(ScMeshBatch *out, const HmMesh *m, int j0, int j1) {
     ScBuf buf;
     int rc, mid;
     sc_buf_init(&buf);
-    rc = hm_emit_rows(
-        &buf, patch, stride, valid, cz, share, cstride, gw, gh, j0, j1, x0, y0, grid_nx, grid_ny, origin_x, origin_y,
-        cell, min_z, cliff, cr, cg, cb, ca);
+    rc = hm_emit_rows(&buf, m, j0, j1);
     if (rc == 0) {
         return sc_batch_add(out, &buf);
     }
@@ -706,128 +611,100 @@ static int hm_emit_split(
         return -1;
     }
     mid = j0 + (j1 - j0) / 2;
-    if (hm_emit_split(
-            out, patch, stride, valid, cz, share, cstride, gw, gh, j0, mid, x0, y0, grid_nx, grid_ny, origin_x,
-            origin_y, cell, min_z, cliff, cr, cg, cb, ca) != 0) {
+    if (hm_emit_split(out, m, j0, mid) != 0) {
         return -1;
     }
-    return hm_emit_split(
-        out, patch, stride, valid, cz, share, cstride, gw, gh, mid, j1, x0, y0, grid_nx, grid_ny, origin_x, origin_y,
-        cell, min_z, cliff, cr, cg, cb, ca);
+    return hm_emit_split(out, m, mid, j1);
 }
 
-static int hm_emit_uniform(
-    ScMeshBatch *out,
-    const float *patch,
-    int stride,
-    int gw,
-    int gh,
-    int x0,
-    int y0,
-    int grid_nx,
-    int grid_ny,
-    float origin_x,
-    float origin_y,
-    float min_z,
-    float cell,
-    float h,
-    float cliff,
-    float cr,
-    float cg,
-    float cb,
-    float ca) {
+/* Fast path for a window that is one flat plateau: a single top quad, one underside quad, and one wall per
+ * side (merged along runs where the neighbor's height is the same). `h` is the plateau height.
+ */
+static int hm_emit_uniform(ScMeshBatch *out, const HmMesh *m, float h) {
     ScBuf buf;
-    float x1 = origin_x + (float)gw * cell;
-    float y1 = origin_y + (float)gh * cell;
+    float x1 = m->origin_x + (float)m->gw * m->cell;
+    float y1 = m->origin_y + (float)m->gh * m->cell;
+    ScV3 c[4];
     int side, rc;
-    (void)cliff;
     sc_buf_init(&buf);
-    rc = hm_emit_axis_quad(&buf, origin_x, origin_y, h, x1, origin_y, h, x1, y1, h, origin_x, y1, h, 0.f, 0.f, 1.f, cr, cg, cb, ca);
+
+    c[0] = sc_v3(m->origin_x, m->origin_y, h);
+    c[1] = sc_v3(x1, m->origin_y, h);
+    c[2] = sc_v3(x1, y1, h);
+    c[3] = sc_v3(m->origin_x, y1, h);
+    rc = sc_buf_flat_quad(&buf, c, sc_v3(0.f, 0.f, 1.f), &m->color);
     if (rc != 0) {
         sc_buf_free(&buf);
         return -1;
     }
-    if (h > min_z + HM_MERGE) {
-        rc = hm_emit_axis_quad(
-            &buf, origin_x, origin_y, min_z, origin_x, y1, min_z, x1, y1, min_z, x1, origin_y, min_z, 0.f, 0.f, -1.f, cr, cg, cb,
-            ca);
+    if (h > m->min_z + HM_MERGE) {
+        c[0] = sc_v3(m->origin_x, m->origin_y, m->min_z);
+        c[1] = sc_v3(m->origin_x, y1, m->min_z);
+        c[2] = sc_v3(x1, y1, m->min_z);
+        c[3] = sc_v3(x1, m->origin_y, m->min_z);
+        rc = sc_buf_flat_quad(&buf, c, sc_v3(0.f, 0.f, -1.f), &m->color);
         if (rc != 0) {
             sc_buf_free(&buf);
             return -1;
         }
     }
     for (side = 0; side < 4; side++) {
-        int n = (side < 2) ? gh : gw;
+        /* Walk along this side of the window, one border cell at a time. */
+        int n = (side < 2) ? m->gh : m->gw;
         int j = 0;
         while (j < n) {
-            int at_grid, need, w;
-            float nh, zbot, x0e, y0e, x1e, y1e;
-            if (side == 0) {
-                at_grid = x0 == 0;
-                nh = hm_at(patch, stride, -1, j);
-            } else if (side == 1) {
-                at_grid = x0 + gw >= grid_nx;
-                nh = hm_at(patch, stride, gw, j);
-            } else if (side == 2) {
-                at_grid = y0 == 0;
-                nh = hm_at(patch, stride, j, -1);
-            } else {
-                at_grid = y0 + gh >= grid_ny;
-                nh = hm_at(patch, stride, j, gh);
+            int bi = 0, bj = 0; /* the border cell next to the wall */
+            int needed, w;
+            float z_bottom, fixed, lo, hi;
+            switch (side) {
+            case 0:
+                bi = 0;
+                bj = j;
+                break;
+            case 1:
+                bi = m->gw - 1;
+                bj = j;
+                break;
+            case 2:
+                bi = j;
+                bj = 0;
+                break;
+            default:
+                bi = j;
+                bj = m->gh - 1;
+                break;
             }
-            need = at_grid || !hm_valid(nh, min_z) || (h - nh) > HM_MERGE;
-            zbot = (at_grid || !hm_valid(nh, min_z)) ? min_z : nh;
-            if (!need || h <= zbot + HM_MERGE) {
+            hm_wall_info(m, side, bi, bj, h, &needed, &z_bottom);
+            if (!needed || h <= z_bottom + HM_MERGE) {
                 j++;
                 continue;
             }
+            /* Extend the wall over following cells that need one down to the same depth. */
             w = 1;
             while (j + w < n) {
-                int ag;
-                float nh2, zb2;
-                if (side == 0) {
-                    ag = x0 == 0;
-                    nh2 = hm_at(patch, stride, -1, j + w);
-                } else if (side == 1) {
-                    ag = x0 + gw >= grid_nx;
-                    nh2 = hm_at(patch, stride, gw, j + w);
-                } else if (side == 2) {
-                    ag = y0 == 0;
-                    nh2 = hm_at(patch, stride, j + w, -1);
-                } else {
-                    ag = y0 + gh >= grid_ny;
-                    nh2 = hm_at(patch, stride, j + w, gh);
-                }
-                if (!(ag || !hm_valid(nh2, min_z) || (h - nh2) > HM_MERGE)) {
+                int next_needed;
+                float next_bottom;
+                int nbi = side < 2 ? bi : j + w;
+                int nbj = side < 2 ? j + w : bj;
+                hm_wall_info(m, side, nbi, nbj, h, &next_needed, &next_bottom);
+                if (!next_needed) {
                     break;
                 }
-                zb2 = (ag || !hm_valid(nh2, min_z)) ? min_z : nh2;
-                if (fabsf(zb2 - zbot) > HM_MERGE) {
+                if (fabsf(next_bottom - z_bottom) > HM_MERGE) {
                     break;
                 }
                 w++;
             }
-            if (side == 0) {
-                x0e = origin_x;
-                y0e = origin_y + (float)j * cell;
-                y1e = origin_y + (float)(j + w) * cell;
-                rc = hm_emit_axis_quad(&buf, x0e, y0e, h, x0e, y1e, h, x0e, y1e, zbot, x0e, y0e, zbot, -1.f, 0.f, 0.f, cr, cg, cb, ca);
-            } else if (side == 1) {
-                x0e = x1;
-                y0e = origin_y + (float)j * cell;
-                y1e = origin_y + (float)(j + w) * cell;
-                rc = hm_emit_axis_quad(&buf, x0e, y1e, h, x0e, y0e, h, x0e, y0e, zbot, x0e, y1e, zbot, 1.f, 0.f, 0.f, cr, cg, cb, ca);
-            } else if (side == 2) {
-                x0e = origin_x + (float)j * cell;
-                x1e = origin_x + (float)(j + w) * cell;
-                y0e = origin_y;
-                rc = hm_emit_axis_quad(&buf, x1e, y0e, h, x0e, y0e, h, x0e, y0e, zbot, x1e, y0e, zbot, 0.f, -1.f, 0.f, cr, cg, cb, ca);
+            if (side < 2) {
+                fixed = side == 0 ? m->origin_x : x1;
+                lo = m->origin_y + (float)j * m->cell;
+                hi = m->origin_y + (float)(j + w) * m->cell;
             } else {
-                x0e = origin_x + (float)j * cell;
-                x1e = origin_x + (float)(j + w) * cell;
-                y0e = y1;
-                rc = hm_emit_axis_quad(&buf, x0e, y0e, h, x1e, y0e, h, x1e, y0e, zbot, x0e, y0e, zbot, 0.f, 1.f, 0.f, cr, cg, cb, ca);
+                fixed = side == 2 ? m->origin_y : y1;
+                lo = m->origin_x + (float)j * m->cell;
+                hi = m->origin_x + (float)(j + w) * m->cell;
             }
+            rc = hm_emit_wall(&buf, m, side, fixed, lo, hi, h, z_bottom);
             if (rc != 0) {
                 sc_buf_free(&buf);
                 return -1;
@@ -836,6 +713,75 @@ static int hm_emit_uniform(
         }
     }
     return sc_batch_add(out, &buf);
+}
+
+/* Mark which cells have stock. Reports whether any do, and the lowest / highest / last such height. */
+static void hm_find_valid(HmMesh *m, int *any, int *all_valid, float *h_min, float *h_max, float *h_last) {
+    int i, j;
+    *any = 0;
+    *all_valid = 1;
+    *h_min = 1e30f;
+    *h_max = -1e30f;
+    *h_last = 0.f;
+    for (i = 0; i < m->gw; i++) {
+        for (j = 0; j < m->gh; j++) {
+            float h = hm_at(m, i, j);
+            int ok = hm_valid(h, m->min_z);
+            m->valid[i * m->gh + j] = (uint8_t)ok;
+            if (!ok) {
+                *all_valid = 0;
+                continue;
+            }
+            *any = 1;
+            if (h < *h_min) {
+                *h_min = h;
+            }
+            if (h > *h_max) {
+                *h_max = h;
+            }
+            *h_last = h;
+        }
+    }
+}
+
+/* Decide which grid corners can be welded: those where all (up to four) cells around it with stock have
+ * the same height. Their shared height is the average.
+ */
+static void hm_find_shared_corners(HmMesh *m) {
+    int i, j;
+    for (i = 0; i <= m->gw; i++) {
+        for (j = 0; j <= m->gh; j++) {
+            float sum = 0.f;
+            float mn = 1e30f;
+            float mx = -1e30f;
+            int n = 0;
+            int ax, ay;
+            int slot = i * m->cstride + j;
+            for (ax = i - 1; ax <= i; ax++) {
+                for (ay = j - 1; ay <= j; ay++) {
+                    float h = hm_at(m, ax, ay);
+                    if (!hm_valid(h, m->min_z)) {
+                        continue;
+                    }
+                    if (h < mn) {
+                        mn = h;
+                    }
+                    if (h > mx) {
+                        mx = h;
+                    }
+                    sum += h;
+                    n++;
+                }
+            }
+            if (n > 0 && (mx - mn) <= HM_MERGE) {
+                m->share[slot] = 1;
+                m->corner_z[slot] = sum / (float)n;
+            } else {
+                m->share[slot] = 0;
+                m->corner_z[slot] = 0.f;
+            }
+        }
+    }
 }
 
 int sc_mesh_heightmap(
@@ -855,145 +801,99 @@ int sc_mesh_heightmap(
     double cb,
     double ca,
     ScMeshBatch *out) {
-    int stride, i, j, ncorner, any;
-    float fmin, fcell, fox, foy, cliff, h0, hmin, hmax;
-    float fcr, fcg, fcb, fca;
-    uint8_t *valid;
-    uint8_t *share;
-    float *cz;
-    int all_valid, uniform;
+    HmMesh m;
+    int ncorner, any, all_valid, rc;
+    float h_min, h_max, h_last;
     if (out == NULL || patch == NULL || gw <= 0 || gh <= 0 || cell <= 0.0) {
         return -1;
     }
-    stride = gh + 2;
-    fmin = (float)min_z;
-    fcell = (float)cell;
-    fox = (float)origin_x;
-    foy = (float)origin_y;
-    cliff = HM_CLIFF * fcell;
-    fcr = (float)cr;
-    fcg = (float)cg;
-    fcb = (float)cb;
-    fca = (float)ca;
-    valid = (uint8_t *)malloc((size_t)gw * (size_t)gh);
+    memset(&m, 0, sizeof(m));
+    m.patch = patch;
+    m.stride = gh + 2;
+    m.gw = gw;
+    m.gh = gh;
+    m.x0 = x0;
+    m.y0 = y0;
+    m.grid_nx = grid_nx;
+    m.grid_ny = grid_ny;
+    m.origin_x = (float)origin_x;
+    m.origin_y = (float)origin_y;
+    m.min_z = (float)min_z;
+    m.cell = (float)cell;
+    m.cliff = HM_CLIFF * m.cell;
+    m.color = sc_color(cr, cg, cb, ca);
+    m.cstride = gh + 1;
+
     ncorner = (gw + 1) * (gh + 1);
-    share = (uint8_t *)malloc((size_t)ncorner);
-    cz = (float *)malloc((size_t)ncorner * sizeof(float));
-    if (valid == NULL || share == NULL || cz == NULL) {
-        free(valid);
-        free(share);
-        free(cz);
-        return -1;
+    m.valid = (uint8_t *)malloc((size_t)gw * (size_t)gh);
+    m.share = (uint8_t *)malloc((size_t)ncorner);
+    m.corner_z = (float *)malloc((size_t)ncorner * sizeof(float));
+    if (m.valid == NULL || m.share == NULL || m.corner_z == NULL) {
+        rc = -1;
+        goto done;
     }
-    any = 0;
-    all_valid = 1;
-    hmin = 1e30f;
-    hmax = -1e30f;
-    h0 = 0.f;
-    for (i = 0; i < gw; i++) {
-        for (j = 0; j < gh; j++) {
-            float h = hm_at(patch, stride, i, j);
-            int ok = hm_valid(h, fmin);
-            valid[i * gh + j] = (uint8_t)ok;
-            if (!ok) {
-                all_valid = 0;
-                continue;
-            }
-            any = 1;
-            if (h < hmin) {
-                hmin = h;
-            }
-            if (h > hmax) {
-                hmax = h;
-            }
-            h0 = h;
-        }
-    }
+
+    hm_find_valid(&m, &any, &all_valid, &h_min, &h_max, &h_last);
     if (!any) {
-        free(valid);
-        free(share);
-        free(cz);
-        return 0;
+        rc = 0;
+        goto done;
     }
-    uniform = all_valid && (hmax - hmin) <= HM_MERGE;
-    if (uniform) {
-        int rc = hm_emit_uniform(
-            out, patch, stride, gw, gh, x0, y0, grid_nx, grid_ny, fox, foy, fmin, fcell, h0, cliff, fcr, fcg, fcb, fca);
-        free(valid);
-        free(share);
-        free(cz);
-        return rc;
+    if (all_valid && (h_max - h_min) <= HM_MERGE) {
+        rc = hm_emit_uniform(out, &m, h_last);
+        goto done;
     }
-    for (i = 0; i <= gw; i++) {
-        for (j = 0; j <= gh; j++) {
-            float sum = 0.f;
-            float mn = 1e30f;
-            float mx = -1e30f;
-            int n = 0;
-            int ax, ay;
-            int slot = i * (gh + 1) + j;
-            for (ax = i - 1; ax <= i; ax++) {
-                for (ay = j - 1; ay <= j; ay++) {
-                    float h = hm_at(patch, stride, ax, ay);
-                    if (!hm_valid(h, fmin)) {
-                        continue;
-                    }
-                    if (h < mn) {
-                        mn = h;
-                    }
-                    if (h > mx) {
-                        mx = h;
-                    }
-                    sum += h;
-                    n++;
-                }
-            }
-            if (n > 0 && (mx - mn) <= HM_MERGE) {
-                /* Welded flat corner. Steps stay per-cell at their own height:
-                 * averaging neighbor heights here let adjacent cells disagree
-                 * on a shared edge while staying under the skirt threshold,
-                 * leaving open slits on walls (see hm_corner_vert). */
-                share[slot] = 1;
-                cz[slot] = sum / (float)n;
-            } else {
-                share[slot] = 0;
-                cz[slot] = 0.f;
-            }
-        }
-    }
+    hm_find_shared_corners(&m);
     {
-        /* Split up front. Retrying a strip that cannot fit wastes the vertices
-         * it builds before hitting the uint16 cap. */
+        /* Split into strips up front. Retrying a strip that cannot fit would waste the vertices it
+         * builds before hitting the uint16 cap. */
         int rows_fit = SC_MESH_MAX_VERTS / (gw + 1);
-        int j, rc;
+        int j;
         if (rows_fit > 4) {
             rows_fit = (rows_fit * 2) / 3;
         }
         if (rows_fit < 1) {
             rows_fit = 1;
         }
+        rc = 0;
         for (j = 0; j < gh; j += rows_fit) {
             int j1 = j + rows_fit;
             if (j1 > gh) {
                 j1 = gh;
             }
-            rc = hm_emit_split(
-                out, patch, stride, valid, cz, share, gh + 1, gw, gh, j, j1, x0, y0, grid_nx, grid_ny, fox, foy, fcell,
-                fmin, cliff, fcr, fcg, fcb, fca);
-            if (rc != 0) {
-                free(valid);
-                free(share);
-                free(cz);
-                return -1;
+            if (hm_emit_split(out, &m, j, j1) != 0) {
+                rc = -1;
+                break;
             }
         }
-        free(valid);
-        free(share);
-        free(cz);
-        return 0;
     }
+done:
+    free(m.valid);
+    free(m.share);
+    free(m.corner_z);
+    return rc;
 }
 
+/* ------------------------------------------------------------------------- */
+/* Cylindrical mesh                                                          */
+/* ------------------------------------------------------------------------- */
+
+/* A tube around the X axis: one ring of vertices per X cell, joined into quads, with a disk cap at each
+ * end of the stock. A window of the stock may be one slab of a longer tube.
+ */
+typedef struct CylMesh {
+    const float *radii; /* (nx, n_theta) leftover radius per cell; negative means no stock */
+    int nx, n_theta;
+    int ix0;            /* X index of the window's first row in the full field */
+    int nx_total;       /* number of X rows in the full field */
+    double min_x, cell;
+    double axis_y, axis_z;
+    const double *sin_t;
+    const double *cos_t;
+    double floor_r;     /* radii below this are drawn as floor_r */
+    ScColor color;
+} CylMesh;
+
+/* Normal of the triangle (a, b, c), as a plain double vector. */
 static void cyl_cross(const float *a, const float *b, const float *c, double *n) {
     double bx = (double)b[0] - (double)a[0];
     double by = (double)b[1] - (double)a[1];
@@ -1006,11 +906,16 @@ static void cyl_cross(const float *a, const float *b, const float *c, double *n)
     n[2] = bx * cy - by * cx;
 }
 
+/* A quad can be split into triangles along either diagonal. Pick the one that keeps both triangles facing
+ * outward from the axis (so a notch in the surface doesn't get a flipped triangle). Returns 1 for the
+ * second diagonal (i10-i01), 0 for the first (i00-i11).
+ */
 static int cyl_use_b(const float *verts, int i00, int i10, int i11, int i01, double ay, double az) {
-    const float *p00 = verts + i00 * 12;
-    const float *p10 = verts + i10 * 12;
-    const float *p11 = verts + i11 * 12;
-    const float *p01 = verts + i01 * 12;
+    const float *p00 = verts + i00 * SC_VERT_FLOATS;
+    const float *p10 = verts + i10 * SC_VERT_FLOATS;
+    const float *p11 = verts + i11 * SC_VERT_FLOATS;
+    const float *p01 = verts + i01 * SC_VERT_FLOATS;
+    /* Direction from the axis to the quad's center (in the YZ plane). */
     double hy = 0.25 * ((double)p00[1] + (double)p10[1] + (double)p11[1] + (double)p01[1]) - ay;
     double hz = 0.25 * ((double)p00[2] + (double)p10[2] + (double)p11[2] + (double)p01[2]) - az;
     double n1[3], n2[3];
@@ -1028,6 +933,7 @@ static int cyl_use_b(const float *verts, int i00, int i10, int i11, int i01, dou
     return score_b > score_a;
 }
 
+/* The radius to draw for a cell, or 0 if the cell has no stock. */
 static int cyl_draw_r(float rr, double floor_r, double *r) {
     if (rr < 0.f) {
         return 0;
@@ -1036,42 +942,31 @@ static int cyl_draw_r(float rr, double floor_r, double *r) {
     return 1;
 }
 
-static int cyl_emit_cap(
-    ScBuf *b,
-    const float *radii,
-    int n_theta,
-    int local_ix,
-    int global_ix,
-    double min_x,
-    double cell,
-    double ay,
-    double az,
-    const double *sin_t,
-    const double *cos_t,
-    double floor_r,
-    float sign,
-    float cr,
-    float cg,
-    float cb,
-    float ca) {
+/* Flat disk closing one end of the tube at row `local_ix` (global row `global_ix`).
+ * `sign` is the direction the cap faces along X (-1 at the start of the stock, +1 at the end).
+ * Returns 0, or a negative sc_buf_vert error.
+ */
+static int cyl_emit_cap(ScBuf *b, const CylMesh *m, int local_ix, int global_ix, float sign) {
     int *ring;
     int it, center, any;
     float x;
-    ring = (int *)malloc((size_t)n_theta * sizeof(int));
+    ScV3 normal = sc_v3(sign, 0.f, 0.f);
+    ring = (int *)malloc((size_t)m->n_theta * sizeof(int));
     if (ring == NULL) {
         return -1;
     }
     any = 0;
-    x = (float)(min_x + ((double)global_ix + 0.5) * cell);
-    for (it = 0; it < n_theta; it++) {
+    x = (float)(m->min_x + ((double)global_ix + 0.5) * m->cell);
+    for (it = 0; it < m->n_theta; it++) {
         double r;
         int id;
-        if (!cyl_draw_r(radii[local_ix * n_theta + it], floor_r, &r)) {
+        if (!cyl_draw_r(m->radii[local_ix * m->n_theta + it], m->floor_r, &r)) {
             ring[it] = -1;
             continue;
         }
         id = sc_buf_vert(
-            b, x, (float)(ay + r * sin_t[it]), (float)(az + r * cos_t[it]), sign, 0.f, 0.f, cr, cg, cb, ca);
+            b, sc_v3(x, (float)(m->axis_y + r * m->sin_t[it]), (float)(m->axis_z + r * m->cos_t[it])), normal,
+            &m->color);
         if (id < 0) {
             free(ring);
             return id;
@@ -1083,14 +978,15 @@ static int cyl_emit_cap(
         free(ring);
         return 0;
     }
-    center = sc_buf_vert(b, x, (float)ay, (float)az, sign, 0.f, 0.f, cr, cg, cb, ca);
+    center = sc_buf_vert(b, sc_v3(x, (float)m->axis_y, (float)m->axis_z), normal, &m->color);
     if (center < 0) {
         free(ring);
         return center;
     }
-    for (it = 0; it < n_theta; it++) {
+    /* Fan of triangles from the center, skipping gaps where a bin has no stock. */
+    for (it = 0; it < m->n_theta; it++) {
         int a = ring[it];
-        int c = ring[(it + 1) % n_theta];
+        int c = ring[(it + 1) % m->n_theta];
         int rc;
         if (a < 0 || c < 0) {
             continue;
@@ -1109,40 +1005,22 @@ static int cyl_emit_cap(
     return 0;
 }
 
-/* Radius-field normal. A purely radial normal lights a relief as a smooth bar. */
-static void cyl_neighbor_r(
-    const float *radii, int nx, int n_theta, int ix, int it, double floor_r, double fallback, double *r) {
-    int itw;
-    if (ix < 0 || ix >= nx) {
-        *r = fallback;
-        return;
+/* Radius to draw at cell (ix, it), or `fallback` if the cell is outside the window or has no stock. */
+static double cyl_neighbor_r(const CylMesh *m, int ix, int it, double fallback) {
+    double r;
+    if (ix < 0 || ix >= m->nx) {
+        return fallback;
     }
-    itw = it % n_theta;
-    if (itw < 0) {
-        itw += n_theta;
+    if (!cyl_draw_r(m->radii[(size_t)ix * (size_t)m->n_theta + (size_t)it], m->floor_r, &r)) {
+        return fallback;
     }
-    if (!cyl_draw_r(radii[(size_t)ix * (size_t)n_theta + (size_t)itw], floor_r, r)) {
-        *r = fallback;
-    }
+    return r;
 }
 
-static void cyl_shell_normal(
-    const float *radii,
-    int nx,
-    int n_theta,
-    int local_ix,
-    int global_ix,
-    int it,
-    double min_x,
-    double cell,
-    double ay,
-    double az,
-    const double *sin_t,
-    const double *cos_t,
-    double floor_r,
-    float *out_x,
-    float *out_y,
-    float *out_z) {
+/* Surface normal at a ring vertex, from the neighboring points along X and around the ring. A purely
+ * radial normal would light a relief as a smooth bar.
+ */
+static ScV3 cyl_shell_normal(const CylMesh *m, int local_ix, int global_ix, int it) {
     double rc, rxm, rxp, rtm, rtp;
     double pxm[3], pxp[3], ptm[3], ptp[3];
     double tx0, tx1, tx2, tt0, tt1, tt2;
@@ -1150,41 +1028,42 @@ static void cyl_shell_normal(
     int lxm, lxp, itm, itp;
     int gxm, gxp;
 
-    cyl_neighbor_r(radii, nx, n_theta, local_ix, it, floor_r, floor_r, &rc);
+    rc = cyl_neighbor_r(m, local_ix, it, m->floor_r);
     lxm = local_ix > 0 ? local_ix - 1 : local_ix;
-    lxp = local_ix + 1 < nx ? local_ix + 1 : local_ix;
+    lxp = local_ix + 1 < m->nx ? local_ix + 1 : local_ix;
     gxm = global_ix + (lxm - local_ix);
     gxp = global_ix + (lxp - local_ix);
-    itm = it > 0 ? it - 1 : n_theta - 1;
-    itp = it + 1 < n_theta ? it + 1 : 0;
-    cyl_neighbor_r(radii, nx, n_theta, lxm, it, floor_r, rc, &rxm);
-    cyl_neighbor_r(radii, nx, n_theta, lxp, it, floor_r, rc, &rxp);
-    cyl_neighbor_r(radii, nx, n_theta, local_ix, itm, floor_r, rc, &rtm);
-    cyl_neighbor_r(radii, nx, n_theta, local_ix, itp, floor_r, rc, &rtp);
+    itm = it > 0 ? it - 1 : m->n_theta - 1;
+    itp = it + 1 < m->n_theta ? it + 1 : 0;
+    rxm = cyl_neighbor_r(m, lxm, it, rc);
+    rxp = cyl_neighbor_r(m, lxp, it, rc);
+    rtm = cyl_neighbor_r(m, local_ix, itm, rc);
+    rtp = cyl_neighbor_r(m, local_ix, itp, rc);
 
-    pxm[0] = min_x + ((double)gxm + 0.5) * cell;
-    pxm[1] = ay + rxm * sin_t[it];
-    pxm[2] = az + rxm * cos_t[it];
-    pxp[0] = min_x + ((double)gxp + 0.5) * cell;
-    pxp[1] = ay + rxp * sin_t[it];
-    pxp[2] = az + rxp * cos_t[it];
-    ptm[0] = min_x + ((double)global_ix + 0.5) * cell;
-    ptm[1] = ay + rtm * sin_t[itm];
-    ptm[2] = az + rtm * cos_t[itm];
+    /* Points before / after along X, and before / after around the ring. */
+    pxm[0] = m->min_x + ((double)gxm + 0.5) * m->cell;
+    pxm[1] = m->axis_y + rxm * m->sin_t[it];
+    pxm[2] = m->axis_z + rxm * m->cos_t[it];
+    pxp[0] = m->min_x + ((double)gxp + 0.5) * m->cell;
+    pxp[1] = m->axis_y + rxp * m->sin_t[it];
+    pxp[2] = m->axis_z + rxp * m->cos_t[it];
+    ptm[0] = m->min_x + ((double)global_ix + 0.5) * m->cell;
+    ptm[1] = m->axis_y + rtm * m->sin_t[itm];
+    ptm[2] = m->axis_z + rtm * m->cos_t[itm];
     ptp[0] = ptm[0];
-    ptp[1] = ay + rtp * sin_t[itp];
-    ptp[2] = az + rtp * cos_t[itp];
+    ptp[1] = m->axis_y + rtp * m->sin_t[itp];
+    ptp[2] = m->axis_z + rtp * m->cos_t[itp];
     tx0 = pxp[0] - pxm[0];
     tx1 = pxp[1] - pxm[1];
     tx2 = pxp[2] - pxm[2];
     tt0 = ptp[0] - ptm[0];
     tt1 = ptp[1] - ptm[1];
     tt2 = ptp[2] - ptm[2];
-    /* cross(dP/dx, dP/dθ) points outward on a constant-radius tube. */
+    /* cross(dP/dx, dP/dtheta) is perpendicular to the surface; flip it if it points inward. */
     n0 = tx1 * tt2 - tx2 * tt1;
     n1 = tx2 * tt0 - tx0 * tt2;
     n2 = tx0 * tt1 - tx1 * tt0;
-    outward = n1 * sin_t[it] + n2 * cos_t[it];
+    outward = n1 * m->sin_t[it] + n2 * m->cos_t[it];
     if (outward < 0.0) {
         n0 = -n0;
         n1 = -n1;
@@ -1192,14 +1071,83 @@ static void cyl_shell_normal(
     }
     len = sqrt(n0 * n0 + n1 * n1 + n2 * n2);
     if (len < 1e-12) {
-        *out_x = 0.f;
-        *out_y = (float)sin_t[it];
-        *out_z = (float)cos_t[it];
-        return;
+        return sc_v3(0.f, (float)m->sin_t[it], (float)m->cos_t[it]);
     }
-    *out_x = (float)(n0 / len);
-    *out_y = (float)(n1 / len);
-    *out_z = (float)(n2 / len);
+    return sc_v3((float)(n0 / len), (float)(n1 / len), (float)(n2 / len));
+}
+
+/* Mesh rows [ix, ix + room) of the window into one part: the shell, plus a cap at either end if asked.
+ * Returns 0, or -1 on failure.
+ */
+static int cyl_emit_part(ScMeshBatch *out, const CylMesh *m, int ix, int room, int cap_lo, int cap_hi) {
+    ScBuf buf;
+    int *ids;
+    int local, it, rc;
+    sc_buf_init(&buf);
+    ids = (int *)malloc((size_t)room * (size_t)m->n_theta * sizeof(int));
+    if (ids == NULL) {
+        return -1;
+    }
+    /* One vertex per cell that has stock. */
+    for (local = 0; local < room; local++) {
+        int gix = m->ix0 + ix + local;
+        float x = (float)(m->min_x + ((double)gix + 0.5) * m->cell);
+        for (it = 0; it < m->n_theta; it++) {
+            double r;
+            int id = -1;
+            float rr = m->radii[(ix + local) * m->n_theta + it];
+            if (cyl_draw_r(rr, m->floor_r, &r)) {
+                ScV3 normal = cyl_shell_normal(m, ix + local, gix, it);
+                id = sc_buf_vert(
+                    &buf,
+                    sc_v3(x, (float)(m->axis_y + r * m->sin_t[it]), (float)(m->axis_z + r * m->cos_t[it])), normal,
+                    &m->color);
+                if (id < 0) {
+                    free(ids);
+                    sc_buf_free(&buf);
+                    return -1;
+                }
+            }
+            ids[local * m->n_theta + it] = id;
+        }
+    }
+    /* Quads between each pair of neighboring rows, wrapping around the ring. */
+    for (local = 0; local < room - 1; local++) {
+        for (it = 0; it < m->n_theta; it++) {
+            int it1 = (it + 1) % m->n_theta;
+            int i00 = ids[local * m->n_theta + it];
+            int i10 = ids[(local + 1) * m->n_theta + it];
+            int i11 = ids[(local + 1) * m->n_theta + it1];
+            int i01 = ids[local * m->n_theta + it1];
+            if (i00 < 0 || i10 < 0 || i11 < 0 || i01 < 0) {
+                continue;
+            }
+            if (cyl_use_b(buf.v, i00, i10, i11, i01, m->axis_y, m->axis_z)) {
+                rc = sc_buf_quad(&buf, i10, i11, i01, i00);
+            } else {
+                rc = sc_buf_quad(&buf, i00, i10, i11, i01);
+            }
+            if (rc != 0) {
+                free(ids);
+                sc_buf_free(&buf);
+                return -1;
+            }
+        }
+    }
+    free(ids);
+    if (cap_lo && cyl_emit_cap(&buf, m, ix, m->ix0 + ix, -1.f) != 0) {
+        sc_buf_free(&buf);
+        return -1;
+    }
+    if (cap_hi && cyl_emit_cap(&buf, m, ix + room - 1, m->ix0 + ix + room - 1, 1.f) != 0) {
+        sc_buf_free(&buf);
+        return -1;
+    }
+    if (sc_batch_add(out, &buf) != 0) {
+        sc_buf_free(&buf);
+        return -1;
+    }
+    return 0;
 }
 
 int sc_mesh_cylinder(
@@ -1220,26 +1168,35 @@ int sc_mesh_cylinder(
     double cb,
     double ca,
     ScMeshBatch *out) {
-    float fcr, fcg, fcb, fca;
+    CylMesh m;
     int ix;
     if (out == NULL || radii == NULL || sin_t == NULL || cos_t == NULL || nx <= 0 || n_theta < 3 || cell <= 0.0) {
         return -1;
     }
-    fcr = (float)cr;
-    fcg = (float)cg;
-    fcb = (float)cb;
-    fca = (float)ca;
+    m.radii = radii;
+    m.nx = nx;
+    m.n_theta = n_theta;
+    m.ix0 = ix0;
+    m.nx_total = nx_total;
+    m.min_x = min_x;
+    m.cell = cell;
+    m.axis_y = axis_y;
+    m.axis_z = axis_z;
+    m.sin_t = sin_t;
+    m.cos_t = cos_t;
+    m.floor_r = floor_r;
+    m.color = sc_color(cr, cg, cb, ca);
+
     if (nx < 2) {
+        /* A single row has no shell, only the caps (if this row is at an end of the stock). */
         ScBuf buf;
         int rc = 0;
         sc_buf_init(&buf);
         if (ix0 == 0) {
-            rc = cyl_emit_cap(&buf, radii, n_theta, 0, ix0, min_x, cell, axis_y, axis_z, sin_t, cos_t, floor_r, -1.f, fcr, fcg, fcb, fca);
+            rc = cyl_emit_cap(&buf, &m, 0, ix0, -1.f);
         }
         if (rc == 0 && ix0 + nx >= nx_total) {
-            rc = cyl_emit_cap(
-                &buf, radii, n_theta, nx - 1, ix0 + nx - 1, min_x, cell, axis_y, axis_z, sin_t, cos_t, floor_r, 1.f, fcr, fcg, fcb,
-                fca);
+            rc = cyl_emit_cap(&buf, &m, nx - 1, ix0 + nx - 1, 1.f);
         }
         if (rc != 0) {
             sc_buf_free(&buf);
@@ -1247,21 +1204,22 @@ int sc_mesh_cylinder(
         }
         return sc_batch_add(out, &buf);
     }
+    /* Cut the window into parts of as many rows as fit under the vertex limit. Consecutive parts share
+     * one row so the shell has no gap between them. */
     ix = 0;
     while (ix < nx) {
-        ScBuf buf;
-        int *ids;
         int remain = nx - ix;
         int cap_lo = (ix == 0 && ix0 == 0);
-        int room, include_hi, local, it, rc;
-        int cap_budget = cap_lo ? (n_theta + 1) : 0;
+        int cap_budget = cap_lo ? (n_theta + 1) : 0; /* vertices the start cap needs */
+        int room, cap_hi;
+        /* Rows that fit if this part also holds the end cap. */
         int room_with_hi = (SC_MESH_MAX_VERTS - cap_budget - (n_theta + 1)) / n_theta;
         if (room_with_hi < 2) {
             room_with_hi = 2;
         }
         if (ix0 + nx >= nx_total && remain <= room_with_hi) {
             room = remain;
-            include_hi = 1;
+            cap_hi = 1;
         } else {
             room = (SC_MESH_MAX_VERTS - cap_budget) / n_theta;
             if (room < 2) {
@@ -1270,87 +1228,9 @@ int sc_mesh_cylinder(
             if (room > remain) {
                 room = remain;
             }
-            include_hi = 0;
+            cap_hi = 0;
         }
-        sc_buf_init(&buf);
-        ids = (int *)malloc((size_t)room * (size_t)n_theta * sizeof(int));
-        if (ids == NULL) {
-            return -1;
-        }
-        for (local = 0; local < room; local++) {
-            int gix = ix0 + ix + local;
-            float x = (float)(min_x + ((double)gix + 0.5) * cell);
-            for (it = 0; it < n_theta; it++) {
-                double r;
-                int id = -1;
-                float snx, sny, snz;
-                float rr = radii[(ix + local) * n_theta + it];
-                if (cyl_draw_r(rr, floor_r, &r)) {
-                    cyl_shell_normal(
-                        radii, nx, n_theta, ix + local, gix, it, min_x, cell, axis_y, axis_z, sin_t, cos_t, floor_r, &snx,
-                        &sny, &snz);
-                    id = sc_buf_vert(
-                        &buf,
-                        x,
-                        (float)(axis_y + r * sin_t[it]),
-                        (float)(axis_z + r * cos_t[it]),
-                        snx,
-                        sny,
-                        snz,
-                        fcr,
-                        fcg,
-                        fcb,
-                        fca);
-                    if (id < 0) {
-                        free(ids);
-                        sc_buf_free(&buf);
-                        return -1;
-                    }
-                }
-                ids[local * n_theta + it] = id;
-            }
-        }
-        for (local = 0; local < room - 1; local++) {
-            for (it = 0; it < n_theta; it++) {
-                int it1 = (it + 1) % n_theta;
-                int i00 = ids[local * n_theta + it];
-                int i10 = ids[(local + 1) * n_theta + it];
-                int i11 = ids[(local + 1) * n_theta + it1];
-                int i01 = ids[local * n_theta + it1];
-                if (i00 < 0 || i10 < 0 || i11 < 0 || i01 < 0) {
-                    continue;
-                }
-                if (cyl_use_b(buf.v, i00, i10, i11, i01, axis_y, axis_z)) {
-                    rc = sc_buf_quad(&buf, i10, i11, i01, i00);
-                } else {
-                    rc = sc_buf_quad(&buf, i00, i10, i11, i01);
-                }
-                if (rc != 0) {
-                    free(ids);
-                    sc_buf_free(&buf);
-                    return -1;
-                }
-            }
-        }
-        free(ids);
-        if (cap_lo) {
-            rc = cyl_emit_cap(&buf, radii, n_theta, ix, ix0 + ix, min_x, cell, axis_y, axis_z, sin_t, cos_t, floor_r, -1.f, fcr, fcg, fcb, fca);
-            if (rc != 0) {
-                sc_buf_free(&buf);
-                return -1;
-            }
-        }
-        if (include_hi) {
-            rc = cyl_emit_cap(
-                &buf, radii, n_theta, ix + room - 1, ix0 + ix + room - 1, min_x, cell, axis_y, axis_z, sin_t, cos_t, floor_r,
-                1.f, fcr, fcg, fcb, fca);
-            if (rc != 0) {
-                sc_buf_free(&buf);
-                return -1;
-            }
-        }
-        if (sc_batch_add(out, &buf) != 0) {
-            sc_buf_free(&buf);
+        if (cyl_emit_part(out, &m, ix, room, cap_lo, cap_hi) != 0) {
             return -1;
         }
         if (ix + room >= nx) {
@@ -1361,6 +1241,11 @@ int sc_mesh_cylinder(
     return 0;
 }
 
+/* ------------------------------------------------------------------------- */
+/* Voxel chunk mesh                                                          */
+/* ------------------------------------------------------------------------- */
+
+/* Is the voxel at (i, j, k) of the chunk solid? Out of range counts as empty. */
 static int voxel_solid(const uint8_t *occ, const uint8_t *valid, int cs, int i, int j, int k) {
     int id;
     if (i < 0 || j < 0 || k < 0 || i >= cs || j >= cs || k >= cs) {
@@ -1376,6 +1261,7 @@ static int voxel_solid(const uint8_t *occ, const uint8_t *valid, int cs, int i, 
     return occ[id] != 0;
 }
 
+/* Is the voxel just outside the chunk solid? mode 1 = yes, 2 = look it up in `face`, else no. */
 static int voxel_face_bit(int mode, const uint8_t *face, int cs, int a, int b) {
     if (mode == 1) {
         return 1;
@@ -1386,6 +1272,7 @@ static int voxel_face_bit(int mode, const uint8_t *face, int cs, int a, int b) {
     return 0;
 }
 
+/* Close the current part and start a new one if `need` more vertices wouldn't fit. */
 static int voxel_flush_room(ScMeshBatch *batch, ScBuf *b, int need) {
     if (b->nv + need <= SC_MESH_MAX_VERTS) {
         return 0;
@@ -1393,184 +1280,64 @@ static int voxel_flush_room(ScMeshBatch *batch, ScBuf *b, int need) {
     if (b->nv <= 0) {
         return -1;
     }
-    if (sc_batch_add(batch, b) != 0) {
+    return sc_batch_add(batch, b);
+}
+
+static int voxel_emit_quad(ScMeshBatch *batch, ScBuf *b, const ScV3 corners[4], ScV3 normal, const ScColor *color) {
+    if (voxel_flush_room(batch, b, 4) != 0) {
         return -1;
     }
-    sc_buf_init(b);
-    return 0;
+    return sc_buf_flat_quad(b, corners, normal, color) != 0 ? -1 : 0;
 }
 
-static int voxel_emit_corners(
-    ScMeshBatch *batch,
-    ScBuf *b,
-    float c0[3],
-    float c1[3],
-    float c2[3],
-    float c3[3],
-    float nx,
-    float ny,
-    float nz,
-    float cr,
-    float cg,
-    float cb,
-    float ca) {
-    int i0, i1, i2, i3, rc;
-    rc = voxel_flush_room(batch, b, 4);
-    if (rc != 0) {
-        return rc;
+/* The two axes that span a face perpendicular to each axis: X faces span (Y, Z), Y faces (X, Z), Z faces (X, Y). */
+static const int VOXEL_AXIS_A[3] = {1, 0, 0};
+static const int VOXEL_AXIS_B[3] = {2, 2, 1};
+
+/* Where a merged rectangle sits. */
+typedef struct VoxelRectCtx {
+    ScMeshBatch *batch;
+    ScBuf *buf;
+    int axis;        /* which axis the face is perpendicular to */
+    int sign;        /* +1 faces the positive direction, -1 the negative one */
+    int index;       /* layer along `axis` */
+    float origin[3]; /* chunk corner */
+    float vs;        /* voxel size */
+    ScColor color;
+} VoxelRectCtx;
+
+/* Face rectangle covering voxels [i0, i1) x [j0, j1) of the layer. */
+static int voxel_emit_rect(void *vctx, int i0, int j0, int i1, int j1) {
+    const VoxelRectCtx *r = (const VoxelRectCtx *)vctx;
+    int ca = VOXEL_AXIS_A[r->axis];
+    int cb = VOXEL_AXIS_B[r->axis];
+    float plane = r->origin[r->axis] + (float)(r->index + (r->sign > 0 ? 1 : 0)) * r->vs;
+    float a0 = r->origin[ca] + (float)i0 * r->vs;
+    float a1 = r->origin[ca] + (float)i1 * r->vs;
+    float b0 = r->origin[cb] + (float)j0 * r->vs;
+    float b1 = r->origin[cb] + (float)j1 * r->vs;
+    /* The four corners in one of two windings, picked so the quad faces the way `sign` says. */
+    int reversed = (r->axis == 1) ? (r->sign > 0) : (r->sign < 0);
+    float pa[4] = {a0, reversed ? a0 : a1, a1, reversed ? a1 : a0};
+    float pb[4] = {b0, reversed ? b1 : b0, b1, reversed ? b0 : b1};
+    float normal[3] = {0.f, 0.f, 0.f};
+    ScV3 corners[4];
+    float p[3];
+    int k;
+    for (k = 0; k < 4; k++) {
+        p[r->axis] = plane;
+        p[ca] = pa[k];
+        p[cb] = pb[k];
+        corners[k] = sc_v3(p[0], p[1], p[2]);
     }
-    i0 = sc_buf_vert(b, c0[0], c0[1], c0[2], nx, ny, nz, cr, cg, cb, ca);
-    i1 = sc_buf_vert(b, c1[0], c1[1], c1[2], nx, ny, nz, cr, cg, cb, ca);
-    i2 = sc_buf_vert(b, c2[0], c2[1], c2[2], nx, ny, nz, cr, cg, cb, ca);
-    i3 = sc_buf_vert(b, c3[0], c3[1], c3[2], nx, ny, nz, cr, cg, cb, ca);
-    if (i0 < 0 || i1 < 0 || i2 < 0 || i3 < 0) {
-        return -1;
-    }
-    return sc_buf_quad(b, i0, i1, i2, i3);
+    normal[r->axis] = (float)r->sign;
+    return voxel_emit_quad(r->batch, r->buf, corners, sc_v3(normal[0], normal[1], normal[2]), &r->color);
 }
 
-static int voxel_emit_rect(
-    ScMeshBatch *batch,
-    ScBuf *b,
-    int axis,
-    int sign,
-    int index,
-    int i0,
-    int j0,
-    int i1,
-    int j1,
-    float ox,
-    float oy,
-    float oz,
-    float vs,
-    float cr,
-    float cg,
-    float cb,
-    float ca) {
-    float plane = (axis == 0 ? ox : (axis == 1 ? oy : oz)) + (float)(index + (sign > 0 ? 1 : 0)) * vs;
-    float a0, a1, b0, b1;
-    float c0[3], c1[3], c2[3], c3[3];
-    float n[3] = {0.f, 0.f, 0.f};
-    n[axis] = (float)sign;
-    if (axis == 0) {
-        a0 = oy + (float)i0 * vs;
-        a1 = oy + (float)i1 * vs;
-        b0 = oz + (float)j0 * vs;
-        b1 = oz + (float)j1 * vs;
-        if (sign > 0) {
-            c0[0] = plane;
-            c0[1] = a0;
-            c0[2] = b0;
-            c1[0] = plane;
-            c1[1] = a1;
-            c1[2] = b0;
-            c2[0] = plane;
-            c2[1] = a1;
-            c2[2] = b1;
-            c3[0] = plane;
-            c3[1] = a0;
-            c3[2] = b1;
-        } else {
-            c0[0] = plane;
-            c0[1] = a0;
-            c0[2] = b0;
-            c1[0] = plane;
-            c1[1] = a0;
-            c1[2] = b1;
-            c2[0] = plane;
-            c2[1] = a1;
-            c2[2] = b1;
-            c3[0] = plane;
-            c3[1] = a1;
-            c3[2] = b0;
-        }
-    } else if (axis == 1) {
-        a0 = ox + (float)i0 * vs;
-        a1 = ox + (float)i1 * vs;
-        b0 = oz + (float)j0 * vs;
-        b1 = oz + (float)j1 * vs;
-        if (sign > 0) {
-            c0[0] = a0;
-            c0[1] = plane;
-            c0[2] = b0;
-            c1[0] = a0;
-            c1[1] = plane;
-            c1[2] = b1;
-            c2[0] = a1;
-            c2[1] = plane;
-            c2[2] = b1;
-            c3[0] = a1;
-            c3[1] = plane;
-            c3[2] = b0;
-        } else {
-            c0[0] = a0;
-            c0[1] = plane;
-            c0[2] = b0;
-            c1[0] = a1;
-            c1[1] = plane;
-            c1[2] = b0;
-            c2[0] = a1;
-            c2[1] = plane;
-            c2[2] = b1;
-            c3[0] = a0;
-            c3[1] = plane;
-            c3[2] = b1;
-        }
-    } else {
-        a0 = ox + (float)i0 * vs;
-        a1 = ox + (float)i1 * vs;
-        b0 = oy + (float)j0 * vs;
-        b1 = oy + (float)j1 * vs;
-        if (sign > 0) {
-            c0[0] = a0;
-            c0[1] = b0;
-            c0[2] = plane;
-            c1[0] = a1;
-            c1[1] = b0;
-            c1[2] = plane;
-            c2[0] = a1;
-            c2[1] = b1;
-            c2[2] = plane;
-            c3[0] = a0;
-            c3[1] = b1;
-            c3[2] = plane;
-        } else {
-            c0[0] = a0;
-            c0[1] = b0;
-            c0[2] = plane;
-            c1[0] = a0;
-            c1[1] = b1;
-            c1[2] = plane;
-            c2[0] = a1;
-            c2[1] = b1;
-            c2[2] = plane;
-            c3[0] = a1;
-            c3[1] = b0;
-            c3[2] = plane;
-        }
-    }
-    return voxel_emit_corners(batch, b, c0, c1, c2, c3, n[0], n[1], n[2], cr, cg, cb, ca);
-}
-
-static int voxel_greedy_mask(
-    ScMeshBatch *batch,
-    ScBuf *b,
-    uint8_t *mask,
-    int rows,
-    int cols,
-    int axis,
-    int sign,
-    int index,
-    float ox,
-    float oy,
-    float oz,
-    float vs,
-    float cr,
-    float cg,
-    float cb,
-    float ca) {
+/* Turn a mask of exposed voxels in one layer into merged rectangles. */
+static int voxel_greedy_mask(const uint8_t *mask, int rows, int cols, VoxelRectCtx *rect) {
     uint8_t *used;
-    int i, j, any, all;
+    int i, any, all, rc;
     any = 0;
     all = 1;
     for (i = 0; i < rows * cols; i++) {
@@ -1584,7 +1351,7 @@ static int voxel_greedy_mask(
         return 0;
     }
     if (all) {
-        return voxel_emit_rect(batch, b, axis, sign, index, 0, 0, rows, cols, ox, oy, oz, vs, cr, cg, cb, ca);
+        return voxel_emit_rect(rect, 0, 0, rows, cols);
     }
     used = (uint8_t *)malloc((size_t)rows * (size_t)cols);
     if (used == NULL) {
@@ -1593,50 +1360,31 @@ static int voxel_greedy_mask(
     for (i = 0; i < rows * cols; i++) {
         used[i] = mask[i] ? 0 : 1;
     }
-    for (i = 0; i < rows; i++) {
-        j = 0;
-        while (j < cols) {
-            int w, d, k, rc;
-            if (used[i * cols + j]) {
-                j++;
-                continue;
-            }
-            w = 1;
-            while (j + w < cols && !used[i * cols + (j + w)]) {
-                w++;
-            }
-            d = 1;
-            while (i + d < rows) {
-                int ok = 1;
-                for (k = 0; k < w; k++) {
-                    if (used[(i + d) * cols + (j + k)]) {
-                        ok = 0;
-                        break;
-                    }
-                }
-                if (!ok) {
-                    break;
-                }
-                d++;
-            }
-            for (k = 0; k < d; k++) {
-                int t;
-                for (t = 0; t < w; t++) {
-                    used[(i + k) * cols + (j + t)] = 1;
-                }
-            }
-            rc = voxel_emit_rect(batch, b, axis, sign, index, i, j, i + d, j + w, ox, oy, oz, vs, cr, cg, cb, ca);
-            if (rc != 0) {
-                free(used);
-                return rc;
-            }
-            j += w;
-        }
-    }
+    rc = sc_greedy_rects(used, rows, cols, 0, cols, voxel_emit_rect, rect);
     free(used);
-    return 0;
+    return rc;
 }
 
+/* The voxel coordinates of cell (a, b) in layer `index` perpendicular to `axis`. */
+static void voxel_layer_coords(int axis, int index, int a, int b, int *i, int *j, int *k) {
+    if (axis == 0) {
+        *i = index;
+        *j = a;
+        *k = b;
+    } else if (axis == 1) {
+        *i = a;
+        *j = index;
+        *k = b;
+    } else {
+        *i = a;
+        *j = b;
+        *k = index;
+    }
+}
+
+/* Is the voxel next to (i, j, k) in the +axis (`plus`) or -axis direction solid? Beyond the chunk this asks
+ * the neighboring chunk, via face_mode / face.
+ */
 static int voxel_neighbor(
     const uint8_t *occ,
     const uint8_t *valid,
@@ -1684,25 +1432,25 @@ int sc_mesh_voxel_chunk(
     double ca,
     ScMeshBatch *out) {
     ScBuf buf;
+    VoxelRectCtx rect;
     uint8_t *mask;
-    float fox, foy, foz, fvs, fcr, fcg, fcb, fca;
     int axis;
     if (out == NULL || cs <= 0 || voxel <= 0.0 || face_mode == NULL) {
         return -1;
     }
-    fox = (float)ox;
-    foy = (float)oy;
-    foz = (float)oz;
-    fvs = (float)voxel;
-    fcr = (float)cr;
-    fcg = (float)cg;
-    fcb = (float)cb;
-    fca = (float)ca;
+    rect.batch = out;
+    rect.buf = &buf;
+    rect.origin[0] = (float)ox;
+    rect.origin[1] = (float)oy;
+    rect.origin[2] = (float)oz;
+    rect.vs = (float)voxel;
+    rect.color = sc_color(cr, cg, cb, ca);
     mask = (uint8_t *)malloc((size_t)cs * (size_t)cs);
     if (mask == NULL) {
         return -1;
     }
     sc_buf_init(&buf);
+    /* Faces are numbered 0..5 as +X, -X, +Y, -Y, +Z, -Z. */
     for (axis = 0; axis < 3; axis++) {
         int plus;
         for (plus = 1; plus >= 0; plus--) {
@@ -1712,7 +1460,7 @@ int sc_mesh_voxel_chunk(
             int i0 = 0;
             int i1 = cs;
             int index;
-            /* A solid block only exposes the outer slice on this side. */
+            /* A solid block only exposes the outer layer on this side. */
             if (occ == NULL && valid == NULL) {
                 if (mode == 1) {
                     continue;
@@ -1722,20 +1470,14 @@ int sc_mesh_voxel_chunk(
             }
             for (index = i0; index < i1; index++) {
                 int a, b, any, rc;
+                /* Mark the voxels of this layer that are solid and have nothing solid in front of them. */
                 any = 0;
                 for (a = 0; a < cs; a++) {
                     for (b = 0; b < cs; b++) {
-                        int solid, covered;
-                        if (axis == 0) {
-                            solid = voxel_solid(occ, valid, cs, index, a, b);
-                            covered = voxel_neighbor(occ, valid, cs, 0, plus, index, a, b, mode, face);
-                        } else if (axis == 1) {
-                            solid = voxel_solid(occ, valid, cs, a, index, b);
-                            covered = voxel_neighbor(occ, valid, cs, 1, plus, a, index, b, mode, face);
-                        } else {
-                            solid = voxel_solid(occ, valid, cs, a, b, index);
-                            covered = voxel_neighbor(occ, valid, cs, 2, plus, a, b, index, mode, face);
-                        }
+                        int vi, vj, vk, solid, covered;
+                        voxel_layer_coords(axis, index, a, b, &vi, &vj, &vk);
+                        solid = voxel_solid(occ, valid, cs, vi, vj, vk);
+                        covered = voxel_neighbor(occ, valid, cs, axis, plus, vi, vj, vk, mode, face);
                         mask[a * cs + b] = (uint8_t)(solid && !covered);
                         if (mask[a * cs + b]) {
                             any = 1;
@@ -1745,8 +1487,10 @@ int sc_mesh_voxel_chunk(
                 if (!any) {
                     continue;
                 }
-                rc = voxel_greedy_mask(
-                    out, &buf, mask, cs, cs, axis, plus ? 1 : -1, index, fox, foy, foz, fvs, fcr, fcg, fcb, fca);
+                rect.axis = axis;
+                rect.sign = plus ? 1 : -1;
+                rect.index = index;
+                rc = voxel_greedy_mask(mask, cs, cs, &rect);
                 if (rc != 0) {
                     free(mask);
                     sc_buf_free(&buf);

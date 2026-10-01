@@ -1,4 +1,9 @@
-"""Native stock carving. Cut simulation is unavailable when the extension is absent."""
+"""Python front end for the native stock carving extension (`_stock_carve`).
+
+The C code does the heavy lifting: carving tool moves into a stock model and turning the result into
+meshes. This module converts Python data into the contiguous NumPy arrays the C code expects, and
+turns the results back into Python objects. Cut simulation is unavailable when the extension is absent.
+"""
 
 from __future__ import annotations
 
@@ -28,6 +33,7 @@ except ImportError:
 
 
 def native_enabled() -> bool:
+    """True when the compiled extension was found."""
     return _impl is not None
 
 
@@ -38,6 +44,7 @@ def _require_impl():
 
 
 def pack_profile(profile: Iterable[tuple[float, float]]) -> tuple[np.ndarray, np.ndarray]:
+    """Split the tool profile, a list of (z, radius) samples, into two float64 arrays."""
     rows = list(profile)
     if not rows:
         return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
@@ -47,6 +54,7 @@ def pack_profile(profile: Iterable[tuple[float, float]]) -> tuple[np.ndarray, np
 
 
 def _soa(segments: list) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Split segments into start points, end points and start/end A angles (0 when a segment has none)."""
     n = len(segments)
     p0 = np.empty((n, 3), dtype=np.float64)
     p1 = np.empty((n, 3), dtype=np.float64)
@@ -61,6 +69,7 @@ def _soa(segments: list) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray
 
 
 def _laser_dirty_args(dirty: tuple[np.ndarray, np.ndarray, np.ndarray] | None) -> tuple:
+    """The optional dirty-texel log as three call arguments: u indices, v indices, [count, overflow]."""
     if dirty is None:
         return (None, None, None)
     return (dirty[0], dirty[1], dirty[2])
@@ -78,6 +87,7 @@ def _laser_call_args(
     flag: np.ndarray,
     dirty: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
 ) -> tuple:
+    """Laser arguments shared by the heightmap and cylindrical carvers; an all-empty set when there is no image."""
     dirty_args = _laser_dirty_args(dirty)
     if image is None:
         return (None, 0, 0, 0.0, 0.0, 0.0, 0.0, 0, 0.0, flag, *dirty_args)
@@ -114,6 +124,7 @@ def carve_heightmap(
     laser_origin_v: float = 0.0,
     laser_dirty: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
 ) -> tuple[set[tuple[int, int, int]], bool]:
+    """Carve ``segments`` into a heightmap. Returns the changed tiles and whether the laser decal changed."""
     if not segments or not profile:
         return set(), False
     impl = _require_impl()
@@ -142,7 +153,7 @@ def carve_heightmap(
         rs,
         ntx,
         nty,
-        hit_mask if hit_mask is not None else None,
+        hit_mask,
         tiles,
         *_laser_call_args(
             laser_c,
@@ -158,7 +169,7 @@ def carve_heightmap(
     )
     if heights_c is not heights:
         heights[...] = heights_c
-    if laser_c is not None and laser is not None and laser_c is not laser:
+    if laser_c is not None and laser_c is not laser:
         laser[...] = laser_c
     return set(dirty), bool(flag[0])
 
@@ -187,6 +198,7 @@ def carve_cylindrical(
     laser_period: float = 360.0,
     laser_dirty: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
 ) -> tuple[set[tuple[int, int, int]], bool]:
+    """Carve ``segments`` into a cylindrical stock. Returns the changed tiles and whether the laser decal changed."""
     if not segments or not profile:
         return set(), False
     impl = _require_impl()
@@ -221,7 +233,7 @@ def carve_cylindrical(
         rs,
         ntx,
         ntt,
-        changed_mask if changed_mask is not None else None,
+        changed_mask,
         tiles,
         *_laser_call_args(
             laser_c,
@@ -237,13 +249,16 @@ def carve_cylindrical(
     )
     if radii_c is not radii:
         radii[...] = radii_c
-    if laser_c is not None and laser is not None and laser_c is not laser:
+    if laser_c is not None and laser_c is not laser:
         laser[...] = laser_c
     return set(dirty), bool(flag[0])
 
 
 def carve_voxels(grid, segments: list, profile: list[tuple[float, float]]) -> set[tuple[int, int, int]]:
-    """Carve ``segments`` into ``grid``. Materialise happens in the callback."""
+    """Carve ``segments`` into a voxel ``grid``. Returns the changed chunks.
+
+    Chunks are loaded on demand: the C code calls ``get_chunk`` for every chunk a move touches.
+    """
     if not segments or not profile:
         return set()
     impl = _require_impl()
@@ -305,6 +320,7 @@ def carve_voxels(grid, segments: list, profile: list[tuple[float, float]]) -> se
 
 
 def _as_f64(values) -> np.ndarray:
+    """``values`` as a contiguous float64 array."""
     return np.ascontiguousarray(values, dtype=np.float64)
 
 
@@ -366,11 +382,11 @@ def paint_laser(
             _as_f64(v1),
             np.ascontiguousarray(burn, dtype=np.uint8),
             float(radius),
-            allow_a if allow_a is not None else None,
+            allow_a,
             int(allow_origin[0]),
             int(allow_origin[1]),
             int(occ_kind),
-            occ_a if occ_a is not None else None,
+            occ_a,
             int(occ_a.shape[0]) if occ_a is not None else 0,
             int(occ_a.shape[1]) if occ_a is not None else 0,
             float(occ_min_x),
@@ -378,7 +394,7 @@ def paint_laser(
             float(occ_cell),
             float(occ_d_theta),
             float(occ_period),
-            zr if zr is not None else None,
+            zr,
             dirty_iu,
             dirty_iv,
             dirty_meta,
@@ -443,6 +459,7 @@ def clear_laser_capsules(
 
 
 def _packed_from_parts(parts) -> list[tuple[array.array, array.array, list]]:
+    """Wrap the raw (vertex bytes, index bytes) pairs from C as (vertices, indices, vertex format) meshes."""
     out = []
     for vert_bytes, idx_bytes in parts:
         verts = array.array("f")
