@@ -36,6 +36,7 @@ from .sources import (
     LOCATION_MACHINE,
     MACHINE_BASE_DIR,
     MACHINE_BASE_DIR_WIN,
+    MACHINE_VIDEOS_DIR,
     SORT_DATE,
     SORT_NAME,
     SORT_SIZE,
@@ -46,9 +47,9 @@ from .sources import (
     device_tab_path_display,
     download_dest_tooltip,
     group_and_sort_entries,
+    is_gcode_machine_dir,
     is_ios_platform,
     is_local_preview,
-    is_under_machine_root,
     list_device_directory,
     local_dir_has_file,
     machine_listing_has,
@@ -216,6 +217,23 @@ class FileBrowserPopup(ModalView):
             self.location = LOCATION_MACHINE if app is not None and app.state != "N/A" else LOCATION_DEVICE
         self._restore_device_dir()
         self._restore_machine_dir()
+        self.open()
+        self._apply_location(refresh=True)
+
+    def open_for_videos(self):
+        """Open the browser on the machine tab, listing /sd/videos.
+
+        This visit is not stored as the folder the main file browser restores,
+        so the next jobs open returns to the gcodes directory.
+        """
+        self.firmware_mode = False
+        self.multi_select_mode = False
+        self.search_text = ""
+        self.ios_device_mode = False
+        self.title_text = tr._("File Browser")
+        self.location = LOCATION_MACHINE
+        self.machine_dir = MACHINE_VIDEOS_DIR
+        self._persist_location()
         self.open()
         self._apply_location(refresh=True)
 
@@ -475,20 +493,20 @@ class FileBrowserPopup(ModalView):
         self.device_dir = default_device_dir()
 
     def _restore_machine_dir(self):
+        """Reopen the last gcodes folder. A videos visit must not win."""
         makera = _makera()
         if makera is None:
-            if not is_under_machine_root(self.machine_dir):
+            if not is_gcode_machine_dir(self.machine_dir):
                 self.machine_dir = MACHINE_BASE_DIR
             return
         if not makera.recent_remote_dir_list:
             makera.fetch_recent_remote_dir_list()
         for folder in makera.recent_remote_dir_list:
             folder = (folder or "").strip()
-            if folder and is_under_machine_root(folder):
+            if is_gcode_machine_dir(folder):
                 self.machine_dir = os.path.normpath(folder)
                 return
-        if not is_under_machine_root(self.machine_dir):
-            self.machine_dir = MACHINE_BASE_DIR
+        self.machine_dir = MACHINE_BASE_DIR
 
     def _remember_device_dir(self):
         if self.firmware_mode:
@@ -502,7 +520,9 @@ class FileBrowserPopup(ModalView):
         if self.firmware_mode:
             return
         makera = _makera()
-        if makera is None or not is_under_machine_root(self.machine_dir):
+        # /sd/videos is opened from the camera. Remembering it would make the
+        # next jobs browse reopen videos instead of gcodes.
+        if makera is None or not is_gcode_machine_dir(self.machine_dir):
             return
         makera.update_recent_remote_dir_list(os.path.normpath(self.machine_dir).replace("\\", "/"))
 
@@ -829,6 +849,7 @@ class FileBrowserPopup(ModalView):
             selected_is_file=selected_is_file,
             selected_count=selected_count,
             multi_select_mode=self.multi_select_mode,
+            selected_name=os.path.basename(highlight or ""),
         )
 
     def _sync_chrome(self):

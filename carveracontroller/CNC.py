@@ -268,6 +268,15 @@ class CNC:
         "autoblowmode": 0,
         "autobedcleanmode": 0,
         "ionizermode": 0,
+        # Z1 |E: timelapse suffix. tl_status is 1 only after a status report includes it.
+        "tl_status": 0,
+        "tl_transfer": 0,
+        "tl_requested": 0,
+        "tl_recording": 0,
+        "tl_sd_used": 0,
+        "tl_sd_total": 0,
+        "ota_phase": 0,
+        "ota_progress": 0,
         "_OvChanged": False,
         "_OvFeed": 100,  # Override target values
         "_OvRapid": 100,

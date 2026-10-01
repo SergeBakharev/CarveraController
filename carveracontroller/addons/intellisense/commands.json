@@ -3266,6 +3266,16 @@
       "description": "ATC/public-data helper related to home or tool checks.",
       "parameters": {}
     },
+    "M951": {
+      "type": "mcode",
+      "description": "Enable auto timelapse recording on Z1. Video is recorded to /sd/videos while a job is running.",
+      "parameters": {}
+    },
+    "M952": {
+      "type": "mcode",
+      "description": "Disable timelapse recording on Z1.",
+      "parameters": {}
+    },
     "M956": {
       "type": "mcode",
       "description": "Report spindle speed. Prefer M957.",

@@ -159,15 +159,21 @@ from carveracontroller.addons.stock.stock_estimate import auto_stock_for_loaded_
 from carveracontroller.addons.stock.ui.StockSettingsPopup import StockSettingsPopup
 from carveracontroller.documentation import resolve_documentation_url
 from carveracontroller.serial_listeners import dispatch_serial_line
+from carveracontroller.timelapse import format_timelapse_status, timelapse_is_recording
 from carveracontroller.ui.config_run import CoordPopup
 from carveracontroller.ui.file_browser import FileBrowserPopup
 from carveracontroller.ui.file_browser.sources import (
     LOCATION_DEVICE,
+    is_job_file,
+    is_machine_video_path,
+    listing_has_directory,
     local_child_path,
     local_sibling_path,
     machine_child_entry_path,
     machine_listing_callback_matches,
+    machine_location_places,
     machine_ls_is_superseded,
+    machine_path_key,
     mkdir_local,
     remove_local_path,
     rename_local_path,
@@ -1814,6 +1820,7 @@ class IconButton(BoxLayout, ToolTipButton):
 class TransparentButton(BoxLayout, ToolTipButton):
     icon = StringProperty("fresk.png")
     active = BooleanProperty(False)
+    recording = BooleanProperty(False)
 
 
 class TransparentGrayButton(BoxLayout, ToolTipButton):
@@ -2579,6 +2586,11 @@ class Makera(RelativeLayout):
     common_local_dir_list = []
     recent_local_dir_list = []
     recent_remote_dir_list = []
+    sd_videos_available = False
+    _sd_videos_probe_inflight = False
+    # Folder the UI was waiting on when a background /sd probe started.
+    # None means the probe is the listing itself, so finish treats it normally.
+    _sd_videos_probe_keep = None
 
     lines = []
 
@@ -2593,6 +2605,7 @@ class Makera(RelativeLayout):
         "autoblow_mode": [0.0, 0],
         "autobedclean_mode": [0.0, 0],
         "ionizer_mode": [0.0, 0],
+        "timelapse_record": [0.0, 0],
         "laser_mode": [0.0, 0],
         "laser_scale": [0.0, 100],
         "laser_test": [0.0, 0],
@@ -2754,7 +2767,7 @@ class Makera(RelativeLayout):
         self.camera_stream = Z1Camera(
             on_frame=self._show_camera_frame,
             on_streaming=self._set_camera_streaming,
-            on_error=partial(self.show_message_popup, btn_disabled=False),
+            on_reconnecting=self._set_camera_reconnecting,
         )
         self.ids.camera_splitter.bind(collapsed=self._on_camera_splitter_collapsed)
         self.ids.camera_splitter.collapse()
@@ -3071,6 +3084,15 @@ class Makera(RelativeLayout):
         if unavailable or self._is_popup_open():
             return False
         self.file_popup.open_for_jobs()
+        return True
+
+    def open_videos_browser(self):
+        """Open the file browser on the machine Videos folder."""
+        app = App.get_running_app()
+        unavailable = app.state not in ("Idle", NOT_CONNECTED) and not app.playing
+        if unavailable or self._is_popup_open() or not self.sd_videos_available:
+            return False
+        self.file_popup.open_for_videos()
         return True
 
     def open_mdi(self):
@@ -3756,6 +3778,19 @@ class Makera(RelativeLayout):
 
         self.remote_dir_drop_down.clear_widgets()
 
+        places = machine_location_places(videos_available=self.sd_videos_available)
+        if places:
+            self.remote_dir_drop_down.add_widget(DropDownSplitter(text="       " + tr._("Locations")))
+            for path, label in places:
+                btn = DirectoryView(
+                    full_path=path,
+                    data_text=tr._(label),
+                    size_hint_y=None,
+                    height="30dp",
+                )
+                btn.bind(on_release=lambda _btn, place=path: self.remote_dir_drop_down.select(place))
+                self.remote_dir_drop_down.add_widget(btn)
+
         splitter = DropDownSplitter(text="       " + tr._("Recent Places"))
         self.remote_dir_drop_down.add_widget(splitter)
 
@@ -3771,6 +3806,47 @@ class Makera(RelativeLayout):
             self.remote_dir_drop_down.add_widget(btn)
 
         self.remote_dir_drop_down.open(button)
+        self.probe_sd_videos_dir()
+
+    def probe_sd_videos_dir(self):
+        """List /sd once it is idle, so Videos can be offered if that folder exists."""
+        app = App.get_running_app()
+        if app is None or app.state != "Idle":
+            return
+        if self.sd_videos_available or self.backing_up_config or self.downloading_config:
+            return
+        if machine_path_key(getattr(self.file_popup, "machine_dir", "")) == "/sd":
+            return
+        threading.Thread(target=self._run_sd_videos_probe, daemon=True).start()
+
+    def _run_sd_videos_probe(self):
+        """List /sd without taking the folder the file browser is waiting on.
+
+        ``_machine_ls_wanted_path`` stays whatever the UI asked for. Finish
+        still chains a newer request, and a probe that nobody interrupted
+        does not list that folder a second time.
+        """
+        with self._machine_ls_lock:
+            if self.controller.loadNUM == LOAD_DIR or self._sd_videos_probe_inflight or self.sd_videos_available:
+                return
+            self._sd_videos_probe_inflight = True
+            wanted = self._machine_ls_wanted_path
+            if wanted and machine_path_key(wanted) != "/sd":
+                self._sd_videos_probe_keep = wanted
+            else:
+                self._sd_videos_probe_keep = None
+            self._start_machine_ls("/sd")
+
+    def _note_sd_videos_listing(self, listed_path, file_list):
+        if machine_path_key(listed_path or "") != "/sd":
+            return
+        self._sd_videos_probe_inflight = False
+        if not file_list:
+            return
+        self.sd_videos_available = listing_has_directory(file_list, "videos")
+        app = App.get_running_app()
+        if app is not None:
+            app.sd_videos_available = self.sd_videos_available
 
     # -----------------------------------------------------------------------
     def _remember_connection_method(self, method):
@@ -4566,6 +4642,8 @@ class Makera(RelativeLayout):
         if not filepath or os.path.isdir(filepath):
             return
         filename = os.path.basename(os.path.normpath(filepath))
+        if not is_job_file(filename):
+            return
         if self.file_popup.machine_listing_has(filename):
             # show message popup
             self.confirm_popup.lb_title.text = tr._("File Already Exists")
@@ -4580,6 +4658,8 @@ class Makera(RelativeLayout):
     def view_local_file(self):
         filepath = self.file_popup.selected_device_file
         if not filepath or os.path.isdir(filepath):
+            return
+        if not is_job_file(os.path.basename(filepath)):
             return
         app = App.get_running_app()
         app.selected_local_filename = filepath
@@ -4598,7 +4678,7 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def check_and_download(self):
         remote_path = self.file_popup.selected_machine_file
-        if not remote_path:
+        if not remote_path or not is_job_file(os.path.basename(remote_path)):
             return
         remote_size = self.file_popup.selected_machine_filesize
         remote_post_path = remote_path.replace("/sd/", "").replace("\\sd\\", "")
@@ -4727,6 +4807,12 @@ class Makera(RelativeLayout):
         self._backup_md5_mismatches = []
         self.fill_remote_dir_callback = None
         self.file_popup.restore_machine_root()
+
+    def _warn_video_download_md5(self, remote_path):
+        logger.warning(
+            "Kept %s despite an MD5 mismatch. This is a known issue with video file downloads from the Makera ESP32.",
+            remote_path,
+        )
 
     def _note_config_backup_md5_mismatch(self, filename):
         name = str(filename or "").strip()
@@ -4894,6 +4980,7 @@ class Makera(RelativeLayout):
             self.clear_selection()
             self.apply_bed_settings()
         self.updateStatus()
+        Clock.schedule_once(lambda _dt: self.probe_sd_videos_dir(), 0.5)
 
     def _get_current_machine_connection_key(self):
         """Return a stable identifier for the current machine connection."""
@@ -5043,9 +5130,23 @@ class Makera(RelativeLayout):
 
         self.heartbeat_time = time.time()
 
+        # The Makera ESP32 advertises a digest for /sd/video and /sd/videos files
+        # that does not match the bytes. The file is fine; keep it and warn.
+        if (
+            download_result is None
+            and md5_failed
+            and is_machine_video_path(remote_path)
+            and os.path.exists(tmp_filename)
+        ):
+            self._warn_video_download_md5(remote_path)
+            try:
+                kept_size = os.path.getsize(tmp_filename)
+            except OSError:
+                kept_size = 1
+            download_result = kept_size if kept_size > 0 else 1
         # Factory images sometimes advertise an MD5 that does not match the file.
         # Keep the received bytes and let the backup finish; warn after it completes.
-        if download_result is None and was_backup and md5_failed and os.path.exists(tmp_filename):
+        elif download_result is None and was_backup and md5_failed and os.path.exists(tmp_filename):
             self._note_config_backup_md5_mismatch(remote_path)
             try:
                 kept_size = os.path.getsize(tmp_filename)
@@ -5127,7 +5228,8 @@ class Makera(RelativeLayout):
                 self._ingest_machine_gcode_thumbnail(remote_path, local_path)
             else:
                 if self._decompress_downloaded_file_in_place(
-                    local_path, integrity_label=remote_path if was_backup else None
+                    local_path,
+                    integrity_label=remote_path if was_backup or is_machine_video_path(remote_path) else None,
                 ):
                     self._ingest_machine_gcode_thumbnail(remote_path, local_path)
 
@@ -5509,8 +5611,18 @@ class Makera(RelativeLayout):
             timed_out = now - self.short_load_time > SHORT_LOAD_TIMEOUT
             sent_path = self._machine_ls_sent_path
             wanted_path = self._machine_ls_wanted_path
+            keep = self._sd_videos_probe_keep
+            self._sd_videos_probe_keep = None
             superseded = machine_ls_is_superseded(sent_path, wanted_path)
-            if not superseded:
+            # A background /sd probe is not the folder the UI asked for. Leave
+            # that folder alone unless a newer request arrived while probing.
+            background_probe = keep is not None and machine_path_key(sent_path or "") == "/sd"
+            if background_probe and machine_path_key(wanted_path or "") == machine_path_key(keep):
+                superseded = False
+                report_failure = False
+            else:
+                report_failure = not superseded
+            if report_failure:
                 if self.controller.loadERR:
                     Clock.schedule_once(partial(self.loadError, tr._("Error loading dir") + " '%s'!" % (sent_path,)), 0)
                 elif timed_out:
@@ -5827,6 +5939,10 @@ class Makera(RelativeLayout):
         actual = Utils.md5(filepath)
         if actual.lower() == expected.lower():
             logger.info("Download MD5 matched after decompress: %s", actual)
+            return True
+
+        if is_machine_video_path(label or ""):
+            self._warn_video_download_md5(label or filepath)
             return True
 
         logger.error(
@@ -6341,6 +6457,7 @@ class Makera(RelativeLayout):
                         }
                     )
 
+        self._note_sd_videos_listing(listed_path, file_list)
         Clock.schedule_once(partial(self.fill_remote_dir, file_list, listed_path), 0)
 
     # -----------------------------------------------------------------------
@@ -6589,6 +6706,18 @@ class Makera(RelativeLayout):
                     app.is_community_firmware = False
                     app.supports_auto_ext_out = False
                     app.supports_camera = False
+                    self.sd_videos_available = False
+                    self._sd_videos_probe_inflight = False
+                    self._sd_videos_probe_keep = None
+                    app.sd_videos_available = False
+                    CNC.vars["tl_status"] = 0
+                    CNC.vars["tl_transfer"] = 0
+                    CNC.vars["tl_requested"] = 0
+                    CNC.vars["tl_recording"] = 0
+                    CNC.vars["tl_sd_used"] = 0
+                    CNC.vars["tl_sd_total"] = 0
+                    CNC.vars["ota_phase"] = 0
+                    CNC.vars["ota_progress"] = 0
                     self.camera_checked = False
                     self.camera_probe += 1  # discard the result of a probe still in flight
                     self.camera_stream.stop()
@@ -6817,6 +6946,7 @@ class Makera(RelativeLayout):
                     "autobedclean_switch_play",
                 ),
                 ("ionizer_mode", self.controller.setIonizerMode, "ionizermode", "ionizer_switch_play"),
+                ("timelapse_record", self.controller.setTimelapseRecord, "tl_requested", "timelapse_switch_play"),
             ):
                 elapsed = now - self.control_list[control_name][0]
                 if elapsed < 2:
@@ -7037,8 +7167,35 @@ class Makera(RelativeLayout):
                 elif self.wpb_leveling.value > 0:
                     self.wpb_leveling.value = 84
 
+            self._refresh_timelapse_indicator(app)
+
         except:
             logger.error(sys.exc_info()[1])
+
+    def _refresh_timelapse_indicator(self, app):
+        """Red recording mark while the firmware reports that it is recording."""
+        has_status = bool(CNC.vars.get("tl_status")) and app.state not in (NOT_CONNECTED, "N/A")
+        requested = int(CNC.vars.get("tl_requested") or 0)
+        recording = int(CNC.vars.get("tl_recording") or 0)
+        active = has_status and timelapse_is_recording(recording)
+        if app.timelapse_recording != active:
+            app.timelapse_recording = active
+        if app.timelapse_status != has_status:
+            app.timelapse_status = has_status
+        if not has_status:
+            if app.timelapse_status_text:
+                app.timelapse_status_text = ""
+            return
+        text = format_timelapse_status(
+            transfer=int(CNC.vars.get("tl_transfer") or 0),
+            requested=requested,
+            recording=recording,
+            sd_used=int(CNC.vars.get("tl_sd_used") or 0),
+            sd_total=int(CNC.vars.get("tl_sd_total") or 0),
+            translate=tr._,
+        )
+        if app.timelapse_status_text != text:
+            app.timelapse_status_text = text
 
     # -----------------------------------------------------------------------
     def updateDiagnose(self, *args):
@@ -8270,10 +8427,19 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def _set_camera_streaming(self, streaming):
+        """Collapse the panel when the camera session actually ends.
+
+        A dropped socket stays streaming and reports reconnecting instead, so a
+        blip does not come through here.
+        """
         App.get_running_app().camera_streaming = streaming
         splitter = self.ids.get("camera_splitter")
         if splitter is not None and not streaming and not splitter.collapsed:
             splitter.collapse()
+
+    # -----------------------------------------------------------------------
+    def _set_camera_reconnecting(self, reconnecting):
+        App.get_running_app().camera_reconnecting = reconnecting
 
     # -----------------------------------------------------------------------
     def clear_selection(self):
@@ -8884,6 +9050,11 @@ class MakeraApp(App):
     is_community_firmware = BooleanProperty(False)
     supports_camera = BooleanProperty(False)
     camera_streaming = BooleanProperty(False)
+    camera_reconnecting = BooleanProperty(False)
+    sd_videos_available = BooleanProperty(False)
+    timelapse_recording = BooleanProperty(False)
+    timelapse_status = BooleanProperty(False)
+    timelapse_status_text = StringProperty("")
     camera_brightness = NumericProperty(ADJUST_DEFAULT)
     camera_contrast = NumericProperty(ADJUST_DEFAULT)
     camera_gamma = NumericProperty(ADJUST_DEFAULT)
