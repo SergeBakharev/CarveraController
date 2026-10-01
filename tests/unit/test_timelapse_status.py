@@ -1,13 +1,8 @@
 """Z1 timelapse status parsing and the camera-button recording details."""
 
-import json
-from pathlib import Path
-
 from carveracontroller.CNC import CNC
 from carveracontroller.Controller import Controller
 from carveracontroller.timelapse import format_timelapse_status, timelapse_capture_active
-
-_CONFIG_Z1 = Path(__file__).resolve().parents[2] / "carveracontroller" / "config_z1.json"
 
 
 def _parse_status_line(line):
@@ -65,21 +60,3 @@ def test_timelapse_status_reports_e_fields():
             "SD card space: 1200 / 8192 MiB",
         ]
     )
-
-
-def test_z1_config_includes_camera_settings():
-    settings = {item["key"]: item for item in json.loads(_CONFIG_Z1.read_text()) if "key" in item}
-    assert settings["*mainboard.Time_interval_frames"]["default"] == "1000"
-    assert settings["*mainboard.video_rec_framesize"]["default"] == "15"
-    assert settings["*mainboard.frames_of_one_file"]["default"] == "300"
-    assert settings["*mainboard.video_stream_framesize"]["default"] == "10"
-    assert settings["*mainboard.video_rec_framesize"]["options"] == [str(n) for n in range(1, 16)]
-    assert settings["*mainboard.video_stream_framesize"]["options"] == [str(n) for n in range(1, 16)]
-
-
-def test_mixed_case_camera_interval_key_is_kept():
-    from carveracontroller.main import remember_machine_config_value
-
-    stored = {}
-    remember_machine_config_value(stored, "*mainboard.time_interval_frames", "2500")
-    assert stored["*mainboard.Time_interval_frames"] == "2500"

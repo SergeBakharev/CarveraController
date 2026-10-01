@@ -14,22 +14,6 @@ MACHINE_CONFIG_FILES = {
 
 MAX_CONFIG_DOWNLOAD_ATTEMPTS = 3
 
-# Kivy's ConfigParser lowercases keys. The camera interval key is mixed-case on
-# the machine, and config-set matches that text exactly.
-_MACHINE_CONFIG_KEY_ALIASES = {
-    "*mainboard.time_interval_frames": "*mainboard.Time_interval_frames",
-}
-
-
-def remember_machine_config_value(setting_list, key, value):
-    """Store one config.txt entry, keeping mixed-case keys the machine expects."""
-    name = key.strip()
-    value_text = value.strip()
-    setting_list[name] = value_text
-    alias = _MACHINE_CONFIG_KEY_ALIASES.get(name)
-    if alias:
-        setting_list[alias] = value_text
-
 
 def is_android():
     return "ANDROID_ARGUMENT" in os.environ or "ANDROID_PRIVATE" in os.environ or "ANDROID_APP_PATH" in os.environ
@@ -5194,7 +5178,7 @@ class Makera(RelativeLayout):
                 for section_name in setting_config.sections():
                     for key, value in setting_config.items(section_name):
                         try:
-                            remember_machine_config_value(self.setting_list, key, value)
+                            self.setting_list[key.strip()] = value.strip()
                         except AttributeError:
                             Clock.schedule_once(
                                 partial(
