@@ -69,6 +69,18 @@ def _compute_tooltip_box_size(
     return width, height
 
 
+def _sync_tooltip_spacing(tooltip, *, has_text, has_image, spacing=15):
+    """Use BoxLayout spacing only when both text and image occupy space.
+
+    The image child stays in the tree so KV ids stay valid. A zero-size image
+    still consumes ``spacing``, which shows up as a blank line at the top of
+    the tooltip when the box is resized from a live ``tooltip_txt`` change.
+    """
+    if tooltip is None:
+        return
+    tooltip.spacing = spacing if has_text and has_image else 0
+
+
 class Tooltip(BoxLayout):
     pass
 
@@ -82,12 +94,18 @@ class ToolTipContentLabel(Label):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.text_size = (None, None)
+        if self.text:
+            self.refresh_text_size()
 
     def on_text(self, *args):
+        if getattr(self, "_label", None) is None:
+            return
         self.refresh_text_size()
 
     def refresh_text_size(self):
         """Size to the longest line, wrapping only when past max_width."""
+        if getattr(self, "_label", None) is None:
+            return
         if not self.text:
             self.text_size = (None, None)
             return
@@ -180,15 +198,18 @@ class ToolTipSwitch(Switch):
         tooltip_label = self._tooltip.ids.tooltip_label
         tooltip_image = self._tooltip.ids.tooltip_image
 
-        # Calculate new size based on text and image dimensions
         text_width, text_height = tooltip_label.texture_size
         image_width, image_height = tooltip_image.size
+        _sync_tooltip_spacing(
+            self._tooltip,
+            has_text=bool(tooltip_label.text),
+            has_image=image_width > 0 or image_height > 0,
+        )
 
         # Keep a stable minimum width for short labels; long text can grow up to max wrap.
         new_width = max(text_width + 20, image_width + 20, TOOLTIP_MIN_WIDTH + 20 if tooltip_label.text else 0)
         new_height = text_height + image_height + 20
 
-        # Update tooltip size
         self._tooltip.size = (new_width, new_height)
         self._tooltip.canvas.ask_update()  # Force UI refresh
         self._tooltip.ids.tooltip_label.texture_update()
@@ -335,15 +356,18 @@ class ToolTipTextInput(TextInput):
         tooltip_label = self._tooltip.ids.tooltip_label
         tooltip_image = self._tooltip.ids.tooltip_image
 
-        # Calculate new size based on text and image dimensions
         text_width, text_height = tooltip_label.texture_size
         image_width, image_height = tooltip_image.size
+        _sync_tooltip_spacing(
+            self._tooltip,
+            has_text=bool(tooltip_label.text),
+            has_image=image_width > 0 or image_height > 0,
+        )
 
         # Keep a stable minimum width for short labels; long text can grow up to max wrap.
         new_width = max(text_width + 20, image_width + 20, TOOLTIP_MIN_WIDTH + 20 if tooltip_label.text else 0)
         new_height = text_height + image_height + 20
 
-        # Update tooltip size
         self._tooltip.size = (new_width, new_height)
         self._tooltip.canvas.ask_update()  # Force UI refresh
         self._tooltip.ids.tooltip_label.texture_update()
@@ -550,6 +574,11 @@ class ToolTipButton(Button):
 
         text_width, text_height = tooltip_label.texture_size
         image_width, image_height = tooltip_image.size
+        _sync_tooltip_spacing(
+            self._tooltip,
+            has_text=bool(tooltip_label.text),
+            has_image=image_width > 0 or image_height > 0,
+        )
 
         new_width, new_height = _compute_tooltip_box_size(
             text_width,
@@ -604,6 +633,11 @@ class ToolTipButton(Button):
 
         text_width, text_height = tooltip_label.texture_size
         image_width, image_height = tooltip_image.size
+        _sync_tooltip_spacing(
+            self._tooltip,
+            has_text=bool(self.tooltip_txt),
+            has_image=image_width > 0 or image_height > 0,
+        )
 
         tooltip_width, tooltip_height = _compute_tooltip_box_size(
             text_width,
@@ -717,15 +751,18 @@ class ToolTipDropDown(DropDown):
         tooltip_label = self._tooltip.ids.tooltip_label
         tooltip_image = self._tooltip.ids.tooltip_image
 
-        # Calculate new size based on text and image dimensions
         text_width, text_height = tooltip_label.texture_size
         image_width, image_height = tooltip_image.size
+        _sync_tooltip_spacing(
+            self._tooltip,
+            has_text=bool(tooltip_label.text),
+            has_image=image_width > 0 or image_height > 0,
+        )
 
         # Keep a stable minimum width for short labels; long text can grow up to max wrap.
         new_width = max(text_width + 20, image_width + 20, TOOLTIP_MIN_WIDTH + 20 if tooltip_label.text else 0)
         new_height = text_height + image_height + 20
 
-        # Update tooltip size
         self._tooltip.size = (new_width, new_height)
         self._tooltip.canvas.ask_update()  # Force UI refresh
         self._tooltip.ids.tooltip_label.texture_update()
@@ -882,6 +919,11 @@ class ToolTipLabel(Label):
 
         text_width, text_height = tooltip_label.texture_size
         image_width, image_height = tooltip_image.size
+        _sync_tooltip_spacing(
+            self._tooltip,
+            has_text=bool(tooltip_label.text),
+            has_image=image_width > 0 or image_height > 0,
+        )
         new_width, new_height = _compute_tooltip_box_size(
             text_width,
             text_height,
@@ -931,6 +973,11 @@ class ToolTipLabel(Label):
         window_width, window_height = Window.size
         tooltip_label = self._tooltip.ids.tooltip_label
         tooltip_image = self._tooltip.ids.tooltip_image
+        _sync_tooltip_spacing(
+            self._tooltip,
+            has_text=bool(self.tooltip_txt),
+            has_image=tooltip_image.size[0] > 0 or tooltip_image.size[1] > 0,
+        )
 
         tooltip_width, tooltip_height = _compute_tooltip_box_size(
             tooltip_label.texture_size[0],
