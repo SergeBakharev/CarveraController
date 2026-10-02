@@ -4,11 +4,13 @@ import os
 
 from kivy_ios.toolchain import CythonRecipe
 
-# kivy-ios chdirs into the recipe build dir before get_recipe_env, and recipe_dir
-# is the relative path from the toolchain CLI. Freeze an absolute path at import.
+# kivy-ios chdirs into earlier recipes' build dirs before this recipe is
+# downloaded, and --add-custom-recipe is passed as a relative path. Freeze
+# absolute paths at import, while cwd is still the repo root.
+_RECIPE_DIR = os.path.dirname(os.path.abspath(__file__))
 _NATIVE_SRC = os.path.abspath(
     os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
+        _RECIPE_DIR,
         "..",
         "..",
         "..",
@@ -25,12 +27,17 @@ _NATIVE_SRC = os.path.abspath(
 
 class StockCarveRecipe(CythonRecipe):
     version = "1.0.0"
+    # Local setup.py. Resolved against recipe_dir; a relative recipe_dir makes
+    # kivy-ios treat this as a URL and fail with "unknown url type: 'src'".
     url = "src"
     library = "libstock_carve.a"
     depends = ["python3"]
     cythonize = False
     hostpython_prerequisites = []
     call_hostpython_via_targetpython = False
+
+    def init_after_import(self, ctx):
+        self.recipe_dir = _RECIPE_DIR
 
     def get_recipe_env(self, plat):
         env = super().get_recipe_env(plat)
