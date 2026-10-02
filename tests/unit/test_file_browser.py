@@ -1269,6 +1269,80 @@ def test_multi_select_prune_keeps_every_file_still_listed():
     assert popup._highlight_path == "/sd/keep.nc"
 
 
+def _shift_popup(*, selected, highlight, data, multi=False, anchor=-1, firmware=False):
+    popup = _selection_popup(
+        entries=[{"path": row["path"], "is_dir": False, "size": 1} for row in data if row.get("path")],
+        selected=list(selected),
+    )
+    popup.multi_select_mode = multi
+    popup._highlight_path = highlight
+    popup._last_range_index = anchor
+    popup.firmware_mode = firmware
+    popup.ids = {"file_list": SimpleNamespace(data=list(data))}
+    for name in (
+        "_on_modifier_select",
+        "_shift_select",
+        "_shift_anchor_index",
+        "_index_for_path",
+        "_add_index_range",
+        "_on_toggle_checked",
+        "_multi_select_allowed",
+    ):
+        setattr(popup, name, getattr(FileBrowserPopup, name).__get__(popup))
+    return popup
+
+
+def _range_rows():
+    return [
+        {"path": "/sd/a.nc", "selectable": True},
+        {"path": "/sd/b.nc", "selectable": True},
+        {"path": "/sd/skip", "selectable": False},
+        {"path": "/sd/c.nc", "selectable": True},
+    ]
+
+
+def test_shift_click_outside_multi_select_selects_the_range_and_turns_it_on():
+    popup = _shift_popup(selected=["/sd/a.nc"], highlight="/sd/a.nc", data=_range_rows())
+    popup._on_modifier_select("/sd/c.nc", 3, "shift")
+    assert popup.multi_select_mode is True
+    assert popup.selected_machine_paths == ["/sd/a.nc", "/sd/b.nc", "/sd/c.nc"]
+    assert popup.selected_machine_file == "/sd/c.nc"
+    assert "/sd/skip" not in popup.selected_machine_paths
+    assert popup._last_range_index == 0
+
+    popup._on_modifier_select("/sd/b.nc", 1, "shift")
+    assert popup.selected_machine_paths == ["/sd/a.nc", "/sd/b.nc"]
+    assert popup._last_range_index == 0
+
+
+def test_shift_click_with_nothing_selected_starts_multi_select_on_that_file():
+    popup = _shift_popup(selected=[], highlight="", data=_range_rows())
+    popup._on_modifier_select("/sd/b.nc", 1, "shift")
+    assert popup.multi_select_mode is True
+    assert popup.selected_machine_paths == ["/sd/b.nc"]
+    assert popup._last_range_index == 1
+
+
+def test_ctrl_shift_adds_a_range_without_clearing_other_files():
+    popup = _shift_popup(
+        selected=["/sd/c.nc"],
+        highlight="/sd/a.nc",
+        data=_range_rows(),
+        multi=True,
+        anchor=0,
+    )
+    popup._on_modifier_select("/sd/b.nc", 1, "ctrl-shift")
+    assert popup.selected_machine_paths == ["/sd/c.nc", "/sd/a.nc", "/sd/b.nc"]
+    assert popup._last_range_index == 0
+
+
+def test_shift_click_does_nothing_when_multi_select_is_not_allowed():
+    popup = _shift_popup(selected=["/sd/a.nc"], highlight="/sd/a.nc", data=_range_rows(), firmware=True)
+    popup._on_modifier_select("/sd/c.nc", 3, "shift")
+    assert popup.multi_select_mode is False
+    assert popup.selected_machine_paths == ["/sd/a.nc"]
+
+
 def test_transfer_confirm_mentions_overwrite_and_skipped_folders():
     assert transfer_confirm_message(["/tmp/a.nc"], ["a.nc"], [], "upload") == (
         "File Already Exists",

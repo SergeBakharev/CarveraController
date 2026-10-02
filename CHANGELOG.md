@@ -1,5 +1,6 @@
 [unreleased]
 - Enhancement: Upload and download multiple selected files from the file browser, with one progress popup for the batch
+- Enhancement: Shift-click selects a range of files in the file browser and turns multi-select on if it was off
 - Enhancement: Add a Z1 Record Timelapse toggle on the Config and Run screen, a recording mark on the camera button, and ability to open /sd/videos in the file browser when that folder exists
 - Enhancement: Add a Ghost display option that draws older toolpath faint and recent moves more solid
 - Enhancement: Firmware updater now support Makera Z1. Detects if fw is bundled LPC+ESP, LPC-only, or ESP-only and updates using the correct method

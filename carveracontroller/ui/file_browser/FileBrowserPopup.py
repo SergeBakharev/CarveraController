@@ -751,6 +751,7 @@ class FileBrowserPopup(ModalView):
         if self.location == LOCATION_MACHINE:
             self.selected_machine_filesize = intsize
         self._rebuild_list()
+        self._last_range_index = self._index_for_path(path)
         self._sync_chrome()
 
     def _on_select_row(self, path: str, _kind: str, intsize: int):
@@ -796,31 +797,86 @@ class FileBrowserPopup(ModalView):
     def _on_modifier_select(self, path: str, index: int, modifier: str):
         if not self._multi_select_allowed():
             return
+        if modifier in ("shift", "ctrl-shift"):
+            self._shift_select(path, index, replace=modifier == "shift")
+            return
         if not self.multi_select_mode:
             self.multi_select_mode = True
             self._apply_selected_paths([])
-        if modifier == "shift" and self._last_range_index >= 0:
-            rv = self.ids.get("file_list")
-            if rv is None:
-                return
-            start = min(self._last_range_index, index)
-            end = max(self._last_range_index, index)
-            paths = self._selected_paths()
-            for i in range(start, end + 1):
-                if i < 0 or i >= len(rv.data):
-                    continue
-                row = rv.data[i]
-                if not row.get("selectable"):
-                    continue
-                p = row.get("path")
-                if p and p not in paths:
-                    paths.append(p)
-            self._apply_selected_paths(paths)
-            self._rebuild_list()
-            self._sync_chrome()
-            return
         self._last_range_index = index
         self._on_toggle_checked(path)
+
+    def _shift_select(self, path: str, index: int, *, replace: bool):
+        """Select from the anchor through this row, turning multi-select on if needed.
+
+        A plain shift-click replaces the selection with that range. Ctrl-shift
+        adds the range to files already checked.
+        """
+        anchor = self._shift_anchor_index()
+        if not self.multi_select_mode:
+            self.multi_select_mode = True
+        if anchor < 0:
+            self._last_range_index = index
+            if path not in self._selected_paths():
+                self._on_toggle_checked(path)
+            else:
+                self._rebuild_list()
+                self._sync_chrome()
+            return
+        # Keep the anchor fixed so another shift-click adjusts the same range.
+        self._last_range_index = anchor
+        self._add_index_range(anchor, index, replace=replace, primary=path)
+
+    def _shift_anchor_index(self) -> int:
+        """Row the range starts from. Outside multi-select that is the highlighted file."""
+        if self.multi_select_mode and self._last_range_index >= 0:
+            return self._last_range_index
+        highlight = self._highlight_path
+        if not highlight:
+            highlight = self.selected_device_file if self.location == LOCATION_DEVICE else self.selected_machine_file
+        return self._index_for_path(highlight)
+
+    def _index_for_path(self, path: str) -> int:
+        if not path:
+            return -1
+        rv = self.ids.get("file_list")
+        if rv is None:
+            return -1
+        norm = os.path.normpath(path)
+        for i, row in enumerate(rv.data or []):
+            row_path = row.get("path") or ""
+            if row_path and os.path.normpath(row_path) == norm:
+                return i
+        return -1
+
+    def _add_index_range(self, start_index: int, end_index: int, *, replace: bool, primary: str = ""):
+        rv = self.ids.get("file_list")
+        if rv is None:
+            return
+        start = min(start_index, end_index)
+        end = max(start_index, end_index)
+        ranged: list[str] = []
+        for i in range(start, end + 1):
+            if i < 0 or i >= len(rv.data):
+                continue
+            row = rv.data[i]
+            if not row.get("selectable"):
+                continue
+            row_path = row.get("path")
+            if row_path and row_path not in ranged:
+                ranged.append(row_path)
+        if primary and primary in ranged:
+            ranged = [row_path for row_path in ranged if row_path != primary] + [primary]
+        if replace:
+            paths = ranged
+        else:
+            paths = self._selected_paths()
+            for row_path in ranged:
+                if row_path not in paths:
+                    paths.append(row_path)
+        self._apply_selected_paths(paths)
+        self._rebuild_list()
+        self._sync_chrome()
 
     def _multi_select_allowed(self) -> bool:
         if self.firmware_mode:
