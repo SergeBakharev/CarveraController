@@ -10,7 +10,7 @@ from kivy.lang import Builder
 from kivy.properties import BooleanProperty, ListProperty, NumericProperty
 from kivy.uix.widget import Widget
 
-from carveracontroller.ui.SimStatsHud import SimStatsHud
+from carveracontroller.ui.SimStatsHud import SimStatsHud, SimStatsHudIcon
 
 SHORT = "Heightmap: 40x30\nResolution: 0.5mm/cell\nCheckpoints: 0% - 1/8 slots"
 LONG = "Cylindrical: 400x180\nResolution: 0.25 mm along X and at Ø40\nCheckpoints: 12% - 3/8 slots"
@@ -77,5 +77,20 @@ def test_hud_width_shrinks_when_stats_text_shortens(sim_hud_kv):
         _settle()
         assert hud.width == pytest.approx(short_width, abs=1)
         assert hud.width < long_width - 20
+    finally:
+        Window.remove_widget(hud)
+
+
+def test_hud_has_stock_settings_cog_next_to_eye(sim_hud_kv):
+    hud = SimStatsHud(hud_visible=True, stats_text=SHORT)
+    Window.add_widget(hud)
+    try:
+        _settle()
+        icons = [w for w in hud.walk() if isinstance(w, SimStatsHudIcon)]
+        sources = [w.icon_source for w in icons]
+        assert any(source.endswith("cog.png") for source in sources)
+        assert any(source.endswith("eye.png") for source in sources)
+        cog = next(widget for widget in icons if widget.icon_source.endswith("cog.png"))
+        assert "stock" in cog.tooltip_txt.lower()
     finally:
         Window.remove_widget(hud)

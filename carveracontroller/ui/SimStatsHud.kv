@@ -1,6 +1,6 @@
 #:import tr carveracontroller.__main__.tr
 
-<SimStatsHudEye>:
+<SimStatsHudIcon>:
     size_hint: None, None
     size: dp(22), dp(28)
 
@@ -57,7 +57,13 @@
             pos_hint: {'center_y': 0.5}
         Widget:
             size_hint_x: 1
-        SimStatsHudEye:
+        SimStatsHudIcon:
+            icon_source: 'data/cog.png'
+            tooltip_txt: tr._('Stock settings')
+            pos_hint: {'center_y': 0.5}
+            on_release: app.root.open_stock_settings_popup()
+        SimStatsHudIcon:
+            icon_source: 'data/eye.png'
             icon_active: root.mesh_visible
             tooltip_txt: tr._('Hide simulation') if root.mesh_visible else tr._('Show simulation')
             pos_hint: {'center_y': 0.5}

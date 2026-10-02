@@ -13,12 +13,12 @@ from kivy.uix.widget import Widget
 from carveracontroller.addons.tooltips.Tooltips import ToolTipButton
 
 EYE_ICON_SOURCE = "data/eye.png"
-EYE_VISIBLE_RGBA = (0.93, 0.93, 0.93, 1.0)
-EYE_HIDDEN_RGBA = (0.42, 0.42, 0.42, 0.9)
+ICON_VISIBLE_RGBA = (0.93, 0.93, 0.93, 1.0)
+ICON_HIDDEN_RGBA = (0.42, 0.42, 0.42, 0.9)
 
 
-class _HudEyeToolTip(ToolTipButton):
-    """Invisible tooltip host that hit-tests the eye without drawing chrome."""
+class _HudIconToolTip(ToolTipButton):
+    """Invisible tooltip host that hit-tests the icon without drawing chrome."""
 
     def __init__(self, **kwargs):
         kwargs.setdefault("text", "")
@@ -40,9 +40,10 @@ class _HudEyeToolTip(ToolTipButton):
         return False
 
 
-class SimStatsHudEye(ButtonBehavior, Widget):
-    """Eye icon drawn without the gray tooltip-button background."""
+class SimStatsHudIcon(ButtonBehavior, Widget):
+    """HUD glyph drawn without the gray tooltip-button background."""
 
+    icon_source = StringProperty(EYE_ICON_SOURCE)
     icon_active = BooleanProperty(True)
     tooltip_txt = StringProperty("")
 
@@ -53,19 +54,21 @@ class SimStatsHudEye(ButtonBehavior, Widget):
         with self.canvas:
             PushMatrix()
             self._translate = Translate(0, 0)
-            self._color = Color(*EYE_VISIBLE_RGBA)
-            self._icon = Rectangle(source=EYE_ICON_SOURCE, size=(icon, icon))
+            self._color = Color(*ICON_VISIBLE_RGBA)
+            self._icon = Rectangle(source=self.icon_source, size=(icon, icon))
             PopMatrix()
-        self._tip = _HudEyeToolTip()
+        self._tip = _HudIconToolTip()
         self.add_widget(self._tip)
         self.bind(
             pos=self._layout,
             size=self._layout,
             icon_active=self._sync_icon,
+            icon_source=self._sync_source,
             tooltip_txt=self._sync_tooltip,
         )
         self._layout()
         self._sync_icon()
+        self._sync_source()
         self._sync_tooltip()
 
     def _layout(self, *_args) -> None:
@@ -78,7 +81,10 @@ class SimStatsHudEye(ButtonBehavior, Widget):
         self._tip.size = self.size
 
     def _sync_icon(self, *_args) -> None:
-        self._color.rgba = EYE_VISIBLE_RGBA if self.icon_active else EYE_HIDDEN_RGBA
+        self._color.rgba = ICON_VISIBLE_RGBA if self.icon_active else ICON_HIDDEN_RGBA
+
+    def _sync_source(self, *_args) -> None:
+        self._icon.source = self.icon_source
 
     def _sync_tooltip(self, *_args) -> None:
         self._tip.tooltip_txt = self.tooltip_txt
@@ -143,7 +149,7 @@ class CarveSpinner(Widget):
 
 
 class SimStatsHud(BoxLayout):
-    """Simulation title, carving spinner, mesh eye, and grid/checkpoint stats."""
+    """Simulation title, carving spinner, stock cog, mesh eye, and stats."""
 
     stats_text = StringProperty("")
     carving = BooleanProperty(False)
