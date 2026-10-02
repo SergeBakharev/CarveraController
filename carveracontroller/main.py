@@ -4208,17 +4208,17 @@ class Makera(RelativeLayout):
                             self.controller.syncTime()
 
                     remote_version = re.search(r"version = [0-9]+\.[0-9]+\.[0-9]+[a-zA-Z0-9\-_]*", line)
-                    app = App.get_running_app()
                     if remote_version != None:
                         self.fw_version = remote_version[0].split("=")[1].strip()
-                        app.is_community_firmware = bool(self.fw_version) and "c" in self.fw_version.lower()
-                        self.controller.is_community_firmware = app.is_community_firmware
-                        if not app.is_community_firmware or not CNC.can_rotate_wcs:
+                        community = bool(self.fw_version) and "c" in self.fw_version.lower()
+                        self.controller.is_community_firmware = community
+                        if not community or not CNC.can_rotate_wcs:
                             self.controller.viewWCS()
-                        app.fw_version_digitized = Utils.digitize_v(self.fw_version)
                         logger.debug(f"Firmware Version detected as {self.fw_version}")
-                        Clock.schedule_once(partial(self.onFirmwareDetected, self.fw_version), 0)
-                        Clock.schedule_once(lambda *_: self._refresh_firmware_update_state(), 0)
+                        Clock.schedule_once(
+                            partial(self._apply_detected_firmware, self.fw_version, community),
+                            0,
+                        )
                         # Baud upgrade is deferred until after config download / sync
                         # (see attempt_usb_baud_upgrade_if_eligible). Running it on the
                         # version line races framed config transfer and breaks the link.
@@ -5459,6 +5459,29 @@ class Makera(RelativeLayout):
             self._schedule_progress_finish(0.1)
         return download_result
 
+    def _apply_detected_firmware(self, version, community, *_args):
+        """Publish a firmware version onto Kivy properties. Main thread only."""
+        app = App.get_running_app()
+        if app is None:
+            return
+        app.is_community_firmware = bool(community)
+        app.fw_version_digitized = Utils.digitize_v(version) if version else 0
+
+        # Stock values match makera.kv
+        # Community firmware adds "3D Probe" and "Laser".
+        change_values = [
+            "Probe",
+            *(["3D Probe"] if app.is_community_firmware else []),
+            *(f"Tool: {i}" for i in range(1, 7)),
+            *(["Laser"] if app.is_community_firmware else []),
+            "Custom",
+        ]
+        self.tool_drop_down.change_dropdown.values = change_values
+        self.tool_drop_down.set_dropdown.values = ["Empty", *change_values]
+
+        self.onFirmwareDetected(version)
+        self._refresh_firmware_update_state()
+
     def onFirmwareDetected(self, version, *args):
         app = App.get_running_app()
         if Config.get("carvera", "show_firmware_check") != "1":
@@ -5577,32 +5600,7 @@ class Makera(RelativeLayout):
             else:
                 CNC.vars["rotation_base_width"] = 330
                 CNC.vars["rotation_head_width"] = 7
-        if app.is_community_firmware:
-            self.tool_drop_down.set_dropdown.values = [
-                "Empty",
-                "Probe",
-                "3D Probe",
-                "Tool: 1",
-                "Tool: 2",
-                "Tool: 3",
-                "Tool: 4",
-                "Tool: 5",
-                "Tool: 6",
-                "Laser",
-                "Custom",
-            ]
-            self.tool_drop_down.change_dropdown.values = [
-                "Probe",
-                "3D Probe",
-                "Tool: 1",
-                "Tool: 2",
-                "Tool: 3",
-                "Tool: 4",
-                "Tool: 5",
-                "Tool: 6",
-                "Laser",
-                "Custom",
-            ]
+
         app.has_atc = bool(CNC.vars["FuncSetting"] & 4)
         # The first machine config load must happen after /sd/config.txt is parsed.
         if model_changed and self.config_loaded:
