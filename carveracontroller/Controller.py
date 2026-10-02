@@ -35,6 +35,8 @@ except ImportError:
 
 STREAM_POLL = 0.2  # s
 DIAGNOSE_POLL = 0.5  # s
+# If firmware never acks a Ctrl+Y with ^Y, allow a new $J -c after this.
+CONTINUOUS_JOG_STOP_TIMEOUT = 2.0  # s
 # Probe an idle transport on this cadence. A tight send loop must not ioctl every spin.
 LINK_CHECK_INTERVAL = 0.5  # s
 RX_BUFFER_SIZE = 128
@@ -194,9 +196,10 @@ class Controller:
         self.jog_mode = Controller.JOG_MODE_STEP
         self.jog_speed = 10000  # mm/min. A value of 0 here would suggest to use last used feed
         self.continuous_jog_active = False
-        # True after Ctrl+Y until firmware acks (^Y) — suppresses keepalives without
-        # allowing a new $J -c to start before the previous jog has stopped.
-        self._continuous_jog_stopping = False
+        # Set on Ctrl+Y until firmware acks (^Y). Suppresses keepalives and
+        # blocks a new $J -c until the previous jog has stopped, or the stop
+        # request is older than CONTINUOUS_JOG_STOP_TIMEOUT.
+        self._continuous_jog_stop_requested_at = 0.0
 
     @property
     def protocol_ready(self):
@@ -1816,7 +1819,7 @@ class Controller:
         if self.loadNUM == 0 and self.sendNUM == 0:
             if self.stream is None or not self.protocol_ready:
                 return
-            if self.continuous_jog_active and not self._continuous_jog_stopping:
+            if self.continuous_jog_active and not self._continuous_jog_stop_requested_at:
                 # Smoothie uses "?1"; Makera uses "?" + Ctrl+Z keepalive.
                 # Always one write so keepalive can't be interleaved/orphaned.
                 if self.comms.uses_framed_transfer:
@@ -1910,16 +1913,19 @@ class Controller:
                 self.stopContinuousJog()
             self.jog_mode = mode
 
+    def continuousJogBusy(self):
+        """True while a continuous jog is running or a recent stop is waiting for ^Y."""
+        if self._continuous_jog_stop_requested_at and (
+            time.monotonic() - self._continuous_jog_stop_requested_at > CONTINUOUS_JOG_STOP_TIMEOUT
+        ):
+            self._clear_continuous_jog_state()
+        return bool(self.continuous_jog_active or self._continuous_jog_stop_requested_at)
+
     def startContinuousJog(self, _dir, speed=None, scale_feed_override=None):
         """Start continuous jogging in the specified direction"""
-        if (
-            self.jog_mode != Controller.JOG_MODE_CONTINUOUS
-            or self.continuous_jog_active
-            or self._continuous_jog_stopping
-        ):
+        if self.continuousJogBusy() or self.jog_mode != Controller.JOG_MODE_CONTINUOUS:
             return
         self.continuous_jog_active = True
-        self._continuous_jog_stopping = False
         if speed is None:
             if self.jog_speed > 0 and self.jog_speed < 10000:
                 self.executeCommand(f"$J -c {_dir} F{self.jog_speed}")
@@ -1940,13 +1946,13 @@ class Controller:
         # Send Ctrl+Y, then wait for firmware ^Y before allowing a new $J -c.
         # Mark stopping immediately so status polls stop sending keepalives that
         # would otherwise fight the stop request.
-        if self.stream is not None and self.continuous_jog_active and not self._continuous_jog_stopping:
-            self._continuous_jog_stopping = True
+        if self.stream is not None and self.continuous_jog_active and not self._continuous_jog_stop_requested_at:
+            self._continuous_jog_stop_requested_at = time.monotonic()
             self.executeRealtime(0x19)
 
     def _clear_continuous_jog_state(self):
         self.continuous_jog_active = False
-        self._continuous_jog_stopping = False
+        self._continuous_jog_stop_requested_at = 0.0
 
     def jog(self, _dir, speed=None):
         if self.jog_mode == Controller.JOG_MODE_STEP:
@@ -2205,9 +2211,6 @@ class Controller:
                     if msg:
                         CNC.vars["alarm_message"] = msg
             else:
-                # Firmware continuous-jog timeout: clear local state so jogging can restart.
-                if "Stop request timeout" in line or "Internal stop request reset" in line:
-                    self._clear_continuous_jog_state()
                 self.log.put((self.MSG_NORMAL, line))
         except (LookupError, ArithmeticError, ValueError) as e:
             self.log.put((self.MSG_ERROR, f"Failed to parse machine response: {line}"))
