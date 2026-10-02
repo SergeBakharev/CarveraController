@@ -52,6 +52,7 @@
 - Fixed: Commands sent using the "Send" buttons are now added to the MDI history
 - Fixed: The probe button in the main menu is disabled unless community firmware is loaded, matching the Probing button on the control screen
 - Fixed: Consolidated the two different re-connection methods into one
+- Fixed: Continuous jogging no longer stops when the firmware reports a leftover internal stop reset on the next `$J`
 - Fixed: Prevent a blank space sometimes being displayed above the text of some tooltips
 
 [2.2.0-RC3]
