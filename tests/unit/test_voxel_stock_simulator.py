@@ -156,6 +156,32 @@ def test_helical_ish_move_clears_on_path():
     assert not grid.is_solid_at_world(6.0, 3.0, -0.5)
 
 
+def test_noisy_voxel_chunk_meshes_fit_gles_index_limit():
+    """Checkerboard occupancy is under the vertex cap and over the GLES index-list cap."""
+    from carveracontroller.addons.stock.simulator.carvers.voxel.backend import VoxelBackend
+    from carveracontroller.addons.stock.simulator.carvers.voxel.grid import ChunkCoord
+    from carveracontroller.addons.stock.stock_shape import RectangularStock
+
+    bounds = StockBounds(0, 0, 0, 16, 16, 16)
+    backend = VoxelBackend(bounds, 1.0, RectangularStock(16, 16, 16), chunk_size=16)
+    coord = ChunkCoord(0, 0, 0)
+    arr = backend.grid.get_or_create_chunk(coord)
+    assert arr is not None
+    idx = np.indices(arr.shape)
+    arr[:] = ((idx[0] + idx[1] + idx[2]) & 1).astype(np.uint8)
+    meshes = backend.mesh_tiles({coord.as_tuple()}, uniform=False)
+    parts = [packed for packed in meshes.values() if packed]
+    assert len(parts) >= 2
+    total = 0
+    for verts, indices, _fmt in parts:
+        nvert = len(verts) // 12
+        assert len(indices) <= 65535
+        assert nvert <= 65500
+        assert int(max(indices)) < nvert
+        total += len(indices)
+    assert total > 65535
+
+
 def test_mesh_chunk_produces_geometry_after_carve():
     from carveracontroller.addons.stock.simulator.carvers.voxel.grid import ChunkCoord
 
@@ -176,8 +202,8 @@ def test_mesh_chunk_produces_geometry_after_carve():
         state = grid.get_chunk_state(coord)
         if hasattr(state, "any") and state.any():
             packed = mesh_chunk(grid, coord, state)
-            if packed is not None:
-                verts, indices, fmt = packed
+            if packed:
+                verts, indices, fmt = packed[0]
                 assert len(verts) > 0
                 assert len(indices) >= 6
                 meshed = True
@@ -191,8 +217,9 @@ def test_full_cube_greedy_mesh_is_six_quads():
 
     bounds = StockBounds(min_x=0, min_y=0, min_z=0, max_x=8, max_y=8, max_z=8)
     grid = ChunkedVoxelGrid(bounds, voxel_size_mm=1.0, chunk_size=8)
-    packed = mesh_chunk_state(grid, ChunkCoord(0, 0, 0))
-    assert packed is not None
+    parts = mesh_chunk_state(grid, ChunkCoord(0, 0, 0))
+    assert len(parts) == 1
+    packed = parts[0]
     verts = np.asarray(packed[0], dtype=np.float32).reshape(-1, 12)
     # 6 faces × 4 verts; greedy merge turns each face into one quad.
     assert verts.shape[0] == 24
@@ -229,8 +256,8 @@ def test_full_chunk_and_neighbors_mesh_pocket_floor():
     top = ChunkCoord(0, 0, grid.n_chunks_z - 1)
     assert grid.get_chunk_state(top) is CHUNK_FULL
     packed = mesh_chunk_state(grid, top)
-    assert packed is not None
-    assert len(packed[0]) > 0
+    assert packed
+    assert len(packed[0][0]) > 0
 
     tool = ToolDefinition(
         number=1,
@@ -242,7 +269,7 @@ def test_full_chunk_and_neighbors_mesh_pocket_floor():
     dirty = carve_segment_into_grid(grid, (0.0, 0.0, -1.0), (0.0, 0.0, -1.0), tool)
     meshes = mesh_dirty_chunks(grid, dirty)
     # At least one chunk near the carve should still have drawable faces (floor/walls).
-    assert any(v is not None for v in meshes.values())
+    assert any(meshes.values())
 
 
 def test_snapshot_non_full_omits_full_and_restores():
@@ -1098,11 +1125,14 @@ def test_mesh_copy_2ring_required_for_face_culling():
     got_2ring = mesh_dirty_chunks(grid.copy_chunks(copy_keys), mesh_keys)
     got_1ring = mesh_dirty_chunks(grid.copy_chunks(mesh_keys), mesh_keys)
 
-    assert expected[n_key] is not None
+    def n_verts(parts):
+        return sum(len(verts) for verts, _idx, _fmt in parts)
+
+    assert expected[n_key]
     assert got_2ring[n_key] == expected[n_key]
     # 1-ring-only over-culls N's faces toward EMPTY F → fewer vertices.
-    assert got_1ring[n_key] is not None
-    assert len(got_1ring[n_key][0]) < len(expected[n_key][0])
+    assert got_1ring[n_key]
+    assert n_verts(got_1ring[n_key]) < n_verts(expected[n_key])
 
 
 def test_partial_mesh_copy_matches_live_dirty_meshes():

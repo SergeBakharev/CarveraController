@@ -41,8 +41,9 @@ from carveracontroller.addons.stock.stock_shape import (
     StockShape,
 )
 
-# Cells per coalesced draw. 64×64 welded corners stay under the uint16 vertex cap
-# even when every edge is a cliff skirt.
+# Cells per coalesced draw. A 64×64 block stays small enough to split quickly when a
+# carved surface exceeds the GLES index-list cap (65535), which is tighter than the
+# uint16 vertex cap once skirts stop sharing vertices.
 HEIGHTMAP_MESH_BIN = 64
 
 

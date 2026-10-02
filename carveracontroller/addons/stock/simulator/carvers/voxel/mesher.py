@@ -13,6 +13,8 @@ import numpy as np
 from carveracontroller.addons.stock.simulator.mesh_format import DEFAULT_COLOR
 
 if TYPE_CHECKING:
+    from carveracontroller.addons.stock.simulator.carvers.array_mesh import PackedMesh
+
     from .grid import ChunkCoord, ChunkedVoxelGrid
 
 
@@ -92,10 +94,11 @@ def mesh_chunk(
     coord: ChunkCoord,
     occupancy: np.ndarray,
     color: tuple[float, float, float, float] = DEFAULT_COLOR,
-) -> tuple | None:
+) -> list[PackedMesh]:
     """Build a triangle mesh for the exposed faces of one chunk.
 
-    Returns ``(vertices, indices, VERTEX_FORMAT)`` or ``None`` if nothing to draw.
+    Returns a list of ``(vertices, indices, VERTEX_FORMAT)`` meshes, one per GLES draw
+    (usually one), or an empty list if there is nothing to draw.
     Vertex positions are in **world millimetres** (caller scales into viewer space).
     Coplanar unit faces are greedily merged; vertices/indices are ``array.array``.
     """
@@ -118,26 +121,26 @@ def mesh_chunk_state(
     grid: ChunkedVoxelGrid,
     coord: ChunkCoord,
     state: object | None = None,
-) -> tuple | None:
+) -> list[PackedMesh]:
     """Mesh one chunk from its current state (FULL / EMPTY / array)."""
     from .grid import CHUNK_EMPTY, CHUNK_FULL
 
     if state is None:
         state = grid.get_chunk_state(coord)
     if state is CHUNK_EMPTY:
-        return None
+        return []
     if state is CHUNK_FULL:
         return mesh_full_chunk(grid, coord)
     if isinstance(state, np.ndarray):
         return mesh_chunk(grid, coord, state)
-    return None
+    return []
 
 
 def mesh_full_chunk(
     grid: ChunkedVoxelGrid,
     coord: ChunkCoord,
     color: tuple[float, float, float, float] = DEFAULT_COLOR,
-) -> tuple | None:
+) -> list[PackedMesh]:
     """Mesh an implicit FULL chunk from neighbour faces (no 16³ occupancy)."""
     if not grid._chunk_fully_in_bounds(coord):
         return mesh_chunk(grid, coord, solid_occupancy_for_chunk(grid, coord), color)
@@ -148,11 +151,11 @@ def mesh_full_chunk(
 def mesh_dirty_chunks(
     grid: ChunkedVoxelGrid,
     dirty_chunk_coords: set[tuple[int, int, int]],
-) -> dict[tuple[int, int, int], tuple | None]:
-    """Mesh all dirty chunks. ``None`` means the chunk mesh should be removed."""
+) -> dict[tuple[int, int, int], list[PackedMesh]]:
+    """Mesh all dirty chunks. An empty list means the chunk mesh should be removed."""
     from .grid import CHUNK_EMPTY, ChunkCoord
 
-    result: dict[tuple[int, int, int], tuple | None] = {}
+    result: dict[tuple[int, int, int], list[PackedMesh]] = {}
     for key in dirty_chunk_coords:
         coord = ChunkCoord(*key)
         if not (
@@ -161,14 +164,13 @@ def mesh_dirty_chunks(
             continue
         state = grid.get_chunk_state(coord)
         if state is CHUNK_EMPTY:
-            result[key] = None
+            result[key] = []
             continue
         if isinstance(state, np.ndarray):
             grid.maybe_collapse_chunk(coord, state)
             state = grid.get_chunk_state(coord)
             if state is CHUNK_EMPTY:
-                result[key] = None
+                result[key] = []
                 continue
-        packed = mesh_chunk_state(grid, coord, state)
-        result[key] = packed
+        result[key] = mesh_chunk_state(grid, coord, state)
     return result

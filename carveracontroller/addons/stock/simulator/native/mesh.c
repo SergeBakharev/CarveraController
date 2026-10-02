@@ -2,7 +2,8 @@
  *
  * Heightmap and cylindrical shells share corner vertices. Voxel chunks keep
  * unshared quads; a 16^3 chunk is small enough that the win is leaving Python.
- * Output stays under the uint16 index limit (65000 vertices per part).
+ * GLES 2 Mesh uploads reject an index list longer than 65535, not only a
+ * vertex index that does not fit in uint16, so each part stays under both.
  */
 #include "stock_carve.h"
 
@@ -11,6 +12,7 @@
 #include <string.h>
 
 #define SC_MESH_MAX_VERTS 65000
+#define SC_MESH_MAX_INDICES 65535 /* Kivy raises above this on OpenGL ES 2 */
 #define SC_VERT_FLOATS 12 /* position (3), normal (3), color (4), uv (2) */
 
 /* Heightmap shading and welding tuning. */
@@ -48,7 +50,7 @@ static ScV3 sc_v3(float x, float y, float z) {
 /* Growing vertex / index buffers                                            */
 /* ------------------------------------------------------------------------- */
 
-/* The mesh part being built. A part is closed when it would exceed SC_MESH_MAX_VERTS vertices. */
+/* The mesh part being built. A part is closed before it would exceed either GLES Mesh cap. */
 typedef struct ScBuf {
     float *v;
     uint16_t *idx;
@@ -181,6 +183,9 @@ static int sc_buf_tri(ScBuf *b, int a, int c, int d) {
     if (a < 0 || c < 0 || d < 0) {
         return -1;
     }
+    if (b->ni + 3 > SC_MESH_MAX_INDICES) {
+        return -2;
+    }
     if (sc_buf_reserve(b, 0, 3) != 0) {
         return -1;
     }
@@ -194,8 +199,13 @@ static int sc_buf_tri(ScBuf *b, int a, int c, int d) {
 
 /* Two triangles covering the quad a-c-d-e. */
 static int sc_buf_quad(ScBuf *b, int a, int c, int d, int e) {
-    if (sc_buf_tri(b, a, c, d) != 0) {
-        return -1;
+    int rc;
+    if (b->ni + 6 > SC_MESH_MAX_INDICES) {
+        return -2;
+    }
+    rc = sc_buf_tri(b, a, c, d);
+    if (rc != 0) {
+        return rc;
     }
     return sc_buf_tri(b, a, d, e);
 }
@@ -204,7 +214,7 @@ static int sc_buf_quad(ScBuf *b, int a, int c, int d, int e) {
 static int sc_buf_flat_quad(ScBuf *b, const ScV3 corners[4], ScV3 normal, const ScColor *color) {
     int ids[4];
     int k;
-    if (b->nv + 4 > SC_MESH_MAX_VERTS) {
+    if (b->nv + 4 > SC_MESH_MAX_VERTS || b->ni + 6 > SC_MESH_MAX_INDICES) {
         return -2;
     }
     for (k = 0; k < 4; k++) {
@@ -595,8 +605,8 @@ static int hm_emit_rows(ScBuf *b, const HmMesh *m, int j0, int j1) {
     return hm_emit_bottom(b, m, j0, j1);
 }
 
-/* Mesh columns [j0, j1) into one part. If that needs more vertices than a part can hold (-2), split the
- * range in half and try each half.
+/* Mesh columns [j0, j1) into one part. If that needs more vertices or indices than a part can hold
+ * (-2), split the range in half and try each half.
  */
 static int hm_emit_split(ScMeshBatch *out, const HmMesh *m, int j0, int j1) {
     ScBuf buf;
@@ -1150,6 +1160,47 @@ static int cyl_emit_part(ScMeshBatch *out, const CylMesh *m, int ix, int room, i
     return 0;
 }
 
+/* Largest number of points around the cylinder that we can mesh.
+ * The smallest possible part is two rows of points plus an end disk on each side.
+ * That needs 12 * n_theta indices, so n_theta can't go above 65535 / 12.
+ */
+#define SC_CYL_MAX_THETA (SC_MESH_MAX_INDICES / 12)
+
+/* How many rows of the cylinder fit in one part, counting `n_caps` end disks.
+ * We have to stay under both limits: vertices and indices.
+ * The index limit is usually the one we hit first, because each ring of quads
+ * between two rows costs n_theta * 6 indices.
+ * Always returns at least 2. That is safe because sc_mesh_cylinder already
+ * rejects any n_theta too large for two rows (see SC_CYL_MAX_THETA).
+ */
+static int cyl_room_limit(int n_theta, int n_caps) {
+    int room_v, room_i, cap_v, cap_i, per, budget;
+    if (n_theta < 1) {
+        return 2;
+    }
+    cap_v = n_caps * (n_theta + 1);
+    cap_i = n_caps * n_theta * 3;
+    if (cap_v >= SC_MESH_MAX_VERTS) {
+        room_v = 2;
+    } else {
+        room_v = (SC_MESH_MAX_VERTS - cap_v) / n_theta;
+    }
+    per = n_theta * 6;
+    budget = SC_MESH_MAX_INDICES - cap_i;
+    if (per < 1 || budget < per) {
+        room_i = 2;
+    } else {
+        room_i = budget / per + 1;
+    }
+    if (room_v < 2) {
+        room_v = 2;
+    }
+    if (room_i < 2) {
+        room_i = 2;
+    }
+    return room_v < room_i ? room_v : room_i;
+}
+
 int sc_mesh_cylinder(
     const float *radii,
     int nx,
@@ -1170,7 +1221,8 @@ int sc_mesh_cylinder(
     ScMeshBatch *out) {
     CylMesh m;
     int ix;
-    if (out == NULL || radii == NULL || sin_t == NULL || cos_t == NULL || nx <= 0 || n_theta < 3 || cell <= 0.0) {
+    if (out == NULL || radii == NULL || sin_t == NULL || cos_t == NULL || nx <= 0 || n_theta < 3 ||
+        n_theta > SC_CYL_MAX_THETA || cell <= 0.0) {
         return -1;
     }
     m.radii = radii;
@@ -1204,29 +1256,29 @@ int sc_mesh_cylinder(
         }
         return sc_batch_add(out, &buf);
     }
-    /* Cut the window into parts of as many rows as fit under the vertex limit. Consecutive parts share
-     * one row so the shell has no gap between them. */
+    /* Cut the window into parts that fit both GLES caps. Consecutive parts share
+     * one row so the shell has no gap between them. Shared rings make the index
+     * list grow much faster than the vertex count, so the index cap binds first.
+     */
     ix = 0;
     while (ix < nx) {
         int remain = nx - ix;
         int cap_lo = (ix == 0 && ix0 == 0);
-        int cap_budget = cap_lo ? (n_theta + 1) : 0; /* vertices the start cap needs */
         int room, cap_hi;
-        /* Rows that fit if this part also holds the end cap. */
-        int room_with_hi = (SC_MESH_MAX_VERTS - cap_budget - (n_theta + 1)) / n_theta;
-        if (room_with_hi < 2) {
-            room_with_hi = 2;
-        }
+        int room_with_hi = cyl_room_limit(n_theta, cap_lo + 1);
         if (ix0 + nx >= nx_total && remain <= room_with_hi) {
             room = remain;
             cap_hi = 1;
         } else {
-            room = (SC_MESH_MAX_VERTS - cap_budget) / n_theta;
-            if (room < 2) {
-                room = 2;
-            }
+            room = cyl_room_limit(n_theta, cap_lo);
             if (room > remain) {
                 room = remain;
+            }
+            /* This tail fits in one part only when the end disk is left off. Taking it
+             * now ends the loop and leaves the tube open. Keep one row for a last part
+             * that still has room for the cap (parts overlap by that row). */
+            if (ix0 + nx >= nx_total && remain > room_with_hi && room >= remain) {
+                room = remain - 1;
             }
             cap_hi = 0;
         }
@@ -1272,19 +1324,19 @@ static int voxel_face_bit(int mode, const uint8_t *face, int cs, int a, int b) {
     return 0;
 }
 
-/* Close the current part and start a new one if `need` more vertices wouldn't fit. */
-static int voxel_flush_room(ScMeshBatch *batch, ScBuf *b, int need) {
-    if (b->nv + need <= SC_MESH_MAX_VERTS) {
+/* Close the current part and start a new one if another quad would pass a GLES cap. */
+static int voxel_flush_room(ScMeshBatch *batch, ScBuf *b, int need_v, int need_i) {
+    if (b->nv + need_v <= SC_MESH_MAX_VERTS && b->ni + need_i <= SC_MESH_MAX_INDICES) {
         return 0;
     }
-    if (b->nv <= 0) {
+    if (b->nv <= 0 && b->ni <= 0) {
         return -1;
     }
     return sc_batch_add(batch, b);
 }
 
 static int voxel_emit_quad(ScMeshBatch *batch, ScBuf *b, const ScV3 corners[4], ScV3 normal, const ScColor *color) {
-    if (voxel_flush_room(batch, b, 4) != 0) {
+    if (voxel_flush_room(batch, b, 4, 6) != 0) {
         return -1;
     }
     return sc_buf_flat_quad(b, corners, normal, color) != 0 ? -1 : 0;

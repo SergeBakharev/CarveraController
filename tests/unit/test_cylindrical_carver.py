@@ -382,9 +382,13 @@ def test_cylindrical_through_axis_does_not_pinch_mesh():
     ring = cyl.radii[ix]
     assert np.any(ring <= 1e-6)
     meshes = cyl.mesh_tiles(cyl.initial_surface_keys())
-    n_verts = sum(len(m[0]) // 12 for m in meshes.values() if m)
+    parts = [m for m in meshes.values() if m]
+    n_verts = sum(len(m[0]) // 12 for m in parts)
     # Welded shell corners, plus a private ring and center on each end cap.
-    assert n_verts == cyl.nx * cyl.n_theta + 2 * (cyl.n_theta + 1)
+    # GLES splits copy the shared ring where two draws meet.
+    seams = cyl.n_theta * max(0, len(parts) - 1)
+    assert n_verts == cyl.nx * cyl.n_theta + 2 * (cyl.n_theta + 1) + seams
+    assert sum(len(m[1]) for m in parts) == 6 * cyl.nx * cyl.n_theta
     checked, flipped, axis_hits, degen = _shell_triangle_stats(cyl)
     assert checked > 0
     assert flipped == 0

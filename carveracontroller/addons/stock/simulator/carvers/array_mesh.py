@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import array
 import zlib
+from collections.abc import Iterable
 
 import numpy as np
 
@@ -11,9 +12,13 @@ from carveracontroller.addons.stock.simulator.carvers.backend import TileKey
 from carveracontroller.addons.stock.simulator.mesh_format import DEFAULT_COLOR, VERTEX_FORMAT
 
 _FLOATS_PER_VERT = 12
-# Kivy Mesh indices are unsigned short; stay under 65536 vertices per draw.
+# GLES 2 Mesh: index values are uint16, and the index list itself cannot exceed 65535
 MAX_KIVY_MESH_VERTS = 65500
-_MAX_QUADS_PER_MESH = MAX_KIVY_MESH_VERTS // 4
+MAX_KIVY_MESH_INDICES = 65535
+_MAX_QUADS_PER_MESH = min(MAX_KIVY_MESH_VERTS // 4, MAX_KIVY_MESH_INDICES // 6)
+# Largest multiple of 3 that is <= both caps, so a window of this many indices never
+# references more than MAX_KIVY_MESH_VERTS distinct vertices.
+_SPLIT_WINDOW_INDICES = (min(MAX_KIVY_MESH_INDICES, MAX_KIVY_MESH_VERTS) // 3) * 3
 
 PackedMesh = tuple[array.array, array.array, list]
 
@@ -126,7 +131,7 @@ def pack_quad_meshes(
     normals: np.ndarray,
     color: tuple[float, float, float, float],
 ) -> list[PackedMesh]:
-    """Pack quads into one or more Kivy-safe meshes (uint16 index limit)."""
+    """Pack quads into one or more Kivy-safe meshes (uint16 values and index-list length)."""
     if corners.size == 0:
         return []
     q = int(corners.shape[0])
@@ -169,8 +174,37 @@ def aabb_box_mesh(
     return pack_quad_mesh(corners, normals, color)
 
 
-def coalesce_indexed_meshes(parts: list) -> list[PackedMesh]:
-    """Concatenate indexed meshes, splitting before the uint16 vertex limit."""
+def _split_indexed_mesh(verts: array.array, indices: array.array) -> list[PackedMesh]:
+    """Break one triangle mesh into draws that fit both GLES Mesh caps.
+
+    Triangles that straddle a split get their vertices copied into the next draw.
+    """
+    nv = len(verts) // _FLOATS_PER_VERT
+    if nv <= 0 or len(indices) < 3:
+        return []
+    if nv <= MAX_KIVY_MESH_VERTS and len(indices) <= MAX_KIVY_MESH_INDICES:
+        return [(verts, indices, VERTEX_FORMAT)]
+    src_v = np.frombuffer(memoryview(verts), dtype=np.float32).reshape(nv, _FLOATS_PER_VERT)
+    src_i = np.frombuffer(memoryview(indices), dtype=np.uint16)
+    n_used = len(src_i) - len(src_i) % 3  # ignore a dangling partial triangle
+    out: list[PackedMesh] = []
+    # Fixed windows of whole triangles: a window of N indices touches at most N distinct
+    # vertices, so both caps hold without tracking vertex counts.
+    for start in range(0, n_used, _SPLIT_WINDOW_INDICES):
+        window = src_i[start : min(start + _SPLIT_WINDOW_INDICES, n_used)]
+        used, local = np.unique(window, return_inverse=True)
+        out.append(
+            (
+                _as_f32_array(src_v[used]),
+                _as_u16_array(local.reshape(-1)),
+                VERTEX_FORMAT,
+            )
+        )
+    return out
+
+
+def coalesce_indexed_meshes(parts: Iterable) -> list[PackedMesh]:
+    """Concatenate indexed meshes, splitting before either GLES Mesh cap."""
     out: list[PackedMesh] = []
     cur_v = array.array("f")
     cur_i = array.array("H")
@@ -188,12 +222,16 @@ def coalesce_indexed_meshes(parts: list) -> list[PackedMesh]:
             continue
         verts, indices, _fmt = packed
         nv = len(verts) // _FLOATS_PER_VERT
-        if nv <= 0:
+        ni = len(indices)
+        if nv <= 0 or ni <= 0:
             continue
-        if nv > MAX_KIVY_MESH_VERTS:
+        if nv > MAX_KIVY_MESH_VERTS or ni > MAX_KIVY_MESH_INDICES:
+            flush()
+            out.extend(_split_indexed_mesh(verts, indices))
             continue
         base = len(cur_v) // _FLOATS_PER_VERT
-        if base and base + nv > MAX_KIVY_MESH_VERTS:
+        base_i = len(cur_i)
+        if base and (base + nv > MAX_KIVY_MESH_VERTS or base_i + ni > MAX_KIVY_MESH_INDICES):
             flush()
             base = 0
         cur_v.extend(verts)

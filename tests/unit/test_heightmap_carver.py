@@ -450,6 +450,7 @@ def test_pack_quad_meshes_splits_under_kivy_uint16_limit():
     import numpy as np
 
     from carveracontroller.addons.stock.simulator.carvers.array_mesh import (
+        MAX_KIVY_MESH_INDICES,
         MAX_KIVY_MESH_VERTS,
         keyed_packed_meshes,
         pack_quad_meshes,
@@ -465,7 +466,86 @@ def test_pack_quad_meshes_splits_under_kivy_uint16_limit():
     assert (0, 0, 0) in meshes and (1, 0, 0) in meshes
     for verts, idx, _fmt in chunks:
         assert len(verts) // 12 <= MAX_KIVY_MESH_VERTS
+        assert len(idx) <= MAX_KIVY_MESH_INDICES
         assert max(idx) <= 65535
+
+
+def _assert_gles_mesh(verts, indices) -> None:
+    nvert = len(verts) // 12
+    assert len(indices) <= 65535
+    assert 0 < nvert <= 65500
+    assert int(max(indices)) < nvert
+
+
+def test_coalesce_splits_before_gles_index_list_cap():
+    """Shared vertices can pass the uint16 vertex cap and still overflow len(indices)."""
+    import array
+
+    from carveracontroller.addons.stock.simulator.carvers.array_mesh import (
+        VERTEX_FORMAT,
+        coalesce_indexed_meshes,
+    )
+
+    n_verts = 1000
+    n_tris = 4000
+    verts = array.array("f", [0.0] * (n_verts * 12))
+    indices = array.array("H")
+    for t in range(n_tris):
+        a = (t * 3) % n_verts
+        indices.extend((a, (a + 1) % n_verts, (a + 2) % n_verts))
+    parts = [(verts, indices, VERTEX_FORMAT) for _ in range(6)]
+    merged = coalesce_indexed_meshes(parts)
+    assert len(merged) >= 2
+    assert sum(len(idx) for _v, idx, _f in merged) == 6 * n_tris * 3
+    for part_verts, part_idx, _fmt in merged:
+        _assert_gles_mesh(part_verts, part_idx)
+
+
+def test_coalesce_splits_oversized_indexed_mesh():
+    """An oversized draw is split into GLES-safe parts that keep every triangle intact."""
+    import array
+
+    from carveracontroller.addons.stock.simulator.carvers.array_mesh import (
+        VERTEX_FORMAT,
+        coalesce_indexed_meshes,
+    )
+
+    n_verts = 60000
+    n_tris = 40000  # 120000 indices: under the vertex cap, over the index cap
+    verts = array.array("f", [0.0] * (n_verts * 12))
+    # Unique x per vertex so triangles can be matched back after remapping.
+    for v in range(n_verts):
+        verts[v * 12] = float(v)
+    rng = np.random.default_rng(0)
+    tri = rng.integers(0, n_verts, size=(n_tris, 3), dtype=np.uint16)
+    indices = array.array("H", tri.ravel().tolist())
+
+    parts = coalesce_indexed_meshes([(verts, indices, VERTEX_FORMAT)])
+    assert len(parts) >= 2
+    got = []
+    for part_verts, part_idx, _fmt in parts:
+        _assert_gles_mesh(part_verts, part_idx)
+        assert len(part_idx) % 3 == 0
+        xs = np.frombuffer(memoryview(part_verts), dtype=np.float32).reshape(-1, 12)[:, 0]
+        got.append(xs[np.frombuffer(memoryview(part_idx), dtype=np.uint16)].reshape(-1, 3))
+    np.testing.assert_array_equal(np.concatenate(got), tri.astype(np.float32))
+
+
+def test_heightmap_relief_meshes_fit_gles_index_limit():
+    """A sloped 64² bin stays under the vertex cap and used to exceed 65535 indices."""
+    bounds = StockBounds(0, 0, 0, 64, 64, 10)
+    hm = HeightmapBackend(bounds, 1.0, RectangularStock(64, 64, 10))
+    xs = np.arange(hm.nx, dtype=np.float32)[:, None]
+    ys = np.arange(hm.ny, dtype=np.float32)[None, :]
+    hm.heights[:, :] = np.float32(3.0) + np.float32(0.2) * xs + np.float32(0.2) * ys
+    meshes = hm.mesh_tiles(hm.initial_surface_keys(), uniform=False)
+    parts = [packed for packed in meshes.values() if packed]
+    assert len(parts) >= 2
+    total = 0
+    for verts, indices, _fmt in parts:
+        _assert_gles_mesh(verts, indices)
+        total += len(indices)
+    assert total > 65535
 
 
 def test_heightmap_ramp_clears_uphill_footprint():

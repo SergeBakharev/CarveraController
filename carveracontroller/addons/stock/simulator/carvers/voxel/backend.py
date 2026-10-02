@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 
 import numpy as np
@@ -26,7 +27,8 @@ from .grid import CHUNK_EMPTY, CHUNK_FULL, ChunkCoord, ChunkedVoxelGrid
 from .mesher import mesh_dirty_chunks
 from .occupancy import expand_dirty_with_neighbors, exterior_chunk_keys, non_full_chunk_keys, seed_shape_occupancy
 
-# Chunks per coalesced draw. Eight 16³ chunks of exposed faces stay under uint16.
+# Chunks per coalesced draw. Eight 16³ chunks usually fit in one draw; when exposed faces
+# exceed a GLES Mesh cap (65535 indices / vertex values), the bin is split into extra draws.
 VOXEL_MESH_BIN = 2
 # Part k>0 of bin (sx, sy, sz) is drawn at (sx, sy, sz + k * stride). Bin indices
 # stay far below this, so the extra draw does not collide with another bin.
@@ -529,8 +531,9 @@ class VoxelBackend(LaserDecalMixin):
         for bin_key in sorted(groups):
             chunk_keys = sorted(groups[bin_key])
             partial = mesh_dirty_chunks(grid, set(chunk_keys))
-            parts = [partial[key] for key in chunk_keys if partial.get(key)]
-            coalesced = coalesce_indexed_meshes(parts)
+            coalesced = coalesce_indexed_meshes(
+                itertools.chain.from_iterable(partial[key] for key in chunk_keys if key in partial)
+            )
             if not coalesced:
                 out[bin_key] = None
                 continue

@@ -557,8 +557,11 @@ def mesh_voxel_chunk_arrays(
     origin: tuple[float, float, float],
     voxel: float,
     color: tuple[float, float, float, float],
-) -> tuple[array.array, array.array, list] | None:
-    """Greedy-mesh one chunk. ``occ`` None means the chunk is fully solid."""
+) -> list[tuple[array.array, array.array, list]]:
+    """Greedy-mesh one chunk. ``occ`` None means the chunk is fully solid.
+
+    Returns one mesh per GLES draw (usually one); empty when there is nothing to draw.
+    """
     impl = _require_impl()
     face_objs = []
     for mode, face in zip(face_modes, faces):
@@ -581,12 +584,4 @@ def mesh_voxel_chunk_arrays(
         float(color[2]),
         float(color[3]),
     )
-    packed = _packed_from_parts(parts)
-    if not packed:
-        return None
-    if len(packed) == 1:
-        return packed[0]
-    from carveracontroller.addons.stock.simulator.carvers.array_mesh import coalesce_indexed_meshes
-
-    merged = coalesce_indexed_meshes(packed)
-    return merged[0] if merged else None
+    return _packed_from_parts(parts)
