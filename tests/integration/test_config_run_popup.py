@@ -40,6 +40,7 @@ def test_config_run_widgets_and_layout(kivy_app):
             "autoblow_switch_play",
             "autobedclean_switch_play",
             "ionizer_switch_play",
+            "timelapse_switch_play",
         ):
             assert switch_id in popup.ids
 
@@ -107,12 +108,14 @@ def test_config_run_widgets_and_layout(kivy_app):
         assert popup.ids.ionizer_switch_play.parent.height > 0
         assert popup.ids.autoblow_switch_play.parent.height > 0
         assert popup.ids.autobedclean_switch_play.parent.height > 0
+        assert popup.ids.timelapse_switch_play.parent.height > 0
 
         kivy_app.model = "C1"
         pump_frames(1)
         assert popup.ids.feature_switches_card.height > 0
         assert popup.ids.vacuum_switch_play.parent.height > 0
         assert popup.ids.ionizer_switch_play.parent.height == 0
+        assert popup.ids.timelapse_switch_play.parent.height == 0
         assert popup.ids.extout_switch_play.parent.height == 0
 
         kivy_app.model = "CA1"
@@ -156,6 +159,8 @@ def test_config_run_widgets_and_layout(kivy_app):
         assert popup.ids.vacuum_switch_row.opacity == 0
         assert popup.ids.ionizer_switch_row.height == 0
         assert popup.ids.ionizer_switch_row.opacity == 0
+        assert popup.ids.timelapse_switch_row.height == 0
+        assert popup.ids.timelapse_switch_row.opacity == 0
 
         popup.set_compact_from_window(width=1920)
         assert popup.compact is False

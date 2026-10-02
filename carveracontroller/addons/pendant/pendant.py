@@ -245,7 +245,7 @@ if WHB04_SUPPORTED:
             # closely as possible. We choose some reasonably high speed here,
             # the machine will limit itself to the maximum speed it can handle.
             if self._controller.jog_mode == self._controller.JOG_MODE_CONTINUOUS:
-                if not self._controller.continuous_jog_active:
+                if self._is_jogging_enabled() and not self._controller.continuousJogBusy():
                     if feed > 0 and self._controller.jog_speed < 10000:
                         if axis == "Z":
                             feed = min(800 * daemon.step_size_value, feed)
@@ -511,7 +511,7 @@ class GamepadPendant(Pendant):
         ):
             self._controller.stopContinuousJog()
 
-        if self._controller.continuous_jog_active:
+        if self._controller.continuousJogBusy():
             return
 
         feed = self._continuous_feed_for_axis(axis)

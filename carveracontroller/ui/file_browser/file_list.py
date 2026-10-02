@@ -242,6 +242,16 @@ class FileBrowserRow(RecycleDataViewBehavior, BoxLayout):
         rv = self.parent.recycleview
         modifiers = _touch_modifiers(touch)
 
+        # Shift selects a range, including when multi-select is still off.
+        # Check it before double-tap so a shift-click does not open the file.
+        if "shift" in modifiers:
+            modifier = "ctrl-shift" if {"ctrl", "control", "meta"} & modifiers else "shift"
+            rv.dispatch("on_modifier_select", self.path, self.index, modifier)
+            return True
+        if {"ctrl", "control", "meta"} & modifiers:
+            rv.dispatch("on_modifier_select", self.path, self.index, "ctrl")
+            return True
+
         if touch.is_double_tap and not self.show_checkbox:
             if self.kind == KIND_FOLDER:
                 rv.dispatch("on_open_folder", self.path)
@@ -249,13 +259,6 @@ class FileBrowserRow(RecycleDataViewBehavior, BoxLayout):
             if self.kind == KIND_FILE:
                 rv.dispatch("on_activate_file", self.path, int(self.intsize))
                 return True
-
-        if {"ctrl", "control", "meta"} & modifiers:
-            rv.dispatch("on_modifier_select", self.path, self.index, "ctrl")
-            return True
-        if "shift" in modifiers:
-            rv.dispatch("on_modifier_select", self.path, self.index, "shift")
-            return True
 
         if self.show_checkbox:
             rv.dispatch("on_toggle_checked", self.path)

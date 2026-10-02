@@ -156,6 +156,7 @@ class CoordPopup(ModalView):
     autoblowmode = ObjectProperty()
     autobedcleanmode = ObjectProperty()
     ionizermode = ObjectProperty()
+    timelapsemode = ObjectProperty()
     origin_popup = ObjectProperty()
     zprobe_popup = ObjectProperty()
     auto_level_popup = ObjectProperty()
@@ -271,6 +272,7 @@ class CoordPopup(ModalView):
         _set_feature_row(self.ids.autoblow_switch_row, z1)
         _set_feature_row(self.ids.autobedclean_switch_row, z1)
         _set_feature_row(self.ids.ionizer_switch_row, z1)
+        _set_feature_row(self.ids.timelapse_switch_row, z1)
 
     def on_dismiss(self):
         Window.unbind(size=self._on_window_size)
@@ -414,6 +416,11 @@ class CoordPopup(ModalView):
             self.ionizermode = True
         else:
             self.ionizermode = False
+
+        if CNC.vars["tl_requested"] == 1:
+            self.timelapsemode = True
+        else:
+            self.timelapsemode = False
 
         # Apply leveling before Z probe so turning both off does not warn.
         self.cbx_margin.active = self.config["margin"]["active"]

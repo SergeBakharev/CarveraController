@@ -16,6 +16,7 @@
 #:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
 #:import SimStatsHud carveracontroller.ui.SimStatsHud.SimStatsHud
 #:import CameraView carveracontroller.addons.camera.CameraView.CameraView
+#:import CameraReconnectSpinner carveracontroller.addons.camera.CameraView.CameraReconnectSpinner
 #:import LASER_TOOL_NUMBER carveracontroller.CNC.LASER_TOOL_NUMBER
 #:import ZPROBE_TOOL_NUMBER carveracontroller.CNC.ZPROBE_TOOL_NUMBER
 #:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
@@ -132,6 +133,11 @@
                 source: root.icon
                 pos: self.center_x - dp(root.icon_size / 2), self.center_y - dp(root.icon_size / 2)
                 size: dp(root.icon_size) if root.icon else 0, dp(root.icon_size) if root.icon else 0
+            Color:
+                rgba: (0.86, 0.12, 0.12, 1) if root.recording else (0, 0, 0, 0)
+            Ellipse:
+                pos: self.x + self.width / 2 + dp(root.icon_size / 2) - dp(7), self.y + self.height / 2 - dp(root.icon_size / 2)
+                size: dp(7) if root.recording else 0, dp(7) if root.recording else 0
 
 <TransparentGrayButton>:
     height: '32dp'
@@ -1724,6 +1730,43 @@
             Label:
 
 
+<BatchProgressPopup>:
+    size_hint: 0.55, 0.55
+    pos_hint: {"right": 0.78, "top": 0.75}
+    auto_dismiss: False
+    BoxLayout:
+        padding: '15dp'
+        orientation: 'vertical'
+        spacing: '6dp'
+        Label:
+            text: root.file_text
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
+        ProgressBar:
+            max: 100
+            value: root.file_value
+        Label:
+            text: root.batch_text
+            size_hint_y: 0.6
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
+        ProgressBar:
+            max: 100
+            value: root.batch_value
+        BoxLayout:
+            size_hint_y: 0.5
+            Label:
+            Button:
+                id: btn_batch_cancel
+                text: tr._('Cancel')
+                on_release:
+                    root.cancel()
+                    self.disabled = True
+            Label:
+
+
 <OriginPopup>:
     size_hint: 0.5, 0.4
     pos_hint: {"right": 0.75, "top": 0.7}
@@ -3295,6 +3338,10 @@
                                             brightness: app.camera_brightness
                                             contrast: app.camera_contrast
                                             gamma: app.camera_gamma
+                                        CameraReconnectSpinner:
+                                            active: app.camera_reconnecting
+                                            pos: self.parent.pos
+                                            size: self.parent.size
                                         CameraControls:
                                             id: camera_controls
                                             pos_hint: {'x': 0, 'top': 1}
@@ -3427,6 +3474,7 @@
                                 icon: 'data/camera.png'
                                 icon_size: 17
                                 active: app.camera_streaming
+                                recording: app.timelapse_recording
                                 opacity: 1 if app.supports_camera else 0
                                 disabled: not app.supports_camera
                                 tooltip_txt: tr._('Hide camera') if app.camera_streaming else tr._('Show camera')

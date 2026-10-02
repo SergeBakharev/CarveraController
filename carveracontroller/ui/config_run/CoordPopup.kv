@@ -255,7 +255,7 @@
                             size_hint_y: None
                             padding: dp(12), dp(10)
                             spacing: 0
-                            height: feature_switch_card_height(self.padding, vacuum_switch_row.height, extout_switch_row.height, autoblow_switch_row.height, autobedclean_switch_row.height, ionizer_switch_row.height)
+                            height: feature_switch_card_height(self.padding, vacuum_switch_row.height, extout_switch_row.height, autoblow_switch_row.height, autobedclean_switch_row.height, ionizer_switch_row.height, timelapse_switch_row.height)
                             opacity: 1 if self.height > 0 else 0
                             disabled: self.height == 0
                             canvas.before:
@@ -377,6 +377,29 @@
                                     on_active:
                                         if self.set_flag: self.set_flag = False
                                         else: app.root.update_control('ionizer_mode', self.active)
+                            BoxLayout:
+                                id: timelapse_switch_row
+                                size_hint_y: None
+                                height: dp(36) if app.model == 'Z1' else 0
+                                opacity: 1 if app.model == 'Z1' else 0
+                                disabled: app.model != 'Z1'
+                                Label:
+                                    text: tr._("Auto Timelapse")
+                                    halign: 'left'
+                                    valign: 'middle'
+                                    font_size: dp(13)
+                                    color: 220/255, 220/255, 220/255, 1
+                                    text_size: self.size
+                                ToolTipSwitch:
+                                    id: timelapse_switch_play
+                                    size_hint_x: None
+                                    width: dp(80)
+                                    tooltip_txt: tr._("Record a timelapse to /sd/videos while a job is running.")
+                                    set_flag: False
+                                    active: True if root.timelapsemode == 1 else False
+                                    on_active:
+                                        if self.set_flag: self.set_flag = False
+                                        else: app.root.update_control('timelapse_record', self.active)
                     CoordSetupCard:
                         id: origin_card
                         title_text: tr._(" Work Origin")
