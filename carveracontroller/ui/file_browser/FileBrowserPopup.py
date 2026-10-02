@@ -217,6 +217,7 @@ class FileBrowserPopup(ModalView):
             self.location = LOCATION_MACHINE if app is not None and app.state != "N/A" else LOCATION_DEVICE
         self._restore_device_dir()
         self._restore_machine_dir()
+        self._prune_missing_selection()
         self.open()
         self._apply_location(refresh=True)
 
@@ -652,6 +653,7 @@ class FileBrowserPopup(ModalView):
             if reset_scroll:
                 rv.scroll_y = 1
             return
+        self._prune_missing_selection()
         selected_paths = self._selected_paths()
         entries = self._current_entries()
         self._fill_entry_thumbnails(entries)
@@ -690,6 +692,53 @@ class FileBrowserPopup(ModalView):
         self.selected_machine_paths = []
         self._last_range_index = -1
 
+    def forget_selected_paths(self, paths) -> None:
+        """Drop paths that were deleted before the directory listing catches up."""
+        gone = {os.path.normpath(path) for path in paths if path}
+        if not gone:
+            return
+        kept = [path for path in self._selected_paths() if path and os.path.normpath(path) not in gone]
+        if self._highlight_path and os.path.normpath(self._highlight_path) in gone:
+            self._highlight_path = ""
+        if kept and not self._highlight_path:
+            self._highlight_path = kept[-1]
+        self._apply_selected_paths(kept)
+        if not kept:
+            self.multi_select_mode = False
+            self._highlight_path = ""
+        self._rebuild_list()
+        self._sync_chrome()
+
+    def _prune_missing_selection(self) -> None:
+        """Drop a selection whose files are no longer in this directory.
+
+        Outside multi-select, only the highlighted file stays selected. A missing
+        highlight moves onto a file that is still listed, so an action cannot
+        target a row that is no longer shown.
+        """
+        present = {os.path.normpath(entry.get("path") or "") for entry in self._current_entries() if entry.get("path")}
+        paths = self._selected_paths()
+        kept = [path for path in paths if path and os.path.normpath(path) in present]
+        highlight = self._highlight_path or ""
+        if highlight and os.path.normpath(highlight) not in present:
+            highlight = ""
+        if not self.multi_select_mode and len(kept) > 1:
+            highlight_norm = os.path.normpath(highlight) if highlight else ""
+            match = [path for path in kept if os.path.normpath(path) == highlight_norm]
+            kept = [match[0] if match else kept[-1]]
+        kept_norms = {os.path.normpath(path) for path in kept}
+        if kept and (not highlight or os.path.normpath(highlight) not in kept_norms):
+            highlight = kept[-1]
+        if not kept:
+            highlight = ""
+        if kept == paths and highlight == (self._highlight_path or ""):
+            return
+        self._highlight_path = highlight
+        self._apply_selected_paths(kept)
+        if not kept:
+            self.multi_select_mode = False
+            self._highlight_path = ""
+
     def _on_open_folder(self, path: str):
         if self.location == LOCATION_DEVICE:
             self.list_device_dir(path)
@@ -702,6 +751,7 @@ class FileBrowserPopup(ModalView):
         if self.location == LOCATION_MACHINE:
             self.selected_machine_filesize = intsize
         self._rebuild_list()
+        self._last_range_index = self._index_for_path(path)
         self._sync_chrome()
 
     def _on_select_row(self, path: str, _kind: str, intsize: int):
@@ -747,31 +797,86 @@ class FileBrowserPopup(ModalView):
     def _on_modifier_select(self, path: str, index: int, modifier: str):
         if not self._multi_select_allowed():
             return
+        if modifier in ("shift", "ctrl-shift"):
+            self._shift_select(path, index, replace=modifier == "shift")
+            return
         if not self.multi_select_mode:
             self.multi_select_mode = True
             self._apply_selected_paths([])
-        if modifier == "shift" and self._last_range_index >= 0:
-            rv = self.ids.get("file_list")
-            if rv is None:
-                return
-            start = min(self._last_range_index, index)
-            end = max(self._last_range_index, index)
-            paths = self._selected_paths()
-            for i in range(start, end + 1):
-                if i < 0 or i >= len(rv.data):
-                    continue
-                row = rv.data[i]
-                if not row.get("selectable"):
-                    continue
-                p = row.get("path")
-                if p and p not in paths:
-                    paths.append(p)
-            self._apply_selected_paths(paths)
-            self._rebuild_list()
-            self._sync_chrome()
-            return
         self._last_range_index = index
         self._on_toggle_checked(path)
+
+    def _shift_select(self, path: str, index: int, *, replace: bool):
+        """Select from the anchor through this row, turning multi-select on if needed.
+
+        A plain shift-click replaces the selection with that range. Ctrl-shift
+        adds the range to files already checked.
+        """
+        anchor = self._shift_anchor_index()
+        if not self.multi_select_mode:
+            self.multi_select_mode = True
+        if anchor < 0:
+            self._last_range_index = index
+            if path not in self._selected_paths():
+                self._on_toggle_checked(path)
+            else:
+                self._rebuild_list()
+                self._sync_chrome()
+            return
+        # Keep the anchor fixed so another shift-click adjusts the same range.
+        self._last_range_index = anchor
+        self._add_index_range(anchor, index, replace=replace, primary=path)
+
+    def _shift_anchor_index(self) -> int:
+        """Row the range starts from. Outside multi-select that is the highlighted file."""
+        if self.multi_select_mode and self._last_range_index >= 0:
+            return self._last_range_index
+        highlight = self._highlight_path
+        if not highlight:
+            highlight = self.selected_device_file if self.location == LOCATION_DEVICE else self.selected_machine_file
+        return self._index_for_path(highlight)
+
+    def _index_for_path(self, path: str) -> int:
+        if not path:
+            return -1
+        rv = self.ids.get("file_list")
+        if rv is None:
+            return -1
+        norm = os.path.normpath(path)
+        for i, row in enumerate(rv.data or []):
+            row_path = row.get("path") or ""
+            if row_path and os.path.normpath(row_path) == norm:
+                return i
+        return -1
+
+    def _add_index_range(self, start_index: int, end_index: int, *, replace: bool, primary: str = ""):
+        rv = self.ids.get("file_list")
+        if rv is None:
+            return
+        start = min(start_index, end_index)
+        end = max(start_index, end_index)
+        ranged: list[str] = []
+        for i in range(start, end + 1):
+            if i < 0 or i >= len(rv.data):
+                continue
+            row = rv.data[i]
+            if not row.get("selectable"):
+                continue
+            row_path = row.get("path")
+            if row_path and row_path not in ranged:
+                ranged.append(row_path)
+        if primary and primary in ranged:
+            ranged = [row_path for row_path in ranged if row_path != primary] + [primary]
+        if replace:
+            paths = ranged
+        else:
+            paths = self._selected_paths()
+            for row_path in ranged:
+                if row_path not in paths:
+                    paths.append(row_path)
+        self._apply_selected_paths(paths)
+        self._rebuild_list()
+        self._sync_chrome()
 
     def _multi_select_allowed(self) -> bool:
         if self.firmware_mode:
@@ -786,6 +891,21 @@ class FileBrowserPopup(ModalView):
         if self.location == LOCATION_DEVICE:
             return list(self.selected_device_paths)
         return list(self.selected_machine_paths)
+
+    def selected_files(self) -> list[str]:
+        """Checked files, or the single highlighted file. Folders are left out."""
+        if self.multi_select_mode:
+            paths = self._selected_paths()
+        else:
+            highlight = self.selected_device_file if self.location == LOCATION_DEVICE else self.selected_machine_file
+            paths = self._selected_paths() or ([highlight] if highlight else [])
+        return [path for path in paths if path and not self._path_is_dir(path)]
+
+    def selected_folders(self) -> list[str]:
+        """Checked folders. A single highlight never mixes folders into a transfer."""
+        if not self.multi_select_mode:
+            return []
+        return [path for path in self._selected_paths() if path and self._path_is_dir(path)]
 
     def _apply_selected_paths(self, paths: list) -> None:
         paths = list(paths)
@@ -834,12 +954,15 @@ class FileBrowserPopup(ModalView):
         idle = app is not None and app.state == "Idle"
         paths = self._selected_paths()
         highlight = self.selected_device_file if self.location == LOCATION_DEVICE else self.selected_machine_file
+        file_count = sum(1 for path in paths if path and not self._path_is_dir(path))
         if self.multi_select_mode:
             selected_is_file = False
             selected_count = len(paths)
         else:
             selected_is_file = bool(highlight) and not self._path_is_dir(highlight)
             selected_count = len(paths) or (1 if highlight else 0)
+            if selected_is_file and file_count == 0:
+                file_count = 1
         return compute_action_state(
             location=self.location,
             firmware_mode=self.firmware_mode,
@@ -849,6 +972,7 @@ class FileBrowserPopup(ModalView):
             selected_is_file=selected_is_file,
             selected_count=selected_count,
             multi_select_mode=self.multi_select_mode,
+            selected_file_count=file_count,
             selected_name=os.path.basename(highlight or ""),
         )
 

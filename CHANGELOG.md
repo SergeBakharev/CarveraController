@@ -1,4 +1,6 @@
 [unreleased]
+- Enhancement: Upload and download multiple selected files from the file browser, with one progress popup for the batch
+- Enhancement: Shift-click selects a range of files in the file browser and turns multi-select on if it was off
 - Enhancement: Add a Z1 Record Timelapse toggle on the Config and Run screen, a recording mark on the camera button, and ability to open /sd/videos in the file browser when that folder exists
 - Enhancement: Add a Ghost display option that draws older toolpath faint and recent moves more solid
 - Enhancement: Firmware updater now support Makera Z1. Detects if fw is bundled LPC+ESP, LPC-only, or ESP-only and updates using the correct method
@@ -34,6 +36,7 @@
 - Change: Missed heartbeats with the machine are treated as comms backpressure, and the machine state is changed to "Waiting on comms". Only if link connection is lost will it be treated as a disconnect
 - Changed: Machine config backup completes when a file's MD5 checksum does not match, and warns that some machines ship with factory MD5 mismatches
 - Changed: Keep the Z1 camera panel open if the stream drops, and reconnect while a spinner is shown in the camera view
+- Fixed: Deleting a multi-selection no longer leaves those files selected after they are gone
 - Fixed: Video downloads from /sd/video and /sd/videos no longer show an MD5 mismatch error. The Makera ESP32 advertises a bad checksum for those files; the download is kept and a warning is logged
 - Fixed: Harden the gcode parser against "zero length" movement, and prevent division by zero in play slider
 - Fixed: Time estimates ignoring speed for some 4th-axis moves

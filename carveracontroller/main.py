@@ -836,6 +836,100 @@ class ProgressPopup(ModalView):
         super().__init__(**kwargs)
 
 
+class BatchProgressPopup(ModalView):
+    """Two-bar progress for a multi-file upload or download."""
+
+    file_text = StringProperty("")
+    file_value = NumericProperty(0)
+    batch_text = StringProperty("")
+    batch_value = NumericProperty(0)
+
+    def __init__(self, **kwargs):
+        self.cancel = lambda *_args: None
+        super().__init__(**kwargs)
+
+
+def batch_percents(completed_bytes, file_size, file_percent, total_bytes):
+    """Return (current file percent, batch percent) using byte sizes."""
+    file_percent = min(100.0, max(0.0, float(file_percent)))
+    done = completed_bytes + max(0, file_size) * file_percent / 100.0
+    if total_bytes <= 0:
+        return file_percent, 0.0
+    batch = min(100.0, max(0.0, 100.0 * done / total_bytes))
+    return file_percent, batch
+
+
+def format_byte_count(num_bytes):
+    n = max(0, int(num_bytes))
+    if n >= 1024 * 1024:
+        return f"{n / (1024 * 1024):.1f} MB"
+    if n >= 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n} B"
+
+
+def transfer_confirm_message(paths, existing, folders, kind):
+    """Return (title, body) when a multi-file transfer needs confirmation.
+
+    ``paths`` are the files that will transfer. ``existing`` and ``folders``
+    are display names. ``kind`` is ``"upload"`` or ``"download"``. Returns
+    None when the transfer can start immediately.
+    """
+    if not existing and not folders:
+        return None
+    paragraphs = []
+    if existing:
+        if len(paths) == 1:
+            paragraphs.append(tr._("Confirm to overwrite file:") + " \n '%s'?" % existing[0])
+        else:
+            preview = "\n".join(existing[:5])
+            if len(existing) > 5:
+                preview += "\n..."
+            if kind == "upload":
+                header = tr._("Confirm to overwrite %d files that already exist on the machine?") % len(existing)
+                others_text = tr._("%d other selected files will also be uploaded.")
+            else:
+                header = tr._("Confirm to overwrite %d files that already exist on this device?") % len(existing)
+                others_text = tr._("%d other selected files will also be downloaded.")
+            block = header + "\n\n" + preview
+            others = len(paths) - len(existing)
+            if others:
+                block += "\n\n" + others_text % others
+            paragraphs.append(block)
+    if folders:
+        preview = "\n".join(folders[:5])
+        if len(folders) > 5:
+            preview += "\n..."
+        if kind == "upload":
+            header = (
+                tr._("1 selected folder will not be uploaded.")
+                if len(folders) == 1
+                else tr._("%d selected folders will not be uploaded.") % len(folders)
+            )
+            continue_text = (
+                tr._("Continue uploading 1 file?")
+                if len(paths) == 1
+                else tr._("Continue uploading %d files?") % len(paths)
+            )
+        else:
+            header = (
+                tr._("1 selected folder will not be downloaded.")
+                if len(folders) == 1
+                else tr._("%d selected folders will not be downloaded.") % len(folders)
+            )
+            continue_text = (
+                tr._("Continue downloading 1 file?")
+                if len(paths) == 1
+                else tr._("Continue downloading %d files?") % len(paths)
+            )
+        block = header + "\n\n" + preview
+        if not existing:
+            block += "\n\n" + continue_text
+        paragraphs.append(block)
+    title = tr._("File Already Exists") if existing else tr._("Folders are not transferred")
+    return title, "\n\n".join(paragraphs)
+
+
 class GCodeLineContextMenu(FloatLayout):
     """Context menu for GCode file viewer lines"""
 
@@ -2715,6 +2809,19 @@ class Makera(RelativeLayout):
         self.select_probe_popup = SelectAndCalibrateProbePopup()
         self.reconnection_popup = ReconnectionPopup()
         self.progress_popup = ProgressPopup()
+        self.batch_progress_popup = BatchProgressPopup()
+        self._batch_kind = None
+        self._batch_upload = False
+        self._batch_files = []
+        self._batch_index = 0
+        self._batch_completed_bytes = 0
+        self._batch_total_bytes = 0
+        self._batch_stop = False
+        self._batch_file_active = False
+        self._batch_upload_settled = False
+        self._batch_settled_index = None
+        self._pending_uploads = []
+        self._remote_deleted_paths = []
         self.input_popup = InputPopup()
         self.manual_wifi_popup = ManualWifiPopup()
 
@@ -4209,12 +4316,16 @@ class Makera(RelativeLayout):
                     self.controller.loadNUM = 0
                     self.controller.loadEOF = False
                     self.controller.loadERR = False
+                    if not delete_failed:
+                        self._remote_deleted_paths.append(deleting_file)
                     if not delete_failed and getattr(self, "pending_remote_delete_files", []):
                         Clock.schedule_once(self.removeNextRemoteFile, 0)
                     else:
+                        removed = list(getattr(self, "_remote_deleted_paths", []))
+                        self._remote_deleted_paths = []
                         self.pending_remote_delete_files = []
                         self.deleting_remote_file = ""
-                        Clock.schedule_once(self.file_popup.refresh_machine, 0)
+                        Clock.schedule_once(lambda _dt, paths=removed: self._after_remote_delete(paths), 0)
             if self.controller.loadNUM == LOAD_MV:
                 if self.controller.loadEOF or self.controller.loadERR or t - self.short_load_time > SHORT_LOAD_TIMEOUT:
                     if self.controller.loadERR:
@@ -4569,12 +4680,12 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def check_and_upload(self):
-        filepath = self.file_popup.selected_device_file
-        if not filepath or os.path.isdir(filepath):
+        paths = self.file_popup.selected_files()
+        if not paths:
             return
-        filename = os.path.basename(os.path.normpath(filepath))
         firmware = bool(self.file_popup.firmware_mode)
         if firmware:
+            filepath = paths[0]
             plan = self._firmware_plan(filepath)
             self.confirm_popup.lb_title.text = tr._("Install firmware")
             if plan.use_ota:
@@ -4595,15 +4706,51 @@ class Makera(RelativeLayout):
             self.confirm_popup.confirm = partial(self._confirmed_firmware_upload, filepath)
             self.confirm_popup.open(self)
             return
-        if self.file_popup.machine_listing_has(filename):
-            # show message popup
-            self.confirm_popup.lb_title.text = tr._("File Already Exists")
-            self.confirm_popup.lb_content.text = tr._("Confirm to overwrite file:") + " \n '%s'?" % (filename)
-            self.confirm_popup.cancel = None
-            self.confirm_popup.confirm = partial(self.uploadLocalFile, filepath)
-            self.confirm_popup.open(self)
-        else:
-            self.uploadLocalFile(filepath)
+        existing = [
+            os.path.basename(path) for path in paths if self.file_popup.machine_listing_has(os.path.basename(path))
+        ]
+        folders = self._selected_folder_names()
+        if self._open_transfer_confirm(paths, existing, folders, "upload", partial(self._start_uploads, paths)):
+            return
+        self._start_uploads(paths)
+
+    def _start_uploads(self, paths):
+        paths = [path for path in paths if path]
+        if not paths:
+            return
+        if len(paths) == 1:
+            self._batch_kind = None
+            self._batch_upload = False
+            self._pending_uploads = []
+            self.uploadLocalFile(paths[0])
+            return
+        files = []
+        for path in paths:
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                size = 0
+            files.append((path, size))
+        self._batch_upload = True
+        self._pending_uploads = list(paths)
+        self._begin_batch_progress("upload", files)
+        self._upload_next()
+
+    def _upload_next(self, *_args):
+        if getattr(self, "_batch_file_active", False):
+            self._complete_current_batch_file()
+            self._batch_file_active = False
+        pending = getattr(self, "_pending_uploads", None)
+        if not pending or getattr(self, "_batch_stop", False):
+            self._batch_upload = False
+            self._pending_uploads = []
+            self._end_batch_progress()
+            Clock.schedule_once(self.file_popup.refresh_machine, 0)
+            return
+        path = self._pending_uploads.pop(0)
+        self._show_batch_file(self._batch_index)
+        self._batch_file_active = True
+        self.uploadLocalFile(path, callback=self._upload_next)
 
     def _confirmed_firmware_upload(self, filepath):
         self.file_popup.dismiss()
@@ -4695,22 +4842,86 @@ class Makera(RelativeLayout):
 
     # -----------------------------------------------------------------------
     def check_and_save_to_device(self):
-        remote_path = self.file_popup.selected_machine_file
-        if not remote_path:
+        paths = self.file_popup.selected_files()
+        if not paths:
             return
-        filename = os.path.basename(os.path.normpath(remote_path))
         dest_dir = self.file_popup.device_dir
         if not dest_dir:
             return
-        dest = os.path.join(dest_dir, filename)
-        if self.file_popup.device_has_file(filename):
-            self.confirm_popup.lb_title.text = tr._("File Already Exists")
-            self.confirm_popup.lb_content.text = tr._("Confirm to overwrite file:") + " \n '%s'?" % (filename)
-            self.confirm_popup.cancel = None
-            self.confirm_popup.confirm = partial(self.save_machine_file_to_device, remote_path, dest)
-            self.confirm_popup.open(self)
-        else:
+        jobs = []
+        existing = []
+        for remote_path in paths:
+            filename = os.path.basename(os.path.normpath(remote_path))
+            dest = os.path.join(dest_dir, filename)
+            jobs.append((remote_path, dest))
+            if self.file_popup.device_has_file(filename):
+                existing.append(filename)
+        folders = self._selected_folder_names()
+        if self._open_transfer_confirm(paths, existing, folders, "download", partial(self._start_downloads, jobs)):
+            return
+        self._start_downloads(jobs)
+
+    def _selected_folder_names(self):
+        popup = self.file_popup
+        names = []
+        for path in popup.selected_folders():
+            names.append(os.path.basename(os.path.normpath(path)))
+        return names
+
+    def _open_transfer_confirm(self, paths, existing, folders, kind, on_confirm):
+        message = transfer_confirm_message(paths, existing, folders, kind)
+        if message is None:
+            return False
+        title, body = message
+        self.confirm_popup.lb_title.text = title
+        self.confirm_popup.lb_content.text = body
+        self.confirm_popup.cancel = None
+        self.confirm_popup.confirm = on_confirm
+        self.confirm_popup.open(self)
+        return True
+
+    def _start_downloads(self, jobs):
+        jobs = [(remote, dest) for remote, dest in jobs if remote and dest]
+        if not jobs:
+            return
+        if len(jobs) == 1:
+            remote_path, dest = jobs[0]
             self.save_machine_file_to_device(remote_path, dest)
+            return
+        files = [(remote, self.file_popup._size_for_path(remote)) for remote, _dest in jobs]
+        self._batch_download_jobs = list(jobs)
+        self._begin_batch_progress("download", files)
+        threading.Thread(target=self._download_files_worker, args=(jobs,), daemon=True).start()
+
+    def _download_files_worker(self, jobs):
+        for remote_path, dest in jobs:
+            if getattr(self, "_batch_stop", False):
+                break
+            self.downloading_file = remote_path
+            self.downloading_size = self.file_popup._size_for_path(remote_path)
+            self.downloading_config = False
+            result = self.doDownload(remote_path, dest, show_progress=True, open_after=False)
+            if result is None or result < 0 or getattr(self, "_batch_stop", False):
+                break
+            # Progress events are already queued. Count the file on the UI thread
+            # before the next download posts progress, or the finished file's final
+            # percent is painted onto the next file.
+            self._finish_batch_file_on_ui()
+        Clock.schedule_once(self._end_batch_progress, 0)
+
+    def _finish_batch_file_on_ui(self):
+        done = threading.Event()
+
+        def _finish(_dt):
+            try:
+                self._complete_current_batch_file()
+            except Exception:
+                logger.exception("Could not update batch download progress")
+            finally:
+                done.set()
+
+        Clock.schedule_once(_finish, 0)
+        done.wait()
 
     def save_machine_file_to_device(self, remote_path, dest):
         if not remote_path or not dest:
@@ -5088,7 +5299,7 @@ class Makera(RelativeLayout):
             except OSError:
                 pass
 
-        if show_progress:
+        if show_progress and getattr(self, "_batch_kind", None) != "download":
             Clock.schedule_once(
                 partial(
                     self.progressStart,
@@ -5178,6 +5389,7 @@ class Makera(RelativeLayout):
                     if md5_failed
                     else tr._("Download file error!")
                 )
+                error_msg += self._batch_unstarted_note()
                 Clock.schedule_once(partial(self.show_message_popup, error_msg, False), 0)
         elif download_result >= 0:
             if download_result > 0:
@@ -5243,8 +5455,8 @@ class Makera(RelativeLayout):
             if apply_config:
                 Clock.schedule_once(partial(self.finishLoadConfig, False), 0)
 
-        if show_progress:
-            Clock.schedule_once(self.progressFinish, 0.1)
+        if show_progress and getattr(self, "_batch_kind", None) != "download":
+            self._schedule_progress_finish(0.1)
         return download_result
 
     def onFirmwareDetected(self, version, *args):
@@ -5410,27 +5622,36 @@ class Makera(RelativeLayout):
     def downloadCallback(self, remote_path, packet_size, success_count, error_count):
         """Progress callback for legacy XMODEM downloads."""
         packets = self.downloading_size / packet_size + (1 if self.downloading_size % packet_size > 0 else 0)
-        Clock.schedule_once(
-            partial(
-                self.progressUpdate, success_count * 100.0 / packets, tr._("Downloading") + " \n%s" % remote_path, False
-            ),
-            0,
-        )
+        self._post_download_progress(success_count * 100.0 / packets, remote_path)
 
     def downloadCallback_framed(self, seq_rev, totalpackets):
         """Progress callback for Makera framed downloads (seq, total)."""
         if not totalpackets:
             return
         remote_path = getattr(self, "downloading_file", "") or ""
+        self._post_download_progress(seq_rev * 100.0 / totalpackets, remote_path)
+
+    def _post_download_progress(self, percent, remote_path):
+        if getattr(self, "_batch_kind", None) == "download":
+            # Bind the file this packet belongs to. The clock can run the update
+            # after that file has been completed and the next one has started.
+            index = getattr(self, "_batch_index", 0)
+            Clock.schedule_once(
+                lambda _dt, i=index, p=percent: self._apply_download_batch_progress(i, p),
+                0,
+            )
+            return
         Clock.schedule_once(
-            partial(
-                self.progressUpdate,
-                seq_rev * 100.0 / totalpackets,
-                tr._("Downloading") + " \n%s" % remote_path,
-                False,
-            ),
+            partial(self.progressUpdate, percent, tr._("Downloading") + " \n%s" % remote_path, False),
             0,
         )
+
+    def _apply_download_batch_progress(self, index, percent):
+        if getattr(self, "_batch_kind", None) != "download":
+            return
+        if index != getattr(self, "_batch_index", None):
+            return
+        self._apply_batch_file_percent(percent)
 
     # -----------------------------------------------------------------------
     def cancelSelectFile(self):
@@ -5641,12 +5862,19 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def removeRemoteFile(self, filename):
         self.pending_remote_delete_files = []
+        self._remote_deleted_paths = []
         self.startRemoteDelete(filename)
 
     # -----------------------------------------------------------------------
     def removeRemoteFiles(self, filenames):
         self.pending_remote_delete_files = list(filenames)
+        self._remote_deleted_paths = []
         self.removeNextRemoteFile()
+
+    def _after_remote_delete(self, paths, *_args):
+        if paths:
+            self.file_popup.forget_selected_paths(paths)
+        self.file_popup.refresh_machine()
 
     # -----------------------------------------------------------------------
     def removeNextRemoteFile(self, *args):
@@ -6281,11 +6509,15 @@ class Makera(RelativeLayout):
         except OSError as exc:
             logger.exception("Upload failed")
             self.controller.log.put((Controller.MSG_ERROR, str(exc)))
-            Clock.schedule_once(partial(self.show_message_popup, tr._("Upload file error!"), False), 0)
+            Clock.schedule_once(
+                partial(self.show_message_popup, tr._("Upload file error!") + self._batch_unstarted_note(), False),
+                0,
+            )
             if firmware:
                 self._log_firmware("SD transfer failed: %s" % exc, error=True)
             self._cleanup_firmware_temp(success=False)
             self._uploading_firmware = False
+            self._fail_batch_transfer()
             return
         remotename = os.path.join(self.file_popup.machine_dir, os.path.basename(os.path.normpath(self.uploading_file)))
         if firmware:
@@ -6294,9 +6526,10 @@ class Makera(RelativeLayout):
         if displayname.endswith(".lz"):
             # 删除 ".lz" 后缀
             displayname = displayname[:-3]
-        Clock.schedule_once(
-            partial(self.progressStart, tr._("Uploading") + "\n%s" % displayname, self.cancelProcessingFile), 0
-        )
+        if getattr(self, "_batch_kind", None) != "upload":
+            Clock.schedule_once(
+                partial(self.progressStart, tr._("Uploading") + "\n%s" % displayname, self.cancelProcessingFile), 0
+            )
         self.uploading = True
         self.controller.pauseStream(1)
         upload_result = None
@@ -6318,7 +6551,8 @@ class Makera(RelativeLayout):
         self.controller.resumeStream()
         self.uploading = False
 
-        Clock.schedule_once(self.progressFinish, 0)
+        if getattr(self, "_batch_kind", None) != "upload":
+            self._schedule_progress_finish()
 
         self.heartbeat_time = time.time()
 
@@ -6341,7 +6575,10 @@ class Makera(RelativeLayout):
                 os.remove(self.uploading_file)
             if last_file_error:
                 self.controller.log.put((Controller.MSG_ERROR, last_file_error))
-            Clock.schedule_once(partial(self.show_message_popup, tr._("Upload file error!"), False), 0)
+            Clock.schedule_once(
+                partial(self.show_message_popup, tr._("Upload file error!") + self._batch_unstarted_note(), False),
+                0,
+            )
         else:
             # copy file to application directory if needed
             remote_path = os.path.join(
@@ -6382,7 +6619,7 @@ class Makera(RelativeLayout):
                 self.queue_machine_thumbnail(remote_thumb, self.original_upload_filepath)
 
             # If it is a compressed ''.lz' file, wait for the decompression to complete.
-            if self.uploading_file.endswith(".lz"):
+            if self.uploading_file.endswith(".lz") and getattr(self, "_batch_kind", None) != "upload":
                 self.log = logging.getLogger("File.Decompress")
                 self.decompstatus = True
                 os.remove(self.uploading_file)
@@ -6390,6 +6627,11 @@ class Makera(RelativeLayout):
                 Clock.schedule_once(
                     partial(self.progressStart, tr._("Decompressing") + "\n%s" % displayname, False), 0.2
                 )
+            elif self.uploading_file.endswith(".lz"):
+                self.log = logging.getLogger("File.Decompress")
+                self.decompstatus = True
+                os.remove(self.uploading_file)
+                self.decomptime = time.time()
 
         self.controller.sendNUM = 0
         if upload_result and callback:  # Only run callback if upload succeeded
@@ -6400,10 +6642,18 @@ class Makera(RelativeLayout):
             else:
                 Clock.schedule_once(lambda dt: callback(remotename, local_path), 0)
         # For iOS we display the file list remotely only so we need to refresh it but on main thread
-        if upload_result and not firmware and not self.uploading_file.endswith(".lz"):
+        if (
+            upload_result
+            and not firmware
+            and not self.uploading_file.endswith(".lz")
+            and not getattr(self, "_batch_upload", False)
+        ):
             Clock.schedule_once(self.file_popup.refresh_machine, 0)
         self._cleanup_firmware_temp(success=bool(upload_result))
         self._uploading_firmware = False
+        if getattr(self, "_batch_kind", None) == "upload" and not upload_result:
+            # A failure or cancel leaves the operator to notice it, so do not start the rest.
+            self._fail_batch_transfer()
 
     # -----------------------------------------------------------------------
     def confirm_reset(self, *args):
@@ -6487,6 +6737,7 @@ class Makera(RelativeLayout):
 
     # --------------------------------------------------------------`---------
     def progressStart(self, text, cancel_func, *args):
+        self._progress_epoch = getattr(self, "_progress_epoch", 0) + 1
         self.progress_popup.progress_text = text
         self.progress_popup.progress_value = 0
         if cancel_func:
@@ -6496,12 +6747,183 @@ class Makera(RelativeLayout):
             self.progress_popup.btn_cancel.disabled = True
         self.progress_popup.open()
 
+    def _schedule_progress_finish(self, delay=0):
+        """Close the progress popup later, unless a newer transfer has already taken it."""
+        epoch = getattr(self, "_progress_epoch", 0)
+        Clock.schedule_once(lambda _dt, epoch=epoch: self._finish_progress(epoch), delay)
+
+    def _finish_progress(self, epoch, *args):
+        if epoch != getattr(self, "_progress_epoch", None):
+            return
+        self.progress_popup.dismiss()
+
     # --------------------------------------------------------------`---------
     def progressUpdate(self, value, progress_text, button_disabled, *args):
+        if getattr(self, "_batch_kind", None):
+            # Decompression has already settled this file's transferred bytes.
+            # A late upload percent must not paint over that or rewind the batch bar.
+            if getattr(self, "_batch_upload_settled", False) and getattr(self, "_batch_index", None) == getattr(
+                self, "_batch_settled_index", None
+            ):
+                return
+            self._apply_batch_file_percent(value)
+            return
         if progress_text != "":
             self.progress_popup.progress_text = progress_text
         self.progress_popup.btn_cancel.disabled = button_disabled
         self.progress_popup.progress_value = value
+
+    def _begin_batch_progress(self, kind, files):
+        """Open the batch popup. files is (path, size_in_bytes)."""
+        self._batch_kind = kind
+        self._batch_files = [(path, max(0, int(size))) for path, size in files]
+        self._batch_index = 0
+        self._batch_completed_bytes = 0
+        self._batch_total_bytes = sum(size for _path, size in self._batch_files)
+        self._batch_stop = False
+        self._batch_file_active = False
+        self._batch_upload_settled = False
+        self._batch_settled_index = None
+        self.batch_progress_popup.cancel = self.cancel_batch_transfer
+        if "btn_batch_cancel" in self.batch_progress_popup.ids:
+            self.batch_progress_popup.ids.btn_batch_cancel.disabled = False
+        self._show_batch_file(0)
+
+    def _show_batch_file(self, index):
+        self._batch_index = index
+        self._batch_upload_settled = False
+        self._batch_settled_index = None
+        self._apply_batch_file_percent(0)
+        if not self.batch_progress_popup._is_open:
+            self.batch_progress_popup.open()
+
+    def _batch_bar_state(self, file_percent):
+        """Return display values for the current file, or None when the index is stale."""
+        files = getattr(self, "_batch_files", None) or []
+        index = getattr(self, "_batch_index", 0)
+        if not files or index < 0 or index >= len(files):
+            return None
+        path, size = files[index]
+        completed = getattr(self, "_batch_completed_bytes", 0)
+        total = getattr(self, "_batch_total_bytes", 0)
+        file_pct, batch_pct = batch_percents(completed, size, file_percent, total)
+        if total <= 0:
+            batch_pct = min(100.0, 100.0 * (index + file_pct / 100.0) / len(files))
+        done = completed + size * file_pct / 100.0
+        return path, file_pct, batch_pct, done, total, index, files
+
+    def _batch_bytes_caption(self, done, total):
+        if total <= 0:
+            return tr._("All files")
+        return tr._("All files") + f"  {format_byte_count(done)} / {format_byte_count(total)}"
+
+    def _apply_batch_file_percent(self, file_percent):
+        state = self._batch_bar_state(file_percent)
+        if state is None:
+            return
+        path, file_pct, batch_pct, done, total, index, files = state
+        kind = tr._("Uploading") if self._batch_kind == "upload" else tr._("Downloading")
+        popup = self.batch_progress_popup
+        popup.file_text = f"{kind}\n{os.path.basename(path)}\n" + tr._("File %d of %d") % (index + 1, len(files))
+        popup.file_value = file_pct
+        popup.batch_text = self._batch_bytes_caption(done, total)
+        popup.batch_value = batch_pct
+
+    def _apply_batch_decompress_percent(self, index, percent):
+        """Show machine decompression without treating it as untransferred bytes.
+
+        The file has already been uploaded. A decompress percent near 0 must not
+        pull the overall bar backward. ``index`` is the file the event belongs to.
+        """
+        if getattr(self, "_batch_kind", None) != "upload":
+            return
+        if index != getattr(self, "_batch_index", None):
+            return
+        state = self._batch_bar_state(100.0)
+        if state is None:
+            return
+        self._batch_upload_settled = True
+        self._batch_settled_index = index
+        path, _file_pct, batch_pct, done, total, index, files = state
+        percent = min(100.0, max(0.0, float(percent)))
+        popup = self.batch_progress_popup
+        popup.file_text = f"{tr._('Decompressing')}\n{os.path.basename(path)}\n" + tr._("File %d of %d") % (
+            index + 1,
+            len(files),
+        )
+        popup.file_value = percent
+        popup.batch_text = self._batch_bytes_caption(done, total)
+        popup.batch_value = batch_pct
+
+    def _complete_current_batch_file(self):
+        files = getattr(self, "_batch_files", None) or []
+        index = getattr(self, "_batch_index", 0)
+        if 0 <= index < len(files):
+            self._batch_completed_bytes += files[index][1]
+            self._batch_index = index + 1
+            self._batch_upload_settled = False
+            self._batch_settled_index = None
+            if self._batch_index < len(files):
+                self._apply_batch_file_percent(0)
+            else:
+                self.batch_progress_popup.file_value = 100
+                self.batch_progress_popup.batch_value = 100
+                total = getattr(self, "_batch_total_bytes", 0)
+                self.batch_progress_popup.batch_text = self._batch_bytes_caption(total, total)
+
+    def _end_batch_progress(self, *_args):
+        self._batch_kind = None
+        self._batch_file_active = False
+        self._batch_stop = False
+        self._batch_upload_settled = False
+        self._batch_settled_index = None
+        popup = getattr(self, "batch_progress_popup", None)
+        if popup is not None and popup._is_open:
+            popup.dismiss()
+
+    def _fail_batch_transfer(self):
+        """Stop a multi-file transfer and close its popup. A single file is unchanged."""
+        if getattr(self, "_batch_kind", None) not in ("upload", "download"):
+            return
+        refresh = self._batch_kind == "upload"
+        self._pending_uploads = []
+        self._batch_upload = False
+        self._batch_file_active = False
+        self._batch_stop = True
+        Clock.schedule_once(self._end_batch_progress, 0)
+        if refresh and getattr(self, "file_popup", None) is not None:
+            Clock.schedule_once(self.file_popup.refresh_machine, 0)
+
+    def _batch_unstarted_note(self):
+        """Tell the operator that files after the failed one were not started."""
+        kind = getattr(self, "_batch_kind", None)
+        if kind not in ("upload", "download"):
+            return ""
+        files = getattr(self, "_batch_files", None) or []
+        index = getattr(self, "_batch_index", 0)
+        remaining = max(0, len(files) - int(index) - 1)
+        if remaining <= 0:
+            return ""
+        if remaining == 1:
+            if kind == "upload":
+                return "\n\n" + tr._("The remaining file was not uploaded.")
+            return "\n\n" + tr._("The remaining file was not downloaded.")
+        if kind == "upload":
+            return "\n\n" + tr._("The remaining %d files were not uploaded.") % remaining
+        return "\n\n" + tr._("The remaining %d files were not downloaded.") % remaining
+
+    def cancel_batch_transfer(self):
+        self._batch_stop = True
+        self._pending_uploads = []
+        self.cancelProcessingFile()
+        # An upload that already returned has no thread left to close the popup.
+        # An in-flight download must keep _batch_stop set until its worker notices.
+        if (
+            getattr(self, "_batch_kind", None) == "upload"
+            and not getattr(self, "uploading", False)
+            and not getattr(self, "_batch_file_active", False)
+        ):
+            self._fail_batch_transfer()
 
     # --------------------------------------------------------------`---------
     def progressFinish(self, *args):
@@ -6514,6 +6936,11 @@ class Makera(RelativeLayout):
         'start'/'progress'/'done' drive the progress popup. 'updated' means a
         silent refresh applied new times (no popup).
         """
+        if getattr(self, "_batch_kind", None):
+            if state in ("updated", "done"):
+                self.refresh_gcode_color_legend()
+                self._refresh_idle_progress_info()
+            return
         if state == "start":
             self.progressStart(tr._("Calculating run time estimate..."), None)
         elif state == "progress":
@@ -6627,11 +7054,22 @@ class Makera(RelativeLayout):
 
     # --------------------------------------------------------------`---------
     def updateCompressProgress(self, value):
-        Clock.schedule_once(partial(self.progressUpdate, value * 100.0 / self.fileCompressionBlocks, "", True), 0)
+        percent = value * 100.0 / self.fileCompressionBlocks
+        if getattr(self, "_batch_kind", None) == "upload":
+            # Bind the file this sample belongs to. The clock can run it after
+            # that file has finished and the next upload has started.
+            index = getattr(self, "_batch_index", 0)
+            Clock.schedule_once(
+                lambda _dt, index=index, percent=percent: self._apply_batch_decompress_percent(index, percent),
+                0,
+            )
+        else:
+            Clock.schedule_once(partial(self.progressUpdate, percent, "", True), 0)
         if value == self.fileCompressionBlocks:
-            Clock.schedule_once(self.progressFinish, 0)
-            # Refresh the remote dir since upload finished
-            Clock.schedule_once(self.file_popup.refresh_machine, 0)
+            if getattr(self, "_batch_kind", None) != "upload":
+                self._schedule_progress_finish()
+            if not getattr(self, "_batch_upload", False):
+                Clock.schedule_once(self.file_popup.refresh_machine, 0)
             self.decompstatus = False
             # Call pending callback after decompression completes (for .lz files)
             if hasattr(self, "pending_decompress_callback") and self.pending_decompress_callback:

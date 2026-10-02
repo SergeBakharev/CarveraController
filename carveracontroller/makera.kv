@@ -1728,6 +1728,43 @@
             Label:
 
 
+<BatchProgressPopup>:
+    size_hint: 0.55, 0.55
+    pos_hint: {"right": 0.78, "top": 0.75}
+    auto_dismiss: False
+    BoxLayout:
+        padding: '15dp'
+        orientation: 'vertical'
+        spacing: '6dp'
+        Label:
+            text: root.file_text
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
+        ProgressBar:
+            max: 100
+            value: root.file_value
+        Label:
+            text: root.batch_text
+            size_hint_y: 0.6
+            halign: 'center'
+            valign: 'middle'
+            text_size: self.size
+        ProgressBar:
+            max: 100
+            value: root.batch_value
+        BoxLayout:
+            size_hint_y: 0.5
+            Label:
+            Button:
+                id: btn_batch_cancel
+                text: tr._('Cancel')
+                on_release:
+                    root.cancel()
+                    self.disabled = True
+            Label:
+
+
 <OriginPopup>:
     size_hint: 0.5, 0.4
     pos_hint: {"right": 0.75, "top": 0.7}

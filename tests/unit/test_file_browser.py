@@ -9,10 +9,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from carveracontroller.Controller import LOAD_DIR
-from carveracontroller.main import Makera
+from carveracontroller.main import Makera, transfer_confirm_message
 from carveracontroller.ui.file_browser.FileBrowserPopup import FileBrowserPopup
-
-file_browser_popup = importlib.import_module("carveracontroller.ui.file_browser.FileBrowserPopup")
 from carveracontroller.ui.file_browser.sources import (
     ICON_FILE,
     ICON_FIRMWARE,
@@ -59,6 +57,8 @@ from carveracontroller.ui.file_browser.sources import (
     upload_dest_tooltip,
 )
 from carveracontroller.updater.backup import DEFAULT_BACKUP_PATHS
+
+file_browser_popup = importlib.import_module("carveracontroller.ui.file_browser.FileBrowserPopup")
 
 IDENTITY = lambda text: text  # noqa: E731
 
@@ -1025,6 +1025,21 @@ def test_action_state_device_folder_and_multi():
     assert multi.show_rename is False
     assert multi.show_new_folder is False
     assert multi.primary == "delete"
+    uploading = compute_action_state(
+        location=LOCATION_DEVICE,
+        firmware_mode=False,
+        ios=False,
+        machine_connected=True,
+        machine_idle=True,
+        selected_is_file=False,
+        selected_count=3,
+        multi_select_mode=True,
+        selected_file_count=2,
+    )
+    assert uploading.show_upload is True
+    assert uploading.show_download is False
+    assert uploading.show_delete is True
+    assert uploading.primary == "delete"
 
 
 def test_action_state_firmware_upload_only():
@@ -1124,6 +1139,231 @@ def test_action_state_machine_disconnected_and_multi():
     assert multi.show_use_as_job is False
     assert multi.show_download is False
     assert multi.primary == "delete"
+    downloading = compute_action_state(
+        location=LOCATION_MACHINE,
+        firmware_mode=False,
+        ios=False,
+        machine_connected=True,
+        machine_idle=True,
+        selected_is_file=False,
+        selected_count=2,
+        multi_select_mode=True,
+        selected_file_count=2,
+    )
+    assert downloading.show_download is True
+    assert downloading.show_upload is False
+    assert downloading.show_delete is True
+    busy_files = compute_action_state(
+        location=LOCATION_MACHINE,
+        firmware_mode=False,
+        ios=False,
+        machine_connected=True,
+        machine_idle=False,
+        selected_is_file=False,
+        selected_count=2,
+        multi_select_mode=True,
+        selected_file_count=2,
+    )
+    assert busy_files.show_download is False
+
+
+def _selection_popup(*, entries, selected):
+    popup = SimpleNamespace(
+        location=LOCATION_MACHINE,
+        multi_select_mode=True,
+        selected_device_paths=["/tmp/local.nc"],
+        selected_device_file="/tmp/local.nc",
+        selected_machine_paths=list(selected),
+        selected_machine_file=selected[-1] if selected else "",
+        selected_machine_filesize=1,
+        _highlight_path=selected[-1] if selected else "",
+        _machine_entries=list(entries),
+        _device_entries=[],
+        ids={},
+    )
+    for name in (
+        "_selected_paths",
+        "_apply_selected_paths",
+        "_current_entries",
+        "_path_is_dir",
+        "_size_for_path",
+        "forget_selected_paths",
+        "_prune_missing_selection",
+    ):
+        setattr(popup, name, getattr(FileBrowserPopup, name).__get__(popup))
+    popup._rebuild_list = lambda *args, **kwargs: None
+    popup._sync_chrome = lambda: None
+    return popup
+
+
+def test_deleted_multi_selection_is_dropped_before_the_listing_updates():
+    entries = [
+        {"path": "/sd/a.nc", "is_dir": False, "size": 10},
+        {"path": "/sd/b.nc", "is_dir": False, "size": 10},
+        {"path": "/sd/keep.nc", "is_dir": False, "size": 4},
+    ]
+    popup = _selection_popup(entries=entries, selected=["/sd/a.nc", "/sd/b.nc", "/sd/keep.nc"])
+    popup._highlight_path = "/sd/a.nc"
+    popup.forget_selected_paths(["/sd/a.nc", "/sd/b.nc"])
+    assert popup.selected_machine_paths == ["/sd/keep.nc"]
+    assert popup.selected_machine_file == "/sd/keep.nc"
+    assert popup._highlight_path == "/sd/keep.nc"
+    assert popup.multi_select_mode is True
+    assert popup.selected_device_paths == ["/tmp/local.nc"]
+
+    popup.forget_selected_paths(["/sd/keep.nc"])
+    assert popup.selected_machine_paths == []
+    assert popup.selected_machine_file == ""
+    assert popup._highlight_path == ""
+    assert popup.multi_select_mode is False
+
+
+def test_reopen_drops_selection_missing_from_the_listing():
+    popup = _selection_popup(
+        entries=[{"path": "/sd/keep.nc", "is_dir": False, "size": 4}],
+        selected=["/sd/a.nc", "/sd/keep.nc"],
+    )
+    popup.multi_select_mode = False
+    popup._highlight_path = "/sd/a.nc"
+    popup._prune_missing_selection()
+    assert popup.selected_machine_paths == ["/sd/keep.nc"]
+    assert popup.selected_machine_file == "/sd/keep.nc"
+    assert popup._highlight_path == "/sd/keep.nc"
+    assert popup.selected_device_paths == ["/tmp/local.nc"]
+
+    popup._machine_entries = []
+    popup._prune_missing_selection()
+    assert popup.selected_machine_paths == []
+    assert popup.multi_select_mode is False
+
+
+def test_single_select_prune_keeps_only_the_highlighted_file():
+    popup = _selection_popup(
+        entries=[
+            {"path": "/sd/a.nc", "is_dir": False, "size": 10},
+            {"path": "/sd/keep.nc", "is_dir": False, "size": 4},
+        ],
+        selected=["/sd/a.nc", "/sd/keep.nc"],
+    )
+    popup.multi_select_mode = False
+    popup._highlight_path = "/sd/a.nc"
+    popup._prune_missing_selection()
+    assert popup.selected_machine_paths == ["/sd/a.nc"]
+    assert popup.selected_machine_file == "/sd/a.nc"
+    assert popup._highlight_path == "/sd/a.nc"
+    assert popup.multi_select_mode is False
+
+
+def test_multi_select_prune_keeps_every_file_still_listed():
+    popup = _selection_popup(
+        entries=[
+            {"path": "/sd/a.nc", "is_dir": False, "size": 10},
+            {"path": "/sd/keep.nc", "is_dir": False, "size": 4},
+        ],
+        selected=["/sd/a.nc", "/sd/keep.nc", "/sd/missing.nc"],
+    )
+    popup._highlight_path = "/sd/missing.nc"
+    popup._prune_missing_selection()
+    assert popup.selected_machine_paths == ["/sd/a.nc", "/sd/keep.nc"]
+    assert popup.multi_select_mode is True
+    assert popup._highlight_path == "/sd/keep.nc"
+
+
+def _shift_popup(*, selected, highlight, data, multi=False, anchor=-1, firmware=False):
+    popup = _selection_popup(
+        entries=[{"path": row["path"], "is_dir": False, "size": 1} for row in data if row.get("path")],
+        selected=list(selected),
+    )
+    popup.multi_select_mode = multi
+    popup._highlight_path = highlight
+    popup._last_range_index = anchor
+    popup.firmware_mode = firmware
+    popup.ids = {"file_list": SimpleNamespace(data=list(data))}
+    for name in (
+        "_on_modifier_select",
+        "_shift_select",
+        "_shift_anchor_index",
+        "_index_for_path",
+        "_add_index_range",
+        "_on_toggle_checked",
+        "_multi_select_allowed",
+    ):
+        setattr(popup, name, getattr(FileBrowserPopup, name).__get__(popup))
+    return popup
+
+
+def _range_rows():
+    return [
+        {"path": "/sd/a.nc", "selectable": True},
+        {"path": "/sd/b.nc", "selectable": True},
+        {"path": "/sd/skip", "selectable": False},
+        {"path": "/sd/c.nc", "selectable": True},
+    ]
+
+
+def test_shift_click_outside_multi_select_selects_the_range_and_turns_it_on():
+    popup = _shift_popup(selected=["/sd/a.nc"], highlight="/sd/a.nc", data=_range_rows())
+    popup._on_modifier_select("/sd/c.nc", 3, "shift")
+    assert popup.multi_select_mode is True
+    assert popup.selected_machine_paths == ["/sd/a.nc", "/sd/b.nc", "/sd/c.nc"]
+    assert popup.selected_machine_file == "/sd/c.nc"
+    assert "/sd/skip" not in popup.selected_machine_paths
+    assert popup._last_range_index == 0
+
+    popup._on_modifier_select("/sd/b.nc", 1, "shift")
+    assert popup.selected_machine_paths == ["/sd/a.nc", "/sd/b.nc"]
+    assert popup._last_range_index == 0
+
+
+def test_shift_click_with_nothing_selected_starts_multi_select_on_that_file():
+    popup = _shift_popup(selected=[], highlight="", data=_range_rows())
+    popup._on_modifier_select("/sd/b.nc", 1, "shift")
+    assert popup.multi_select_mode is True
+    assert popup.selected_machine_paths == ["/sd/b.nc"]
+    assert popup._last_range_index == 1
+
+
+def test_ctrl_shift_adds_a_range_without_clearing_other_files():
+    popup = _shift_popup(
+        selected=["/sd/c.nc"],
+        highlight="/sd/a.nc",
+        data=_range_rows(),
+        multi=True,
+        anchor=0,
+    )
+    popup._on_modifier_select("/sd/b.nc", 1, "ctrl-shift")
+    assert popup.selected_machine_paths == ["/sd/c.nc", "/sd/a.nc", "/sd/b.nc"]
+    assert popup._last_range_index == 0
+
+
+def test_shift_click_does_nothing_when_multi_select_is_not_allowed():
+    popup = _shift_popup(selected=["/sd/a.nc"], highlight="/sd/a.nc", data=_range_rows(), firmware=True)
+    popup._on_modifier_select("/sd/c.nc", 3, "shift")
+    assert popup.multi_select_mode is False
+    assert popup.selected_machine_paths == ["/sd/a.nc"]
+
+
+def test_transfer_confirm_mentions_overwrite_and_skipped_folders():
+    assert transfer_confirm_message(["/tmp/a.nc"], ["a.nc"], [], "upload") == (
+        "File Already Exists",
+        "Confirm to overwrite file: \n 'a.nc'?",
+    )
+    assert transfer_confirm_message(["/tmp/a.nc"], [], [], "download") is None
+    title, body = transfer_confirm_message(
+        ["/tmp/a.nc", "/tmp/b.nc", "/tmp/c.nc"],
+        ["a.nc"],
+        ["jobs"],
+        "upload",
+    )
+    assert title == "File Already Exists"
+    assert "overwrite 1 files that already exist on the machine" in body
+    assert "2 other selected files will also be uploaded" in body
+    assert "1 selected folder will not be uploaded." in body
+    assert "jobs" in body
+    title, body = transfer_confirm_message(["/sd/a.nc"], [], ["clips"], "download")
+    assert title == "Folders are not transferred"
+    assert "1 selected folder will not be downloaded." in body
+    assert "Continue downloading 1 file?" in body
 
 
 def test_video_files_are_not_jobs():

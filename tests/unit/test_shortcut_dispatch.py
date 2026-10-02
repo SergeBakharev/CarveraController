@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -9,7 +11,7 @@ from carveracontroller.addons.cmm_workbench.ui.CMMWorkbenchPopup import JogCMMWo
 from carveracontroller.addons.keyboard_shortcuts.bindings import KeyChord, ShortcutBindings
 from carveracontroller.addons.keyboard_shortcuts.manager import ShortcutManager
 from carveracontroller.Controller import Controller
-from carveracontroller.main import Makera
+from carveracontroller.main import Makera, batch_percents, format_byte_count
 from carveracontroller.Utils import digitize_v
 
 
@@ -389,6 +391,270 @@ def test_open_file_browser_is_blocked_when_the_file_button_would_be_unavailable(
         assert Makera.open_file_browser(root) is False
 
     popup.open_for_jobs.assert_not_called()
+
+
+def test_stale_progress_finish_does_not_close_the_next_file():
+    popup = SimpleNamespace(
+        progress_text="",
+        progress_value=0,
+        btn_cancel=SimpleNamespace(disabled=False),
+        cancel=None,
+        open=Mock(),
+        dismiss=Mock(),
+    )
+    root = SimpleNamespace(progress_popup=popup, _progress_epoch=0)
+
+    Makera.progressStart(root, "Uploading\nfirst.nc", None)
+    first_epoch = root._progress_epoch
+    Makera.progressStart(root, "Uploading\nsecond.nc", None)
+    Makera._finish_progress(root, first_epoch)
+
+    popup.dismiss.assert_not_called()
+    assert popup.progress_text == "Uploading\nsecond.nc"
+    Makera._finish_progress(root, root._progress_epoch)
+    popup.dismiss.assert_called_once()
+
+
+def test_batch_progress_uses_byte_sizes():
+    file_pct, batch_pct = batch_percents(1000, 1000, 50, 4000)
+    assert file_pct == 50
+    assert batch_pct == 37.5
+    assert batch_percents(0, 0, 40, 0) == (40, 0.0)
+    assert format_byte_count(1536) == "1.5 KB"
+    assert format_byte_count(2 * 1024 * 1024) == "2.0 MB"
+
+
+def test_unknown_file_sizes_still_move_the_batch_bar():
+    root, popup = _batch_download_root()
+    root._batch_files = [("a.nc", 0), ("b.nc", 0)]
+    root._batch_total_bytes = 0
+    Makera._apply_batch_file_percent(root, 50)
+    assert popup.file_value == 50
+    assert popup.batch_value == 25
+    assert popup.batch_text == "All files"
+
+    Makera._complete_current_batch_file(root)
+    assert root._batch_index == 1
+    assert popup.batch_value == 50
+
+    Makera._complete_current_batch_file(root)
+    assert popup.batch_value == 100
+
+
+def test_batch_decompress_does_not_rewind_the_overall_bar():
+    root, popup = _batch_download_root()
+    root._batch_kind = "upload"
+    Makera._apply_batch_file_percent(root, 100)
+    assert popup.batch_value == 50
+
+    Makera._apply_batch_decompress_percent(root, 0, 5)
+    assert popup.file_value == 5
+    assert popup.batch_value == 50
+    assert popup.file_text.startswith("Decompressing")
+
+    Makera.progressUpdate(root, 20, "", False)
+    assert popup.file_value == 5
+    assert popup.batch_value == 50
+
+    Makera._complete_current_batch_file(root)
+    Makera._apply_batch_decompress_percent(root, 0, 80)
+    assert root._batch_index == 1
+    assert popup.file_value == 0
+    assert popup.batch_value == 50
+
+
+def test_batch_upload_missing_file_closes_the_popup(monkeypatch):
+    scheduled = []
+
+    def schedule_once(callback, _timeout=0):
+        scheduled.append(callback)
+
+    monkeypatch.setattr("carveracontroller.main.Clock.schedule_once", schedule_once)
+    popup = SimpleNamespace(
+        file_text="",
+        file_value=0,
+        batch_text="",
+        batch_value=0,
+        _is_open=True,
+        open=Mock(),
+        dismiss=Mock(),
+        ids={},
+    )
+    messages = []
+    root = SimpleNamespace(
+        uploading_file="/tmp/does-not-exist-batch.nc",
+        _uploading_firmware=False,
+        _batch_kind="upload",
+        _batch_upload=True,
+        _batch_file_active=True,
+        _batch_files=[("/tmp/does-not-exist-batch.nc", 10), ("/tmp/b.nc", 10)],
+        _batch_index=0,
+        _batch_stop=False,
+        _pending_uploads=["/tmp/b.nc"],
+        uploading=False,
+        batch_progress_popup=popup,
+        file_popup=SimpleNamespace(refresh_machine=Mock()),
+        controller=SimpleNamespace(log=SimpleNamespace(put=Mock())),
+        show_message_popup=lambda text, *_args, **_kwargs: messages.append(text),
+    )
+    root._cleanup_firmware_temp = lambda **_kwargs: None
+    _bind_makera(root, "doUpload", "_fail_batch_transfer", "_end_batch_progress", "_batch_unstarted_note")
+    Makera.doUpload(root, None)
+
+    assert root._batch_file_active is False
+    assert root._pending_uploads == []
+    assert root._batch_stop is True
+    for callback in scheduled:
+        callback(0)
+    assert messages == ["Upload file error!\n\nThe remaining file was not uploaded."]
+    popup.dismiss.assert_called_once()
+    root.file_popup.refresh_machine.assert_called_once()
+
+
+def _bind_makera(root, *names):
+    for name in names:
+        setattr(root, name, getattr(Makera, name).__get__(root))
+
+
+def _batch_download_root():
+    popup = SimpleNamespace(
+        file_text="",
+        file_value=0,
+        batch_text="",
+        batch_value=0,
+        _is_open=True,
+        open=Mock(),
+        dismiss=Mock(),
+        ids={},
+    )
+    root = SimpleNamespace(
+        batch_progress_popup=popup,
+        _batch_kind="download",
+        _batch_files=[("a.nc", 1000), ("b.nc", 1000)],
+        _batch_index=0,
+        _batch_completed_bytes=0,
+        _batch_total_bytes=2000,
+        _batch_stop=False,
+        _batch_file_active=False,
+        downloading_file="",
+        downloading_size=1000,
+        downloading_config=False,
+        file_popup=SimpleNamespace(_size_for_path=lambda _path: 1000),
+    )
+    _bind_makera(
+        root,
+        "_post_download_progress",
+        "_apply_download_batch_progress",
+        "_apply_batch_file_percent",
+        "_complete_current_batch_file",
+        "_finish_batch_file_on_ui",
+        "_end_batch_progress",
+        "_download_files_worker",
+        "_batch_bar_state",
+        "_batch_bytes_caption",
+        "_apply_batch_decompress_percent",
+    )
+    return root, popup
+
+
+def test_stale_download_progress_does_not_fill_the_next_file():
+    root, popup = _batch_download_root()
+
+    Makera._apply_batch_file_percent(root, 100)
+    assert popup.file_value == 100
+    assert popup.batch_value == 50
+
+    Makera._complete_current_batch_file(root)
+    assert root._batch_index == 1
+    assert root._batch_completed_bytes == 1000
+    assert popup.file_value == 0
+    assert popup.batch_value == 50
+
+    Makera._apply_download_batch_progress(root, 0, 100)
+    assert popup.file_value == 0
+    assert popup.batch_value == 50
+
+    Makera._apply_download_batch_progress(root, 1, 25)
+    assert popup.file_value == 25
+    assert popup.batch_value == 62.5
+
+
+def test_batch_download_worker_counts_a_file_only_after_its_progress_is_applied(monkeypatch):
+    root, popup = _batch_download_root()
+    pending = []
+    pending_lock = threading.Lock()
+
+    def schedule_once(callback, _timeout=0):
+        with pending_lock:
+            pending.append(callback)
+
+    monkeypatch.setattr("carveracontroller.main.Clock.schedule_once", schedule_once)
+
+    entered = threading.Event()
+    release = threading.Event()
+    calls = {"n": 0}
+
+    def fake_download(remote_path, _dest, show_progress=True, open_after=True):
+        Makera.downloadCallback(root, remote_path, 1000, 1, 0)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            entered.set()
+            release.wait(2)
+        return 1
+
+    root.doDownload = fake_download
+    worker = threading.Thread(target=lambda: root._download_files_worker([("a.nc", "a"), ("b.nc", "b")]))
+    worker.start()
+    try:
+        assert entered.wait(2)
+        assert root._batch_index == 0
+        assert root._batch_completed_bytes == 0
+        release.set()
+
+        end = time.monotonic() + 2
+        while time.monotonic() < end:
+            with pending_lock:
+                if len(pending) >= 2:
+                    break
+            time.sleep(0.005)
+        else:
+            raise AssertionError("file completion was not queued")
+        assert root._batch_completed_bytes == 0
+        assert root._batch_index == 0
+
+        with pending_lock:
+            progress_cb, finish_cb = pending[0], pending[1]
+            del pending[:2]
+        progress_cb(0)
+        assert popup.file_value == 100
+        assert popup.batch_value == 50
+        finish_cb(0)
+        assert root._batch_index == 1
+        assert root._batch_completed_bytes == 1000
+        assert popup.file_value == 0
+        assert popup.batch_value == 50
+
+        end = time.monotonic() + 2
+        while worker.is_alive() and time.monotonic() < end:
+            with pending_lock:
+                queued = pending[:]
+                pending.clear()
+            for callback in queued:
+                callback(0)
+            time.sleep(0.005)
+    finally:
+        release.set()
+        end = time.monotonic() + 2
+        while worker.is_alive() and time.monotonic() < end:
+            with pending_lock:
+                queued = pending[:]
+                pending.clear()
+            for callback in queued:
+                callback(0)
+            time.sleep(0.005)
+        worker.join(0.2)
+    assert not worker.is_alive()
+    assert popup.batch_value == 100
 
 
 def test_open_videos_browser_uses_the_machine_videos_folder():
