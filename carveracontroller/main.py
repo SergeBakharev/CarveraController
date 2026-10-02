@@ -6660,6 +6660,7 @@ class Makera(RelativeLayout):
         self.confirm_popup.lb_title.text = tr._("Update Finished")
         self.confirm_popup.lb_content.text = tr._("Confirm to reset the machine?")
         self.confirm_popup.confirm = partial(self.resetMachine)
+        self.confirm_popup.cancel = None
         self.confirm_popup.open(self)
 
     # -----------------------------------------------------------------------
@@ -7787,9 +7788,8 @@ class Makera(RelativeLayout):
             if self.laser_drop_down.opened:
                 self.laser_drop_down.dismiss()
                 self.laser_drop_down.opened = False
-            # Keep ToolDropDown laser switch in sync so it shows off when disabled from LaserDropDown
-            self.tool_drop_down.ids.switch.set_flag = True
-            self.tool_drop_down.ids.switch.active = False
+            # Keep the Tool dropdown switch off when laser mode is disabled from the Laser dropdown.
+            self._set_switch_off_silently(self.tool_drop_down.ids.switch)
 
     def moveLineIndex(self, up=True):
         if up:
@@ -8596,6 +8596,25 @@ class Makera(RelativeLayout):
     def enter_laser_mode(self):
         self.controller.setLaserMode(True)
 
+    def cancel_laser_mode_entry(self):
+        """Turn laser switches back off when the user declines the confirm dialog."""
+        self._set_switch_off_silently(self.tool_drop_down.ids.switch)
+        self._set_switch_off_silently(self.laser_drop_down.switch)
+        sw_laser = self.diagnose_popup.sw_laser
+        self._set_switch_off_silently(sw_laser.switch, sw_laser)
+
+    def _set_switch_off_silently(self, switch, flag_holder=None):
+        """Turn a switch off without sending its command.
+
+        Skip the assignment when it is already off. Setting active to the same value does not
+        run on_active, so set_flag would stay set and swallow the next On.
+        """
+        if not switch.active:
+            return
+        holder = switch if flag_holder is None else flag_holder
+        holder.set_flag = True
+        switch.active = False
+
     # -----------------------------------------------------------------------
     def open_setting_default_confirm_popup(self):
         self.confirm_popup.lb_title.text = tr._("Save As Default")
@@ -8613,7 +8632,7 @@ class Makera(RelativeLayout):
             "You are about to enable laser mode. \n\nWhen enabled the current tool will be dropped, the spindle fan locked to 90%, \nand the empty spindle nose will be set as the tool and length probed.\n\n It's recommended to remove the laser dust cap, and put on safety glasses now.\n\nAre you ready to proceed ?"
         )
         self.confirm_popup.confirm = partial(self.enter_laser_mode)
-        self.confirm_popup.cancel = None
+        self.confirm_popup.cancel = self.cancel_laser_mode_entry
         self.confirm_popup.open(self)
 
     # -----------------------------------------------------------------------

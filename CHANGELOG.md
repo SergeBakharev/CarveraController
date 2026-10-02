@@ -36,6 +36,8 @@
 - Change: Missed heartbeats with the machine are treated as comms backpressure, and the machine state is changed to "Waiting on comms". Only if link connection is lost will it be treated as a disconnect
 - Changed: Machine config backup completes when a file's MD5 checksum does not match, and warns that some machines ship with factory MD5 mismatches
 - Changed: Keep the Z1 camera panel open if the stream drops, and reconnect while a spinner is shown in the camera view
+- Fixed: Turning Laser Mode off and on again shows the confirm dialog and can enter laser mode without restarting
+- Fixed: Cancelling the Laser Mode confirm dialog turns the laser switch back off
 - Fixed: Deleting a multi-selection no longer leaves those files selected after they are gone
 - Fixed: Video downloads from /sd/video and /sd/videos no longer show an MD5 mismatch error. The Makera ESP32 advertises a bad checksum for those files; the download is kept and a warning is logged
 - Fixed: Harden the gcode parser against "zero length" movement, and prevent division by zero in play slider
