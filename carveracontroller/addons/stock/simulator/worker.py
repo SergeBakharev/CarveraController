@@ -19,12 +19,18 @@ from carveracontroller.addons.stock.simulator.carver_select import (
     DEFAULT_CARVER_MODE,
     normalize_carver_mode,
     recommend_carver,
+    resolve_cutting_profile,
 )
-from carveracontroller.addons.stock.simulator.carvers.laser_map import pick_laser_cell_size_mm
+from carveracontroller.addons.stock.simulator.carvers.laser_map import laser_burn_uint8, pick_laser_cell_size_mm
+from carveracontroller.addons.stock.simulator.carvers.voxel.backend import (
+    _voxel_draw_bin,
+    retire_voxel_draw_keys,
+    voxel_draw_key,
+)
 from carveracontroller.addons.stock.simulator.simulation_quality import (
     CHECKPOINT_SLOTS_BY_LEVEL,
+    DEFAULT_CARVER_RESOLUTION,
     DEFAULT_CHECKPOINT_LEVEL,
-    DEFAULT_VOXEL_RESOLUTION,
     pick_cell_size_mm,
 )
 from carveracontroller.addons.stock.stock_geometry import StockBounds, rotate_yz
@@ -400,6 +406,7 @@ class PathSnapshot:
 MeshReadyCallback = Callable[[dict[tuple[int, int, int], tuple | None]], None]
 ProgressCallback = Callable[[int], None]
 CheckpointsCallback = Callable[[list[int]], None]
+ActivityCallback = Callable[[bool], None]
 
 
 def _create_carver_backend(
@@ -456,11 +463,13 @@ class StockSimulator:
         on_meshes_ready: MeshReadyCallback | None = None,
         on_progress: ProgressCallback | None = None,
         on_checkpoints: CheckpointsCallback | None = None,
+        on_activity: ActivityCallback | None = None,
         mesh_throttle_s: float = DEFAULT_MESH_THROTTLE_S,
     ):
         self._on_meshes_ready = on_meshes_ready
         self._on_progress = on_progress
         self._on_checkpoints = on_checkpoints
+        self._on_activity = on_activity
         self._mesh_throttle_s = mesh_throttle_s
         self._backend = None
         self._bake_backend = None
@@ -469,12 +478,13 @@ class StockSimulator:
         self._cell_size_mm = 1.0
         self._bounds: StockBounds | None = None
         self._checkpoint_slots = CHECKPOINT_SLOTS_BY_LEVEL[DEFAULT_CHECKPOINT_LEVEL]
-        self._resolution_level = DEFAULT_VOXEL_RESOLUTION
+        self._resolution_level = DEFAULT_CARVER_RESOLUTION
         self._queue: queue.Queue = queue.Queue()
         self._worker: threading.Thread | None = None
         self._lock = threading.RLock()
         self._generation = 0
         self._resimulating = False
+        self._activity = False
         self._enabled = False
         # Cancel in-flight idle without bumping generation (preserves CP jump).
         self._idle_cancel = threading.Event()
@@ -494,6 +504,11 @@ class StockSimulator:
         self._force_mesh_replace = False
         # Packed cylindrical draw keys from the last emit (to tombstone extras).
         self._coalesce_gpu_keys: set[tuple[int, int, int]] = set()
+        # Viewer is showing the one-box uncut shell. The next carved emit remeshes
+        # every bin so key (0, 0, 0) stops being that box.
+        self._uniform_shell_gpu = False
+        self._heightmap_part_count: dict[tuple[int, int], int] = {}
+        self._voxel_part_count: dict[tuple[int, int, int], int] = {}
         # Toolpath published from UI; worker copies refs per job under lock.
         self._path_positions: list[float] | None = None
         self._path_vertex_types: list[float] | None = None
@@ -502,6 +517,7 @@ class StockSimulator:
         self._path_speeds: list[float] | None = None
         self._tool_table: dict | None = None
         self._tool_scale: float = 1.0
+        self._profile_cache: dict[tuple, list] = {}
         self._has_4axis: bool = False
         self._has_off_axis_y: bool = False
         # When False, carve/checkpoint continue but mesh callbacks are skipped.
@@ -648,7 +664,7 @@ class StockSimulator:
         bounds: StockBounds,
         cell_size_mm: float | None = None,
         enable: bool = True,
-        voxel_target: int | None = None,
+        cell_target: int | None = None,
         checkpoint_slots: int | None = None,
         shape: StockShape | None = None,
         carver_mode: str = DEFAULT_CARVER_MODE,
@@ -656,7 +672,7 @@ class StockSimulator:
     ) -> None:
         """(Re)initialize the carver backend. Clears any pending carve jobs.
 
-        ``voxel_target`` forces a cell count along the longest axis. Otherwise
+        ``cell_target`` forces a cell count along the longest axis. Otherwise
         ``resolution_level`` (low/medium/high) picks a per-carver default target.
         """
         slots = (
@@ -666,6 +682,7 @@ class StockSimulator:
         )
         with self._lock:
             self._generation += 1
+            self._profile_cache = {}
             self._shape = (
                 shape
                 if shape is not None
@@ -678,7 +695,7 @@ class StockSimulator:
             self._bounds = bounds
             self._carver_mode = normalize_carver_mode(carver_mode)
             self._checkpoint_slots = slots
-            level = resolution_level if resolution_level is not None else DEFAULT_VOXEL_RESOLUTION
+            level = resolution_level if resolution_level is not None else DEFAULT_CARVER_RESOLUTION
             self._resolution_level = level
             kind = self._recommend_backend_kind_locked()
             if cell_size_mm is not None:
@@ -688,7 +705,7 @@ class StockSimulator:
                     bounds,
                     carver=kind,
                     level=level,
-                    target=voxel_target,
+                    target=cell_target,
                 )
             self._cell_size_mm = float(size)
             self._install_backend_locked(bounds, self._shape, size, kind)
@@ -703,11 +720,16 @@ class StockSimulator:
             self._force_mesh_replace = True
             self._mesh_updates_enabled = True
             self._coalesce_gpu_keys.clear()
+            self._uniform_shell_gpu = False
+            self._heightmap_part_count.clear()
+            self._voxel_part_count.clear()
         self._drain_queue()
         self.start()
         self._emit_checkpoints()
         if enable:
             self._emit_initial_surface()
+        else:
+            self._set_activity(False)
 
     def disable(self) -> None:
         with self._lock:
@@ -725,6 +747,9 @@ class StockSimulator:
             self._force_mesh_replace = False
             self._mesh_updates_enabled = True
             self._coalesce_gpu_keys.clear()
+            self._uniform_shell_gpu = False
+            self._heightmap_part_count.clear()
+            self._voxel_part_count.clear()
             if self._checkpoints is not None:
                 self._checkpoints.clear()
         self._drain_queue()
@@ -732,6 +757,7 @@ class StockSimulator:
             self._on_meshes_ready({"__clear_all__": None})
         self._emit_progress(0)
         self._emit_checkpoints()
+        self._set_activity(False)
 
     def _emit_progress(self, vertex: int) -> None:
         if not self._on_progress:
@@ -751,6 +777,40 @@ class StockSimulator:
             self._on_checkpoints(vertices)
         except Exception:
             logger.exception("stock checkpoints callback failed")
+
+    def _set_activity(self, active: bool) -> None:
+        """Fire ``on_activity`` when the busy flag changes."""
+        active = bool(active)
+        with self._lock:
+            if self._activity == active:
+                return
+            self._activity = active
+        if not self._on_activity:
+            return
+        try:
+            self._on_activity(active)
+        except Exception:
+            logger.exception("stock activity callback failed")
+
+    def _has_outstanding_work(self, pending_dirty: set, laser_pending: bool) -> bool:
+        """True when carve, seek, remesh, or a queued job is still in flight."""
+        with self._lock:
+            if not self._enabled or self._backend is None:
+                return False
+            if self._resimulating or self._display_poke_pending or self._mesh_flush:
+                return True
+            if not self._playhead_caught_up_locked():
+                return True
+            mesh_updates = self._mesh_updates_enabled
+        if mesh_updates and (pending_dirty or laser_pending):
+            return True
+        return not self._queue.empty()
+
+    def _sync_activity(self, pending_dirty: set) -> None:
+        with self._lock:
+            backend = self._backend
+        laser_pending = bool(getattr(backend, "_laser_dirty", False)) if backend is not None else False
+        self._set_activity(self._has_outstanding_work(pending_dirty, laser_pending))
 
     def _maybe_record_checkpoint(
         self,
@@ -793,6 +853,7 @@ class StockSimulator:
             self._path_speeds = speeds
             self._tool_table = tool_table
             self._tool_scale = float(tool_scale) if tool_scale else 1.0
+            self._profile_cache = {}
             self._has_4axis = bool(has_4axis)
             self._has_off_axis_y = bool(has_off_axis_y)
             n = 0 if positions is None else len(positions) // 3
@@ -853,6 +914,7 @@ class StockSimulator:
         self._idle_cancel.set()
         if not already:
             self._queue.put(_DISPLAY_FOLLOW)
+        self._set_activity(True)
 
     def _clear_open_segment_locked(self) -> None:
         """Drop open-segment bookkeeping. Caller must hold ``_lock``."""
@@ -883,6 +945,7 @@ class StockSimulator:
         with self._lock:
             self._mesh_flush = True
         self._queue.put(_MESH_FLUSH)
+        self._set_activity(True)
 
     def submit_range(self, from_vertex: int, to_vertex: int) -> None:
         """Queue carving for ``(from_vertex, to_vertex]`` (expanded on the worker)."""
@@ -896,6 +959,7 @@ class StockSimulator:
         with self._lock:
             self._display_vertex = to
         self._queue.put(CarveRangeJob(from_vertex=frm, to_vertex=to))
+        self._set_activity(True)
 
     def submit_idle_precompute(self, from_vertex: int) -> None:
         """Queue low-priority bake-grid carving to record ahead checkpoints.
@@ -914,6 +978,7 @@ class StockSimulator:
             return
         self._idle_cancel.clear()
         self._queue.put(CarveRangeJob(from_vertex=hint, to_vertex=to, low_priority=True))
+        self._set_activity(True)
 
     def _maybe_rearm_idle_bake(self) -> None:
         """Resume bake after display follow preempted it (paused scrub)."""
@@ -967,6 +1032,7 @@ class StockSimulator:
             except Exception:
                 logger.exception("stock mesh clear callback failed")
         self._queue.put(RecarveJob(target_vertex=max(0, int(target_vertex))))
+        self._set_activity(True)
 
     def _emit_initial_surface(self) -> None:
         """Queue an empty recarve so the worker meshes the solid exterior shell."""
@@ -976,6 +1042,7 @@ class StockSimulator:
             self._resimulating = True
             self._force_mesh_replace = True
         self._queue.put(RecarveJob(target_vertex=0))
+        self._set_activity(True)
 
     def _prepare_bake_grid(self, gen: int, hint_vertex: int):
         """Create/restore the bake occupancy to the latest bookmark ≤ the bake head.
@@ -1390,6 +1457,71 @@ class StockSimulator:
         store = self._checkpoints
         if store is None:
             return last_end_vertex, True
+        batch: list[CarveJob] = []
+        laser_batch: list[CarveJob] = []
+
+        def _apply_carved(jobs: list[CarveJob], dirty: set) -> bool:
+            nonlocal last_end_vertex, last_progress_t, interrupted
+            if not jobs:
+                return True
+            with self._lock:
+                if self._generation != gen or self._resimulating:
+                    interrupted = True
+                    return False
+                pending_dirty.update(dirty)
+                changed_since_cp.update(dirty)
+                for job in jobs:
+                    if self._maybe_record_checkpoint(job.end_vertex, grid_or_backend, changed_since_cp):
+                        changed_since_cp.clear()
+                    if idle:
+                        self._bake_carved_vertex = job.end_vertex
+                    else:
+                        self._grid_carved_vertex = job.end_vertex
+                        self._clear_open_segment_locked()
+                last_end_vertex = jobs[-1].end_vertex
+            if not idle:
+                now_p = time.monotonic()
+                if now_p - last_progress_t >= 0.05:
+                    self._emit_progress(last_end_vertex)
+                    last_progress_t = now_p
+            return True
+
+        def _flush_batch() -> bool:
+            nonlocal batch
+            if not batch:
+                return True
+            jobs = batch
+            batch = []
+            # Carve outside the lock so HUD/playhead can progress during long wraps.
+            dirty = self._carve_jobs(grid_or_backend, jobs, path.tool_scale)
+            return _apply_carved(jobs, dirty)
+
+        def _flush_laser() -> bool:
+            nonlocal laser_batch
+            if not laser_batch:
+                return True
+            jobs = laser_batch
+            laser_batch = []
+            # Strokes stay separate inside the batch; only the Python call is shared.
+            self._engrave_jobs(grid_or_backend, jobs, path.tool_scale)
+            return _apply_carved(jobs, set())
+
+        def _drop_pending() -> None:
+            """Abandon queued cuts. Idle ahead-carve and in-range flushes do not use this."""
+            nonlocal batch, laser_batch, interrupted
+            batch = []
+            laser_batch = []
+            interrupted = True
+
+        def _flush_through(limit: int) -> None:
+            """Carve queued jobs that still end at or before the live playhead."""
+            nonlocal batch, laser_batch, interrupted
+            interrupted = True
+            laser_batch = [job for job in laser_batch if job.end_vertex <= limit]
+            batch = [job for job in batch if job.end_vertex <= limit]
+            if _flush_laser():
+                _flush_batch()
+
         for seg in self._iter_cut_jobs(
             path,
             start_vertex,
@@ -1398,41 +1530,67 @@ class StockSimulator:
             checkpoints=store,
         ):
             if self._generation != gen or self._resimulating:
-                interrupted = True
+                _drop_pending()
                 break
             if idle and self._idle_cancel.is_set():
-                interrupted = True
+                # Mill idle still flushes every segment; laser may batch ahead of CPs.
+                if laser_batch:
+                    if not _flush_laser():
+                        break
+                    interrupted = True
+                    break
+                _drop_pending()
                 break
             if follow_display:
                 with self._lock:
                     live_target, _live_frac = _playhead_parts(self._display_vertex)
-                if live_target < seg.end_vertex:
-                    interrupted = True
+                past_playhead = live_target < seg.end_vertex
+                timed_out = deadline is not None and time.monotonic() >= deadline
+                if past_playhead or timed_out:
+                    # Display occupancy stops at the playhead. Jobs still inside
+                    # it are carved so the mesh throttle can yield; jobs the
+                    # playhead has moved behind are left for rewind. Idle bake
+                    # does not pass follow_display, so it keeps carving ahead.
+                    _flush_through(live_target)
                     break
-                if deadline is not None and time.monotonic() >= deadline:
-                    interrupted = True
+            if not seg.is_cut:
+                if not _flush_laser() or not _flush_batch():
                     break
-            # Carve outside the lock so HUD/playhead can progress during long wraps.
-            dirty = self._carve_one(grid_or_backend, seg, path.tool_scale)
-            with self._lock:
-                if self._generation != gen or self._resimulating:
-                    interrupted = True
+                dirty = self._carve_one(grid_or_backend, seg, path.tool_scale)
+                if not _apply_carved([seg], dirty):
                     break
-                pending_dirty.update(dirty)
-                changed_since_cp.update(dirty)
-                if self._maybe_record_checkpoint(seg.end_vertex, grid_or_backend, changed_since_cp):
-                    changed_since_cp.clear()
-                if idle:
-                    self._bake_carved_vertex = seg.end_vertex
-                else:
-                    self._grid_carved_vertex = seg.end_vertex
-                    self._clear_open_segment_locked()
-            last_end_vertex = seg.end_vertex
-            if not idle:
-                now_p = time.monotonic()
-                if now_p - last_progress_t >= 0.05:
-                    self._emit_progress(seg.end_vertex)
-                    last_progress_t = now_p
+                continue
+            if seg.tool_number == LASER_TOOL_NUMBER:
+                if not _flush_batch():
+                    break
+                laser_batch.append(seg)
+                target = store.next_unrecorded_target()
+                at_checkpoint = target is not None and int(seg.end_vertex) >= int(target)
+                # Laser batches until the next checkpoint, a non-laser segment, display
+                # follow, or end of the loop (idle and foreground share this schedule).
+                # Strokes are not merged inside a batch.
+                if at_checkpoint:
+                    if not _flush_laser():
+                        break
+                continue
+            if laser_batch and not _flush_laser():
+                break
+            if batch and (batch[-1].tool_number != seg.tool_number or batch[-1].tool_def is not seg.tool_def):
+                if not _flush_batch():
+                    break
+            batch.append(seg)
+            target = store.next_unrecorded_target()
+            # Idle stays one segment at a time so cancel and checkpoint deltas
+            # observe the same vertex the playhead would. Foreground carving
+            # flushes on a tool change, a checkpoint, or the display deadline.
+            at_checkpoint = target is not None and int(seg.end_vertex) >= int(target)
+            if idle or at_checkpoint:
+                if not _flush_batch():
+                    break
+        if laser_batch and not _flush_laser():
+            interrupted = True
+        if batch and not _flush_batch():
+            interrupted = True
         if not interrupted:
             with self._lock:
                 if self._generation != gen or self._resimulating:
@@ -1587,6 +1745,7 @@ class StockSimulator:
                 item = None
 
             if item is _STOP:
+                self._set_activity(False)
                 break
 
             with self._lock:
@@ -1605,6 +1764,9 @@ class StockSimulator:
                 display_changed_since_cp.clear()
                 bake_changed_since_cp.clear()
                 self._coalesce_gpu_keys.clear()
+                self._uniform_shell_gpu = False
+                self._heightmap_part_count.clear()
+                self._voxel_part_count.clear()
                 dirty_gen = gen
 
             live = backend
@@ -1612,12 +1774,14 @@ class StockSimulator:
                 pending_dirty.clear()
                 display_changed_since_cp.clear()
                 bake_changed_since_cp.clear()
+                self._set_activity(False)
                 continue
 
             # During seek/reset, only RecarveJob may mutate the display grid.
             if resimulating and not isinstance(item, RecarveJob):
                 pending_dirty.clear()
                 display_changed_since_cp.clear()
+                self._sync_activity(pending_dirty)
                 continue
 
             finished_recarve = False
@@ -1639,8 +1803,10 @@ class StockSimulator:
             elif isinstance(item, RecarveJob):
                 with self._lock:
                     if self._generation != gen:
+                        self._sync_activity(pending_dirty)
                         continue
                     if live is not self._backend:
+                        self._sync_activity(pending_dirty)
                         continue
                     self._resimulating = True
                     start_vertex, restored_keys = self._restore_checkpoint_at_or_before(live, item.target_vertex)
@@ -1674,11 +1840,13 @@ class StockSimulator:
                         recarve_finished = True
                     else:
                         pending_dirty.clear()
+                        self._sync_activity(pending_dirty)
                         continue
                 last_emit = 0.0
 
             elif isinstance(item, CarveRangeJob) and item.low_priority:
                 if self._generation != gen or self._resimulating:
+                    self._sync_activity(pending_dirty)
                     continue
                 # Idle bake ``continue``s past the shared remesh step. Flush any
                 # leftover display-dirty tiles first or paused scrub stays stale.
@@ -1689,13 +1857,16 @@ class StockSimulator:
                     else:
                         pending_dirty.update(batch)
                 if self._idle_cancel.is_set():
+                    self._sync_activity(pending_dirty)
                     continue
                 prepared = self._prepare_bake_grid(gen, item.from_vertex)
                 if prepared is None:
+                    self._sync_activity(pending_dirty)
                     continue
                 bake, start_vertex = prepared
                 bake_changed_since_cp.clear()
                 if start_vertex >= item.to_vertex:
+                    self._sync_activity(pending_dirty)
                     continue
                 bake_dirty: set[tuple[int, int, int]] = set()
                 self._carve_segments_to(
@@ -1708,12 +1879,14 @@ class StockSimulator:
                     bake_changed_since_cp,
                     idle=True,
                 )
+                self._sync_activity(pending_dirty)
                 continue
 
             elif isinstance(item, CarveRangeJob):
                 if self._generation != gen or self._resimulating:
                     pending_dirty.clear()
                     display_changed_since_cp.clear()
+                    self._sync_activity(pending_dirty)
                     continue
 
                 start_vertex = item.from_vertex
@@ -1721,6 +1894,7 @@ class StockSimulator:
                 if self._grid_carved_vertex > item.from_vertex:
                     rewound = self._rewind_grid_to(live, gen, item.from_vertex)
                     if rewound is None:
+                        self._sync_activity(pending_dirty)
                         continue
                     start_vertex, dirty_keys = rewound
                     pending_dirty.update(dirty_keys)
@@ -1836,6 +2010,8 @@ class StockSimulator:
                 elif not still_behind and not pending_dirty:
                     self._maybe_rearm_idle_bake()
 
+            self._sync_activity(pending_dirty)
+
         if pending_dirty or bool(getattr(self._backend, "_laser_dirty", False)):
             with self._lock:
                 live = self._backend
@@ -1873,14 +2049,31 @@ class StockSimulator:
             # Cylindrical wraps in θ and is drawn as one field. Playback patches
             # that field in place (no __replace__) so the viewer does not
             # destroy GPU meshes every throttle window. Heightmap/voxel tiles
-            # patch incrementally.
+            # patch incrementally, in spatial bins rather than one mesh per tile.
             coalesce = str(getattr(backend, "kind", "")) == BACKEND_CYLINDRICAL
+            live_uniform = False
             if dirty_keys:
+                uniform_fn = getattr(backend, "uniform_shell", None)
+                live_uniform = bool(uniform_fn()) if callable(uniform_fn) else False
+                break_shell = (not coalesce) and self._uniform_shell_gpu and not live_uniform
+                expand = getattr(backend, "expand_mesh_bins", None)
                 if coalesce:
                     mesh_keys = backend.initial_surface_keys()
                     tmp = backend.copy_tiles(mesh_keys)
+                elif live_uniform:
+                    # The box only reads bounds. Those do not change without a
+                    # generation bump, which drops this emit.
+                    mesh_keys = set(dirty_keys)
+                    tmp = backend
                 else:
-                    mesh_keys = backend.expand_dirty(dirty_keys)
+                    if break_shell:
+                        mesh_keys = backend.initial_surface_keys()
+                        if callable(expand):
+                            mesh_keys = expand(mesh_keys)
+                    else:
+                        mesh_keys = backend.expand_dirty(dirty_keys)
+                        if callable(expand):
+                            mesh_keys = expand(mesh_keys)
                     copy_keys = backend.expand_dirty(mesh_keys)
                     tmp = backend.copy_tiles(copy_keys)
             else:
@@ -1888,7 +2081,7 @@ class StockSimulator:
                 tmp = None
 
         if dirty_keys and tmp is not None:
-            meshes = tmp.mesh_tiles(mesh_keys)
+            meshes = tmp.mesh_tiles(mesh_keys, uniform=live_uniform)
         else:
             meshes = {}
 
@@ -1912,6 +2105,17 @@ class StockSimulator:
                         for old in self._coalesce_gpu_keys - current:
                             meshes[old] = None
                     self._coalesce_gpu_keys = current
+                elif not coalesce and dirty_keys:
+                    self._uniform_shell_gpu = bool(live_uniform)
+                    kind = str(getattr(backend, "kind", ""))
+                    if live_uniform:
+                        # The box replaces every carved bin. Mark tracked bins the
+                        # box did not reuse so retirement deletes those draws.
+                        self._mark_bins_replaced_by_uniform_shell(meshes, kind)
+                    if kind == BACKEND_HEIGHTMAP:
+                        self._retire_heightmap_parts(meshes)
+                    elif kind == BACKEND_VOXEL:
+                        retire_voxel_draw_keys(meshes, self._voxel_part_count)
                 out: dict = {}
                 if replace:
                     if dirty_keys or meshes:
@@ -1930,11 +2134,105 @@ class StockSimulator:
                 logger.exception("stock mesh callback failed")
             return True
 
+    def _mark_bins_replaced_by_uniform_shell(self, meshes: dict, kind: str) -> None:
+        """Empty tracked bins absent from an uncut-box emit.
+
+        Retirement then drops their overflow splits. The box key stays, and
+        incremental remeshes do not call this: bins missing from a partial emit
+        are still on screen.
+        """
+        if kind == BACKEND_HEIGHTMAP:
+            present = {(int(key[0]), int(key[1])) for key in meshes if isinstance(key, tuple) and len(key) == 3}
+            for bx, by in list(self._heightmap_part_count):
+                if (bx, by) not in present:
+                    meshes[(bx, by, 0)] = None
+            return
+        if kind != BACKEND_VOXEL:
+            return
+        present: set[tuple[int, int, int]] = set()
+        for key in meshes:
+            if isinstance(key, tuple) and len(key) == 3:
+                base, _part = _voxel_draw_bin(key)
+                present.add(base)
+        for base in list(self._voxel_part_count):
+            if base not in present:
+                meshes[voxel_draw_key(base, 0)] = None
+
+    def _retire_heightmap_parts(self, meshes: dict) -> None:
+        """Drop leftover uint16 splits when a bin now fits in fewer draws."""
+        seen: dict[tuple[int, int], int] = {}
+        for key, packed in list(meshes.items()):
+            if not isinstance(key, tuple) or len(key) != 3:
+                continue
+            base = (int(key[0]), int(key[1]))
+            if packed is None and int(key[2]) == 0:
+                seen[base] = -1
+                continue
+            if packed is None:
+                continue
+            seen[base] = max(seen.get(base, -1), int(key[2]))
+        for base, last in seen.items():
+            prev = self._heightmap_part_count.get(base, 0)
+            keep = 0 if last < 0 else last + 1
+            for part in range(keep, prev):
+                meshes[(base[0], base[1], part)] = None
+            if keep:
+                self._heightmap_part_count[base] = keep
+            else:
+                self._heightmap_part_count.pop(base, None)
+
+    def _cached_cutting_profile(self, tool_def, tool_unit_scale: float):
+        scale = float(tool_unit_scale) if tool_unit_scale else 1.0
+        key = (id(tool_def) if tool_def is not None else None, scale)
+        cached = self._profile_cache.get(key)
+        if cached is None:
+            cached = resolve_cutting_profile(tool_def, tool_unit_scale=scale)
+            self._profile_cache[key] = cached
+        return cached
+
+    @staticmethod
+    def _laser_z_plunge(job: CarveJob) -> bool:
+        dx = float(job.p1[0]) - float(job.p0[0])
+        dy = float(job.p1[1]) - float(job.p0[1])
+        dz = float(job.p1[2]) - float(job.p0[2])
+        da = abs(float(job.a1) - float(job.a0))
+        return (dx * dx + dy * dy) < 1e-8 and abs(dz) > 0.02 and da < 0.5
+
+    def _engrave_jobs(self, backend, jobs: list[CarveJob], tool_unit_scale: float) -> None:
+        strokes = [job for job in jobs if not self._laser_z_plunge(job) and laser_burn_uint8(job.spindle_s)]
+        if not strokes:
+            return
+        many = getattr(backend, "engrave_segments", None)
+        if many is not None:
+            many(strokes, tool_unit_scale=tool_unit_scale)
+            return
+        for job in strokes:
+            self._carve_one(backend, job, tool_unit_scale)
+
+    def _carve_jobs(self, backend, jobs: list[CarveJob], tool_unit_scale: float) -> set[tuple[int, int, int]]:
+        if not jobs:
+            return set()
+        profile = self._cached_cutting_profile(jobs[0].tool_def, tool_unit_scale)
+        segments = [(job.p0, job.p1, job.a0, job.a1) for job in jobs]
+        carve_many = getattr(backend, "carve_segments", None)
+        if carve_many is not None:
+            return carve_many(
+                segments,
+                profile,
+                tool_unit_scale=tool_unit_scale,
+                tool_def=jobs[0].tool_def,
+            )
+        dirty: set[tuple[int, int, int]] = set()
+        for job in jobs:
+            dirty |= self._carve_one(backend, job, tool_unit_scale, profile=profile)
+        return dirty
+
     def _carve_one(
         self,
         backend,
         job: CarveJob,
         tool_unit_scale: float = 1.0,
+        profile=None,
     ) -> set[tuple[int, int, int]]:
         if not job.is_cut:
             return set()
@@ -1943,12 +2241,8 @@ class StockSimulator:
             kwargs["a0"] = job.a0
             kwargs["a1"] = job.a1
         if job.tool_number == LASER_TOOL_NUMBER:
-            dx = float(job.p1[0]) - float(job.p0[0])
-            dy = float(job.p1[1]) - float(job.p0[1])
-            dz = float(job.p1[2]) - float(job.p0[2])
-            da = abs(float(job.a1) - float(job.a0))
             # Skip Z-only plunges; keep XY/A strokes and point stamps.
-            if (dx * dx + dy * dy) < 1e-8 and abs(dz) > 0.02 and da < 0.5:
+            if self._laser_z_plunge(job):
                 return set()
             engrave = getattr(backend, "engrave_segment", None)
             if engrave is not None:
@@ -1961,6 +2255,10 @@ class StockSimulator:
                     **kwargs,
                 )
             return set()
+        if profile is None:
+            profile = self._cached_cutting_profile(job.tool_def, tool_unit_scale)
+        if profile is not None:
+            kwargs["profile"] = profile
         return backend.carve_segment(
             job.p0,
             job.p1,

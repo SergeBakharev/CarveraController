@@ -14,12 +14,14 @@
 #:import NoTransition kivy.uix.screenmanager.NoTransition
 #:import play_progress_bar carveracontroller.ui.PlayProgressBar
 #:import GcodeColorSchemePanel carveracontroller.ui.GcodeColorSchemePanel.GcodeColorSchemePanel
+#:import SimStatsHud carveracontroller.ui.SimStatsHud.SimStatsHud
 #:import CameraView carveracontroller.addons.camera.CameraView.CameraView
 #:import CameraReconnectSpinner carveracontroller.addons.camera.CameraView.CameraReconnectSpinner
 #:import LASER_TOOL_NUMBER carveracontroller.CNC.LASER_TOOL_NUMBER
 #:import ZPROBE_TOOL_NUMBER carveracontroller.CNC.ZPROBE_TOOL_NUMBER
 #:import PROBE_3D_TOOL_NUMBER carveracontroller.CNC.PROBE_3D_TOOL_NUMBER
 #:include ui/GcodeColorSchemePanel.kv
+#:include ui/SimStatsHud.kv
 #:include addons/tooltips/Tooltips.kv
 #:include addons/intellisense/Intellisense.kv
 #:include ui/LocalFilePicker.kv
@@ -3343,18 +3345,10 @@
                                         CameraControls:
                                             id: camera_controls
                                             pos_hint: {'x': 0, 'top': 1}
-                            Label:
+                            SimStatsHud:
                                 id: sim_stats_hud
-                                size_hint: None, None
-                                size: self.texture_size
-                                text: ''
-                                font_size: '11sp'
-                                color: 0.92, 0.90, 0.78, 0.92
-                                halign: 'left'
-                                valign: 'bottom'
-                                opacity: 0 if not self.text else 1
-                                x: float_layout.x + dp(10)
-                                y: gcode_ctl_bar.top + dp(6)
+                                x: float_layout.x
+                                y: gcode_ctl_bar.top + dp(2)
                             GcodeColorSchemePanel:
                                 id: color_scheme_panel
                             BoxLayout:

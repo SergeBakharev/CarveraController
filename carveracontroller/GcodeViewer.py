@@ -64,12 +64,12 @@ from .addons.stock.simulator.carver_select import DEFAULT_CARVER_MODE, normalize
 from .addons.stock.simulator.mesh_format import VERTEX_FORMAT as CARVED_VERTEX_FORMAT
 from .addons.stock.simulator.simulation_quality import (
     CHECKPOINT_SLOTS_BY_LEVEL,
+    DEFAULT_CARVER_RESOLUTION,
     DEFAULT_CHECKPOINT_LEVEL,
-    DEFAULT_VOXEL_RESOLUTION,
     format_cell_size_mm,
     format_diameter_mm,
+    normalize_carver_resolution,
     normalize_checkpoint_level,
-    normalize_voxel_resolution,
 )
 from .addons.stock.stock_aabb_mesh import (
     STOCK_VERTEX_FORMAT,
@@ -278,6 +278,7 @@ VERTEX_FLOAT_NUM = 11
 # Marks a touch this widget took on touch_down, so drags belonging to the
 # controls floating over it are not also treated as orbit or pan.
 TOUCH_CLAIMED = "gcode_viewer_claimed"
+SIM_CARVING_HOLD_S = 0.2
 
 COLOR_SCHEME_BY_TYPE = 0
 COLOR_SCHEME_BY_TOOL = 1
@@ -695,7 +696,7 @@ class GCodeViewer(Widget):
     g_wheel_data = 0
     lines_center = [0, 0, 0]
 
-    display_count = 0
+    display_count = 0.0
     total_line_count = 0
     add_dir = 1
     dynamic_display = BooleanProperty(True)
@@ -713,6 +714,9 @@ class GCodeViewer(Widget):
     sim_progress = NumericProperty(0.0)
     sim_checkpoints = ListProperty([])
     sim_hud_text = StringProperty("")
+    sim_hud_visible = BooleanProperty(False)
+    sim_carving = BooleanProperty(False)
+    sim_mesh_visible = BooleanProperty(True)
     stock_visible = BooleanProperty(False)
     bed_visible = BooleanProperty(False)
 
@@ -903,12 +907,13 @@ class GCodeViewer(Widget):
         self.stock_shape: StockShape | None = None
         self.stock_visible = False
         self.simulate_cut = False
-        self.stock_mesh_while_playing = False
+        self.stock_mesh_while_playing = True
+        self.sim_mesh_visible = True
         # Keep the translucent AABB up after pause until the worker flush
         # patches GPU chunks; otherwise the last meshed shell (often uncut)
         # is shown for a frame.
         self._defer_carved_stock = False
-        self.stock_voxel_resolution = DEFAULT_VOXEL_RESOLUTION
+        self.stock_carver_resolution = DEFAULT_CARVER_RESOLUTION
         self.stock_checkpoint_level = DEFAULT_CHECKPOINT_LEVEL
         self.stock_carver_mode = DEFAULT_CARVER_MODE
         self.stock_material = DEFAULT_MATERIAL
@@ -917,10 +922,12 @@ class GCodeViewer(Widget):
         self._sim_progress_trigger = Clock.create_trigger(self._flush_sim_progress, 0)
         self._sim_checkpoints_trigger = Clock.create_trigger(self._flush_sim_checkpoints, 0)
         self._pending_checkpoint_vertices: list[int] = []
+        self._sim_carving_hold = None
         self._stock_simulator = StockSimulator(
             on_meshes_ready=self._on_stock_meshes_ready,
             on_progress=self._on_stock_progress,
             on_checkpoints=self._on_stock_checkpoints,
+            on_activity=self._on_stock_activity,
         )
         self.bind(dynamic_display=self._on_dynamic_display_changed)
 
@@ -1151,18 +1158,23 @@ class GCodeViewer(Widget):
         self.canvas.remove(self.axiszmesh)
         self.axiszmesh.clear()
         self._remove_view_cube_from_canvas()
-        self.display_count = 0
+        self.display_count = 0.0
+        self.cur_line_index = 0
         self._sim_carved_vertex = 0
         self._sim_progress_vertex = 0
         self.sim_progress = 0.0
         self.sim_checkpoints = []
         self.sim_hud_text = ""
+        self.sim_hud_visible = False
+        self.sim_carving = False
+        self.sim_mesh_visible = True
         self.stock_visible = False
         self.bed_visible = False
         self.simulate_cut = False
         self._defer_carved_stock = False
         self._viewer_meshes_active = False
         self._stock_rotation_mat = self._identity_mat
+        self._cancel_sim_carving_hold()
         if self._stock_simulator is not None:
             # Keep bounds/shape/quality, but pause carving until the new file finishes loading.
             self._stock_simulator.clear_toolpath()
@@ -1487,24 +1499,28 @@ class GCodeViewer(Widget):
         self.off_y = offy
         self._scene_dirty = True
 
+    def _apply_display_distance(self, distance: float) -> None:
+        """Move the preview playhead to ``distance`` without notifying the file list."""
+        self.display_count = float(distance)
+        self._scene_dirty = True
+        if not self.lengths:
+            return
+        cur_display_distance = float(self.display_count)
+        line_index = binary_find_left(self.lengths, cur_display_distance)
+        line_ratio = 0.0
+        if line_index < len(self.lengths) - 1 and self.lengths[line_index + 1] > self.lengths[line_index]:
+            line_ratio = (cur_display_distance - self.lengths[line_index]) / (
+                self.lengths[line_index + 1] - self.lengths[line_index]
+            )
+        self.cur_line_index = line_index + line_ratio
+        self._sync_stock_simulation(self.cur_line_index)
+
     # set displaying limit
     def set_pos_by_distance(self, distance):
         if distance > self.get_total_distance():
             print("distance is out of bounds")
             return
-        self.display_count = float(distance)
-        self._scene_dirty = True
-        # Sync cur_line_index to display_count so get_cur_pos_index() returns the correct line
-        if self.lengths:
-            cur_display_distance = float(self.display_count)
-            line_index = binary_find_left(self.lengths, cur_display_distance)
-            line_ratio = 0.0
-            if line_index < len(self.lengths) - 1 and self.lengths[line_index + 1] > self.lengths[line_index]:
-                line_ratio = (cur_display_distance - self.lengths[line_index]) / (
-                    self.lengths[line_index + 1] - self.lengths[line_index]
-                )
-            self.cur_line_index = line_index + line_ratio
-            self._sync_stock_simulation(self.cur_line_index)
+        self._apply_display_distance(distance)
         # Trigger frame callback to update line highlighting
         if self.frame_callback is not None:
             cur_distance, linenumber = self.get_cur_pos_index()
@@ -1813,8 +1829,7 @@ class GCodeViewer(Widget):
 
     def show_all(self):
         self.dynamic_display = False
-        self.display_count = self.get_total_distance()
-        self._scene_dirty = True
+        self._apply_display_distance(self.get_total_distance())
 
     def restore_default_view(self):
         self.m_xLookAt = 0
@@ -1955,10 +1970,15 @@ class GCodeViewer(Widget):
     def simulation_available(self) -> bool:
         """True when cut simulation can run for the loaded file.
 
-        Mill jobs need CAM tool geometry in ``tool_table``. Laser-only files
-        have no mill headers, so an empty table is still enough when the parsed
-        path uses only the laser (probe tools ignored).
+        The native carve extension must be built. Mill jobs also need CAM tool
+        geometry in ``tool_table``. Laser-only files have no mill headers, so an
+        empty table is still enough when the parsed path uses only the laser
+        (probe tools ignored).
         """
+        from carveracontroller.addons.stock.simulator.native import native_enabled
+
+        if not native_enabled():
+            return False
         if self.tool_table:
             return True
         return self._path_is_laser_only()
@@ -1995,9 +2015,9 @@ class GCodeViewer(Widget):
         bounds: StockBounds | None,
         visible: bool = True,
         simulate_cut: bool = False,
-        voxel_resolution: str = DEFAULT_VOXEL_RESOLUTION,
+        carver_resolution: str = DEFAULT_CARVER_RESOLUTION,
         checkpoint_level: str = DEFAULT_CHECKPOINT_LEVEL,
-        mesh_while_playing: bool = False,
+        mesh_while_playing: bool = True,
         carver_mode: str = DEFAULT_CARVER_MODE,
         shape: StockShape | None = None,
         material: str = DEFAULT_MATERIAL,
@@ -2018,7 +2038,7 @@ class GCodeViewer(Widget):
         stock_visible = bool(visible) and bounds is not None
         want_sim = bool(simulate_cut) and self.simulation_available() and stock_visible
         mesh_while = bool(mesh_while_playing)
-        voxel_res = normalize_voxel_resolution(voxel_resolution)
+        carver_res = normalize_carver_resolution(carver_resolution)
         ckpt = normalize_checkpoint_level(checkpoint_level)
         carver = normalize_carver_mode(carver_mode)
         material = normalize_stock_material(material)
@@ -2028,7 +2048,7 @@ class GCodeViewer(Widget):
             and new_shape == self.stock_shape
             and want_sim == self.simulate_cut
             and mesh_while == self.stock_mesh_while_playing
-            and voxel_res == self.stock_voxel_resolution
+            and carver_res == self.stock_carver_resolution
             and ckpt == self.stock_checkpoint_level
             and carver == self.stock_carver_mode
         )
@@ -2037,8 +2057,12 @@ class GCodeViewer(Widget):
         self.stock_shape = new_shape
         self.stock_visible = stock_visible
         self.simulate_cut = want_sim
+        if not want_sim:
+            self.sim_mesh_visible = True
+            self._cancel_sim_carving_hold()
+            self.sim_carving = False
         self.stock_mesh_while_playing = mesh_while
-        self.stock_voxel_resolution = voxel_res
+        self.stock_carver_resolution = carver_res
         self.stock_checkpoint_level = ckpt
         self.stock_carver_mode = carver
         self.stock_material = material
@@ -2070,29 +2094,32 @@ class GCodeViewer(Widget):
 
         carver = str(stats.get("carver") or "voxel")
         if carver == "heightmap":
-            grid_line = tr._("Heightmap: %dx%d - %smm/cell") % (
+            grid_line = tr._("Heightmap: %dx%d") % (
                 int(stats.get("grid_nx", 0)),
                 int(stats.get("grid_ny", 0)),
-                cell_txt,
             )
+            resolution_line = tr._("Resolution: %smm/cell") % cell_txt
         elif carver == "cylindrical":
-            grid_line = tr._("Cylindrical: %dx%d - %s mm along X and at Ø%s") % (
+            grid_line = tr._("Cylindrical: %dx%d") % (
                 int(stats.get("grid_nx", 0)),
                 int(stats.get("grid_ny", 0)),
+            )
+            resolution_line = tr._("Resolution: %s mm along X and at Ø%s") % (
                 cell_txt,
                 format_diameter_mm(float(stats["stock_diameter_mm"])),
             )
         else:
-            grid_line = tr._("Grid: %dx%dx%d - %smm/voxel") % (
+            grid_line = tr._("Grid: %dx%dx%d") % (
                 int(stats["grid_nx"]),
                 int(stats["grid_ny"]),
                 int(stats["grid_nz"]),
-                cell_txt,
             )
+            resolution_line = tr._("Resolution: %smm/voxel") % cell_txt
 
         return "\n".join(
             [
                 grid_line,
+                resolution_line,
                 tr._("Checkpoints: %.0f%% - %d/%d slots")
                 % (
                     head_pct,
@@ -2104,6 +2131,51 @@ class GCodeViewer(Widget):
 
     def _refresh_sim_hud(self, *_args) -> None:
         self.sim_hud_text = self._format_sim_hud_text()
+        self.sim_hud_visible = bool(self.simulate_cut)
+
+    def _cancel_sim_carving_hold(self) -> None:
+        ev = getattr(self, "_sim_carving_hold", None)
+        if ev is not None:
+            ev.cancel()
+            self._sim_carving_hold = None
+
+    def _end_sim_carving(self, *_args) -> None:
+        self._sim_carving_hold = None
+        self.sim_carving = False
+
+    def _on_stock_activity(self, active: bool) -> None:
+        """Worker/UI busy flag — hop onto the Kivy clock with a generation stamp."""
+        sim = self._stock_simulator
+        gen = sim.generation if sim else -1
+
+        def _apply(_dt, active=active, gen=gen):
+            if self._stock_simulator is None or self._stock_simulator.generation != gen:
+                return
+            if active:
+                self._cancel_sim_carving_hold()
+                self.sim_carving = True
+            elif bool(self.simulate_cut) and self._sim_carving_hold is None:
+                self._sim_carving_hold = Clock.schedule_once(self._end_sim_carving, SIM_CARVING_HOLD_S)
+            else:
+                self._cancel_sim_carving_hold()
+                self.sim_carving = False
+
+        Clock.schedule_once(_apply, 0)
+
+    def set_sim_mesh_visible(self, visible: bool) -> None:
+        """Show or hide the carved stock without resetting occupancy.
+
+        Hiding leaves the same preview shell used when stock is shown and
+        simulation is off. Showing rebuilds that shell as edge lines over the
+        carved mesh.
+        """
+        visible = bool(visible)
+        if visible == bool(getattr(self, "sim_mesh_visible", True)):
+            return
+        self.sim_mesh_visible = visible
+        self._rebuild_stock_mesh()
+        self._ensure_stock_on_canvas()
+        self._scene_dirty = True
 
     def _vertex_to_path_percent(self, vertex: int) -> float:
         total = self.get_total_distance() if self.lengths else 0.0
@@ -2294,6 +2366,8 @@ class GCodeViewer(Widget):
         pause, ``_defer_carved_stock`` keeps that AABB until the flush
         patches GPU chunks so the stale uncut shell is not flashed.
         """
+        if not bool(getattr(self, "sim_mesh_visible", True)):
+            return False
         if self._defer_carved_stock:
             return False
         return bool(self.simulate_cut) and ((not self.dynamic_display) or bool(self.stock_mesh_while_playing))
@@ -2569,13 +2643,15 @@ class GCodeViewer(Widget):
         self._clear_carved_meshes()
         if not self.simulate_cut or self.stock_bounds_mm is None:
             self._stock_simulator.disable()
+            self._cancel_sim_carving_hold()
+            self.sim_carving = False
             self._sim_hud_trigger()
             return
         self._publish_toolpath_to_simulator()
         self._stock_simulator.reset(
             self.stock_bounds_mm,
             enable=True,
-            resolution_level=self.stock_voxel_resolution,
+            resolution_level=self.stock_carver_resolution,
             checkpoint_slots=CHECKPOINT_SLOTS_BY_LEVEL[self.stock_checkpoint_level],
             shape=self.stock_shape,
             carver_mode=self.stock_carver_mode,

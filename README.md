@@ -102,6 +102,16 @@ poetry run python -m carveracontroller
 
 To run the iOS app, you first need to build its dependencies using the Local Packaging instructions below. The build script will open Xcode for you, or you can open the project manually by finding it in `assets/packaging/ios/carveracontroller-ios`.
 
+### Native stock simulation
+
+The stock cut simulation relies on a small C extension (`_stock_carve`, sources in `carveracontroller/addons/stock/simulator/native`) to carve the tool moves into the stock model and to generate its meshes. It is not compiled by `poetry install`, so when running from source the cut simulation stays unavailable until you build it. Ensure that you have a C compiler and the Python headers (see the Prerequisites above), then run:
+
+```bash
+poetry run python scripts/build_native.py
+```
+
+The compiled library is written in-place to `carveracontroller/addons/stock/simulator/native/lib`. Re-run the script after changing any of the `.c` or `.h` files. The packaging script (`scripts/build.py`) and the quality workflow already do this for you, and the tests that exercise the simulator are skipped if the extension has not been built.
+
 ### Quality Checks
 
 The project uses [Ruff](https://docs.astral.sh/ruff/) (linting), [Mypy](https://mypy-lang.org/) (type checking), [import-linter](https://import-linter.readthedocs.io/) (architectural boundaries), and pytest for the repeatable quality gate. Ruff covers application code, tests, and project-owned Python scripts with rules for syntax/name errors, imports, bug-prone patterns, return consistency, comprehensions, and Python-version-aware modernization. Mypy checks the controller application and shared package modules with core type/name/attribute/call errors enabled, and runs a separate strict check for `carveracontroller/machine/`. Addon packages are linted and tested; package-level mypy does not include them because their Kivy plugin surfaces rely heavily on runtime-bound ids and controller objects. import-linter checks package architecture, including the rule that `machine` stays Kivy-free.
