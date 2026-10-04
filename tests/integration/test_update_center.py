@@ -175,7 +175,11 @@ def _prerelease_snapshot(*, current_controller="2.1.0", current_firmware="2.0.0c
 
 def _save_and_clear_prerelease_config(popup):
     """Save the current prerelease config and remove it to simulate a fresh install."""
-    saved = Config.get("carvera", CONFIG_INCLUDE_PRERELEASES) if Config.has_option("carvera", CONFIG_INCLUDE_PRERELEASES) else None
+    saved = (
+        Config.get("carvera", CONFIG_INCLUDE_PRERELEASES)
+        if Config.has_option("carvera", CONFIG_INCLUDE_PRERELEASES)
+        else None
+    )
     if Config.has_option("carvera", CONFIG_INCLUDE_PRERELEASES):
         Config.remove_option("carvera", CONFIG_INCLUDE_PRERELEASES)
     popup.include_prereleases = False
