@@ -1,6 +1,14 @@
+[2.2.0]
+- Changed: Missed heartbeats with the machine are treated as comms backpressure, and the machine state is changed to "Waiting on comms". Only if link connection is lost will it be treated as a disconnect
+- Fixed: Consolidated the two different re-connection methods into one
+- Fixed: Checkboxes in the CMM Workbench and Facing wizard stay visible on the dark background
+- Fixed: Commands sent using the "Send" buttons are now added to the MDI history
+
 [2.2.0-RC3]
 - Enhancement: The step size is now synchronized between the main screen and the Probing screen
 - Fixed: Y+/Y- jogging buttons on the Probing screen respect the configured Y axis inversion setting
+- Fixed: Keyboard jogging in the CMM Workbench now uses the workbench step size, synchronized with the main screen
+- Fixed: Y+/Y- jogging buttons on the CMM Workbench respect the configured Y axis inversion setting
 
 [2.2.0-RC2]
 - Enhancement: Adds "Allow Jogging When Spindle or Laser Is On" option (disabled by default). "Allow Jogging When Machine Running" will now be enabled by default. Existing configs that already allowed jogging while the machine is running also enable the new spindle/laser option.
