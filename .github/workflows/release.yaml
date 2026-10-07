@@ -45,9 +45,7 @@ jobs:
 
     - name: Add gettext to PATH
       shell: pwsh
-      run: |
-        # Add gettext bin directory to PATH if not automatically added
-        echo "C:\Program Files\gettext\bin" >> $env:GITHUB_PATH
+      run: Add-Content -Path $env:GITHUB_PATH -Value "$env:ProgramFiles\gettext-iconv\bin"
 
     - name: "Install Windows-Mesa OpenGL DLL"
       run: |
