@@ -198,6 +198,7 @@ from carveracontroller.ui.file_browser.thumbnail import (
     machine_cache_key,
     thumbnail_cache_for_app,
 )
+from carveracontroller.ui.LocalFilePicker import open_local_file_picker
 from carveracontroller.ui.tutorial.session import demo_is_active, tutorial_blocks_motion
 from carveracontroller.ui.tutorial.tour import Tutorial, apply_demo_readout
 from carveracontroller.ui.updates import UpgradePopup
@@ -1222,24 +1223,6 @@ class PairingPopup(ModalView):
             self.pairing = False
             self.pairing_note = self.pairing_string["timeout"]
             self.countdown_event.cancel()
-
-
-class PickFilePopup(FloatLayout):
-    on_select = ObjectProperty(None)
-    on_cancel = ObjectProperty(None)
-
-    def __init__(self, on_select, on_cancel=None, **kwargs):
-        super().__init__(**kwargs)
-        self.on_select = on_select
-        self.on_cancel = on_cancel
-
-    def on_select_pressed(self, directory, filename):
-        if self.on_select:
-            self.on_select(directory, filename)
-
-    def on_cancel_pressed(self):
-        if self.on_cancel:
-            self.on_cancel()
 
 
 class AutoLevelPopup(ModalView):
@@ -5072,15 +5055,21 @@ class Makera(RelativeLayout):
     # -----------------------------------------------------------------------
     def choose_back_up_config_destination(self, local_paths, *args):
         self.progressFinish()
-        content = PickFilePopup(partial(self.finish_backing_up_config, local_paths))
-        self.pick_file_popup = Popup(
+        self.pick_file_popup = None
+
+        def on_confirm(popup, dest):
+            popup.dismiss()
+            folder = dest if os.path.isdir(dest) else os.path.dirname(dest)
+            self.finish_backing_up_config(local_paths, folder, None)
+
+        open_local_file_picker(
             title=tr._("Choose where to back up your machine configuration"),
-            content=content,
-            size_hint=(0.75, 0.75),
-            auto_dismiss=True,
+            on_confirm=on_confirm,
+            on_cancel=self._cancel_config_backup_picker,
+            confirm_label=tr._("Select"),
+            size_hint=(0.82, 0.85),
+            folder_only=True,
         )
-        content.on_cancel = self._cancel_config_backup_picker
-        self.pick_file_popup.open()
 
     def _cancel_config_backup_picker(self):
         if self.pick_file_popup is not None:

@@ -2359,27 +2359,6 @@
                 text: tr._('Ok')
                 on_release: root.on_ok_pressed()
 
-<PickFilePopup>:
-    BoxLayout:
-        size: root.size
-        pos: root.pos
-        orientation: "vertical"
-        FileChooserListView:
-            id: filechooser
-            path: "."
-
-        BoxLayout:
-            size_hint_y: None
-            height: '50dp'
-            Button:
-                text: "Cancel"
-                on_release: root.on_cancel_pressed()
-
-            Button:
-                text: "Select"
-                on_release: root.on_select_pressed(filechooser.path, filechooser.selection)
-
-
 <SwitchBox@BoxLayout>:
     label: ''
     orientation: 'horizontal'

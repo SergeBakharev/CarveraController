@@ -41,7 +41,7 @@
     padding: dp(8)
     spacing: dp(8)
     Label:
-        text: tr._('Choose folder and file name')
+        text: tr._('Choose folder and file name') if root.show_filename else tr._('Choose a folder')
         size_hint_y: None
         height: dp(28)
         font_size: dp(15)
@@ -128,7 +128,9 @@
     Label:
         text: tr._('File name')
         size_hint_y: None
-        height: dp(24)
+        height: dp(24) if root.show_filename else 0
+        opacity: 1 if root.show_filename else 0
+        disabled: not root.show_filename
         font_size: dp(15)
         halign: 'left'
         text_size: self.width, None
@@ -136,7 +138,9 @@
         id: ti_filename
         multiline: False
         size_hint_y: None
-        height: dp(36)
+        height: dp(36) if root.show_filename else 0
+        opacity: 1 if root.show_filename else 0
+        disabled: not root.show_filename
     BoxLayout:
         size_hint_y: None
         height: dp(44)
