@@ -3020,7 +3020,7 @@ Builder.load_string("""
             size: self.size
             texture: self._img_texture
         Color:
-            rgba: 0, 0, 1, self._alpha_box
+            rgba: app.theme.graph_cursor[0], app.theme.graph_cursor[1], app.theme.graph_cursor[2], self._alpha_box
         BorderImage:
             source: 'border.png'
             pos: self._box_pos
@@ -3034,7 +3034,7 @@ Builder.load_string("""
     canvas.after:
         #horizontal rectangle left
 		Color:
-			rgba:0, 0, 0, self._alpha_hor
+			rgba: app.theme.graph_axis[0], app.theme.graph_axis[1], app.theme.graph_axis[2], self._alpha_hor
 		Line:
 			width: dp(1)
 			rectangle:
@@ -3043,7 +3043,7 @@ Builder.load_string("""
 
         #horizontal rectangle right
 		Color:
-			rgba:0, 0, 0, self._alpha_hor
+			rgba: app.theme.graph_axis[0], app.theme.graph_axis[1], app.theme.graph_axis[2], self._alpha_hor
 		Line:
 			width: dp(1)
 			rectangle:
@@ -3052,7 +3052,7 @@ Builder.load_string("""
 
         #vertical rectangle bottom
 		Color:
-			rgba:0, 0, 0, self._alpha_ver
+			rgba: app.theme.graph_axis[0], app.theme.graph_axis[1], app.theme.graph_axis[2], self._alpha_ver
 		Line:
 			width: dp(1)
 			rectangle:
@@ -3061,7 +3061,7 @@ Builder.load_string("""
 
         #vertical rectangle top
 		Color:
-			rgba:0, 0, 0, self._alpha_ver
+			rgba: app.theme.graph_axis[0], app.theme.graph_axis[1], app.theme.graph_axis[2], self._alpha_ver
 		Line:
 			width: dp(1)
 			rectangle:
