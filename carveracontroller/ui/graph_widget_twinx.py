@@ -229,7 +229,7 @@ class MatplotFigureTwinx(Widget):
         # manage hover data
         self.x_hover_data = None
         self.y_hover_data = None
-        self._hover_pointer = None
+        self._hover_pointer: tuple[float, float] | None = None
 
         # pan management
         self.first_touch_pan: str | None = None
