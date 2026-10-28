@@ -32,7 +32,6 @@
     label_text: ''
     spinner_text: ''
     spinner_values: []
-    disabled_values: []
     setting: ''
     size_hint_y: None
     height: '36dp'
@@ -44,10 +43,9 @@
         text_size: self.size
         halign: 'left'
         valign: 'middle'
-    GraphMetricSpinner:
+    Spinner:
         text: root.spinner_text
         values: root.spinner_values
-        disabled_values: root.disabled_values
         font_size: '13sp'
         on_text: app.root.set_graph_setting(root.setting, self.text) if app.root else None
 
@@ -85,13 +83,11 @@
             label_text: tr._('Line 1')
             spinner_text: graph_metric_label(root.line1_metric)
             spinner_values: root.metric_choices
-            disabled_values: root.disabled_metric_choices
             setting: 'line1'
         GraphSettingRow:
             label_text: tr._('Line 2')
             spinner_text: graph_metric_label(root.line2_metric)
             spinner_values: root.metric_choices
-            disabled_values: root.disabled_metric_choices
             setting: 'line2'
         GraphSettingRow:
             label_text: tr._('Time range (seconds)')

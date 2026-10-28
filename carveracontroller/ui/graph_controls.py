@@ -8,7 +8,6 @@ from kivy.factory import Factory
 from kivy.metrics import dp
 from kivy.properties import BooleanProperty, ListProperty, NumericProperty, StringProperty
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.spinner import Spinner
 
 from carveracontroller.translation import tr
 
@@ -30,7 +29,6 @@ class GraphMetric:
     ymin: float
     ymax: float
     computed: bool = False
-    requires_geometry: bool = False
 
     @property
     def visible(self) -> bool:
@@ -52,16 +50,6 @@ GRAPH_METRICS = (
         computed=True,
     ),
     GraphMetric("feed", "Feed", "curfeed", "Feed", 100.0, 1000.0),
-    GraphMetric(
-        "mrr",
-        "MRR (cm³/min)",
-        None,
-        "MRR (cm³/min)",
-        0.0,
-        10.0,
-        computed=True,
-        requires_geometry=True,
-    ),
 )
 
 GRAPH_METRICS_BY_KEY = {metric.key: metric for metric in GRAPH_METRICS}
@@ -69,13 +57,6 @@ GRAPH_METRICS_BY_KEY = {metric.key: metric for metric in GRAPH_METRICS}
 
 def graph_metric_choices() -> list[str]:
     return [tr._(metric.label) for metric in GRAPH_METRICS]
-
-
-def graph_disabled_metric_labels(*, include_mrr: bool) -> list[str]:
-    """Labels that stay visible but cannot be chosen, such as MRR without geometry."""
-    if include_mrr:
-        return []
-    return [tr._(metric.label) for metric in GRAPH_METRICS if metric.requires_geometry]
 
 
 def graph_metric_label(key: str) -> str:
@@ -122,26 +103,6 @@ def graph_number_from_label(label: str, allowed: tuple[float, ...] | list[float]
     return None
 
 
-class GraphMetricSpinner(Spinner):
-    """Spinner whose listed values can be shown but not chosen."""
-
-    disabled_values = ListProperty([])
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.fbind("disabled_values", self._update_dropdown)
-        self._update_dropdown()
-
-    def _update_dropdown(self, *largs):
-        super()._update_dropdown(*largs)
-        dropdown = self._dropdown
-        if dropdown is None or dropdown.container is None:
-            return
-        disabled = set(self.disabled_values)
-        for item in dropdown.container.children:
-            item.disabled = item.text in disabled
-
-
 class GraphControls(BoxLayout):
     """Top-right graph overlay. Width stays 250dp so opening only grows down."""
 
@@ -151,14 +112,11 @@ class GraphControls(BoxLayout):
     time_range = NumericProperty(GRAPH_DEFAULT_TIME_RANGE)
     granularity = NumericProperty(GRAPH_DEFAULT_GRANULARITY)
     metric_choices = ListProperty([])
-    disabled_metric_choices = ListProperty([])
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not self.metric_choices:
             self.metric_choices = graph_metric_choices()
-        if not self.disabled_metric_choices:
-            self.disabled_metric_choices = graph_disabled_metric_labels(include_mrr=False)
         self.bind(size=self._reanchor)
 
     def on_parent(self, _instance, parent):
@@ -194,5 +152,4 @@ class GraphControls(BoxLayout):
         return self.adjust_open
 
 
-Factory.register("GraphMetricSpinner", cls=GraphMetricSpinner)
 Factory.register("GraphControls", cls=GraphControls)

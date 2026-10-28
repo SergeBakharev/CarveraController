@@ -390,20 +390,12 @@ from .ui.graph_controls import (  # noqa: F401  – GraphControls registers with
     GRAPH_METRICS_BY_KEY,
     GRAPH_TIME_RANGES,
     GraphControls,
-    graph_disabled_metric_labels,
-    graph_metric_choices,
     graph_metric_key_from_label,
     graph_metric_label,
     graph_metric_ylim,
     graph_number_from_label,
 )
-from .ui.graph_series import (
-    format_graph_value,
-    material_removal_rate_cm3_per_min,
-    rpm_deviation_percent,
-    tool_cutting_diameter_mm,
-    tool_flute_length_mm,
-)
+from .ui.graph_series import format_graph_value, rpm_deviation_percent
 from .ui.graph_widget_twinx import StaticMatplotFigureTwinx  # noqa: F401  – registers widget with Kivy Factory
 
 matplotlib.rcParams["path.simplify"] = True
@@ -3669,7 +3661,6 @@ class Makera(RelativeLayout):
         except Exception:
             logger.exception("failed to apply stock settings")
             return False
-        self._refresh_graph_metric_choices()
         return True
 
     def _reset_stock_settings(self, shape=None, origin=None, show_stock=False, simulate_cut=False):
@@ -7649,82 +7640,17 @@ class Makera(RelativeLayout):
         except (TypeError, ValueError):
             return 0.0
 
-    def _graph_machine_mm(self, value):
-        """Status positions and feeds follow the machine unit; stock is millimetres."""
-        scale = float(getattr(CNC, "UnitScale", 1.0) or 1.0)
-        return float(value) * scale
-
-    def _graph_tool_def(self):
-        table = getattr(self, "tool_table", None) or {}
-        try:
-            number = int(CNC.vars.get("tool") or 0)
-        except (TypeError, ValueError):
-            return None
-        return table.get(number)
-
-    def _graph_mrr_selectable(self):
-        """True when some loaded tool has a diameter and the viewer has a stock solid."""
-        viewer = getattr(self, "gcode_viewer", None)
-        if viewer is None or getattr(viewer, "stock_bounds_mm", None) is None:
-            return False
-        if getattr(viewer, "stock_shape", None) is None:
-            return False
-        scale = float(getattr(viewer, "tool_unit_scale", 1.0) or 1.0)
-        table = getattr(self, "tool_table", None) or {}
-        return any(tool_cutting_diameter_mm(tool_def, scale) is not None for tool_def in table.values())
-
-    def _graph_metric_has_data(self, metric):
-        """False until this series can be measured. A saved choice can still name it."""
-        return not metric.requires_geometry or self._graph_mrr_selectable()
-
-    def _refresh_graph_metric_choices(self):
-        include_mrr = self._graph_mrr_selectable()
-        if include_mrr == getattr(self, "_graph_metric_choice_key", None):
-            return
-        controls = self.ids.get("graph_controls") if getattr(self, "ids", None) is not None else None
-        if controls is None:
-            return
-        self._graph_metric_choice_key = include_mrr
-        controls.metric_choices = graph_metric_choices()
-        controls.disabled_metric_choices = graph_disabled_metric_labels(include_mrr=include_mrr)
-
-    def _graph_mrr_cm3_per_min(self):
-        viewer = getattr(self, "gcode_viewer", None)
-        if viewer is None:
-            return 0.0
-        scale = float(getattr(viewer, "tool_unit_scale", 1.0) or 1.0)
-        tool_def = self._graph_tool_def()
-        diameter = tool_cutting_diameter_mm(tool_def, scale)
-        if diameter is None:
-            return 0.0
-        return material_removal_rate_cm3_per_min(
-            feed_mm_per_min=self._graph_machine_mm(self._cnc_float("curfeed")),
-            tool_diameter_mm=diameter,
-            x_mm=self._graph_machine_mm(self._cnc_float("wx")),
-            y_mm=self._graph_machine_mm(self._cnc_float("wy")),
-            z_mm=self._graph_machine_mm(self._cnc_float("wz")),
-            bounds=getattr(viewer, "stock_bounds_mm", None),
-            shape=getattr(viewer, "stock_shape", None),
-            flute_length_mm=tool_flute_length_mm(tool_def, scale),
-        )
-
     def _graph_metric_sample(self, metric):
         if metric.key == "rpm_deviation":
             return rpm_deviation_percent(self._cnc_float("curspindle"), self._cnc_float("tarspindle"))
-        if metric.key == "mrr":
-            return self._graph_mrr_cm3_per_min()
         return self._cnc_float(metric.cnc_var)
 
     # -----------------------------------------------------------------------
     def _update_graph_chart(self, *_args):
-        self._refresh_graph_metric_choices()
         for key, metric in GRAPH_METRICS_BY_KEY.items():
             if not metric.visible or key not in self._graph_samples:
                 continue
-            if self._graph_metric_has_data(metric):
-                self._graph_samples[key].append(self._graph_metric_sample(metric))
-            else:
-                self._graph_samples[key].append(float("nan"))
+            self._graph_samples[key].append(self._graph_metric_sample(metric))
         if self.graph_pane_open and not self.graph_updates_paused:
             self._render_graph_chart()
 
@@ -7807,7 +7733,7 @@ class Makera(RelativeLayout):
 
         with open(path, "w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
-            writer.writerow(["Time (s)", *[graph_metric_label(key).replace("³", "3") for key in keys]])
+            writer.writerow(["Time (s)", *[graph_metric_label(key) for key in keys]])
             for index in range(count):
                 row = [f"{-(count - 1 - index) * step:.3f}"]
                 for key in keys:
