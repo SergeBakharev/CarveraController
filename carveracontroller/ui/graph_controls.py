@@ -170,8 +170,9 @@ class GraphControls(BoxLayout):
         parent = self.parent
         if parent is None:
             return
-        self.right = parent.right
-        self.top = parent.top
+        margin = dp(4)
+        self.right = parent.right - margin
+        self.top = parent.top - margin
 
     def collide_point(self, x, y):
         if not super().collide_point(x, y):

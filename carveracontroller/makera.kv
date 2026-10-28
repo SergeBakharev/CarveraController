@@ -3335,7 +3335,8 @@
                                                 size: self.parent.size
                                             CameraControls:
                                                 id: camera_controls
-                                                pos_hint: {'x': 0, 'top': 1}
+                                                x: self.parent.x + dp(4) if self.parent else 0
+                                                y: self.parent.top - self.height - dp(4) if self.parent else 0
                                         Splitter:
                                             id: graph_pane
                                             sizable_from: 'left'
@@ -3358,8 +3359,8 @@
                                                         pos: self.pos
                                                         size: self.size
                                                 BoxLayout:
-                                                    # Right inset clears the 25dp config, save, and pause buttons.
-                                                    padding: [dp(10), dp(10), dp(10) + dp(25), dp(10)]
+                                                    # Right inset clears the 25dp buttons and their 4dp margin.
+                                                    padding: [dp(10), dp(10), dp(10) + dp(25) + dp(4), dp(10)]
                                                     size_hint: None, None
                                                     pos: self.parent.pos
                                                     size: self.parent.size
@@ -3375,7 +3376,8 @@
                                                     size_hint: None, None
                                                     width: '25dp'
                                                     height: '25dp'
-                                                    pos_hint: {'right': 1, 'y': 0}
+                                                    x: self.parent.right - self.width - dp(4) if self.parent else 0
+                                                    y: self.parent.y + dp(4) if self.parent else 0
                                                     icon_size: 16
                                                     chrome: True
                                                     icon: 'data/start.png' if root.graph_updates_paused else 'data/suspend.png'

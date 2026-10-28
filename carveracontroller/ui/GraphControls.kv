@@ -8,8 +8,9 @@
 <GraphButtonSlot@AnchorLayout>:
     anchor_x: 'right'
     anchor_y: 'top'
+    padding: 0, 0, 0, dp(4)
     size_hint_y: None
-    height: '25dp'
+    height: dp(25) + dp(4)
 
 <GraphAdjustPanel@BoxLayout>:
     visible: False
@@ -63,7 +64,7 @@
             chrome: True
             size_hint: None, None
             width: '25dp'
-            height: self.parent.height
+            height: '25dp'
             tooltip_txt: tr._('Graph settings')
             on_release:
                 root.adjust_open = not root.adjust_open
@@ -74,7 +75,7 @@
             chrome: True
             size_hint: None, None
             width: '25dp'
-            height: self.parent.height
+            height: '25dp'
             tooltip_txt: tr._('Save graph and values')
             on_release:
                 app.root.save_monitoring_graph()
